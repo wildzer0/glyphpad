@@ -136,3 +136,75 @@ pub fn write_atomically(path: &Path, contents: &str) -> Result<()> {
     std::fs::rename(&tmp, path).with_context(|| format!("cannot replace {}", path.display()))?;
     Ok(())
 }
+
+/// `backups/` next to the configuration (SPEC §10.2).
+pub fn backups_dir(location: &Location) -> PathBuf {
+    location
+        .path()
+        .parent()
+        .map_or_else(|| PathBuf::from("backups"), |d| d.join("backups"))
+}
+
+/// Copies the current configuration into `backups/` before it is
+/// overwritten, keeping the `keep` most recent copies.
+pub fn backup(location: &Location, keep: usize) -> Result<()> {
+    let path = location.path();
+    if keep == 0 || !path.exists() {
+        return Ok(());
+    }
+    let dir = backups_dir(location);
+    std::fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
+    let stamp = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
+    // A counter, always present, keeps names in time order within a second.
+    let mut n = 1;
+    let mut target = dir.join(format!("glyphpad-{stamp}-{n:03}.toml"));
+    while target.exists() {
+        n += 1;
+        target = dir.join(format!("glyphpad-{stamp}-{n:03}.toml"));
+    }
+    std::fs::copy(path, &target)
+        .with_context(|| format!("cannot back up to {}", target.display()))?;
+    for old in list_backups(location).into_iter().skip(keep) {
+        let _ = std::fs::remove_file(dir.join(old));
+    }
+    Ok(())
+}
+
+/// Backup file names, newest first (their names sort by time).
+pub fn list_backups(location: &Location) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(backups_dir(location)) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("glyphpad-") && n.ends_with(".toml"))
+        .collect();
+    names.sort_by(|a, b| b.cmp(a));
+    names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backups_are_pruned_to_the_newest() {
+        let dir = std::env::temp_dir().join(format!("glyphpad-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let location = Location::Explicit(dir.join(FILE_NAME));
+        std::fs::write(location.path(), "config_version = 1\n").unwrap();
+        for _ in 0..4 {
+            backup(&location, 3).unwrap();
+        }
+        let names = list_backups(&location);
+        assert_eq!(names.len(), 3, "{names:?}");
+        assert!(
+            names.windows(2).all(|w| w[0] > w[1]),
+            "newest first: {names:?}"
+        );
+        backup(&location, 0).unwrap();
+        assert_eq!(list_backups(&location).len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

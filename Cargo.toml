@@ -29,6 +29,9 @@ crossbeam-channel = "0.5.17"
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
 # Standard per-OS config directory when not running in portable mode (SPEC §2).
 directories = "6.0.0"
+# Hot reload of the configuration (SPEC §9).
+# No default features: the only one is the macOS backend (out of scope).
+notify = { version = "8.2.0", default-features = false }
 # Window-title conditions (`when.title`) are regular expressions (SPEC §9).
 regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive", "rc"] }

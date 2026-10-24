@@ -100,6 +100,7 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
     }));
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
     let ui = Arc::new(UiLink::default());
+    let watcher = watch(&options.location, cmd_tx.clone());
     let handle = ServiceHandle {
         shared: shared.clone(),
         commands: cmd_tx,
@@ -128,7 +129,12 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
         ui,
         last_preview: Instant::now(),
         last_auto_pause_check: Instant::now() - AUTO_PAUSE_POLL,
+        config_text: Arc::new(String::new()),
+        revision: 0,
+        files_changed_at: None,
+        _watcher: watcher,
     };
+    service.read_config_text();
     service.rebuild_engine();
     std::thread::Builder::new()
         .name("engine".into())
@@ -158,6 +164,49 @@ struct Service {
     ui: Arc<UiLink>,
     last_preview: Instant,
     last_auto_pause_check: Instant,
+    /// The configuration file as last loaded, to tell our own writes and
+    /// unchanged saves from real edits on disk.
+    config_text: Arc<String>,
+    revision: u64,
+    /// A watched file changed; checked once the burst of events is over.
+    files_changed_at: Option<Instant>,
+    _watcher: Option<notify::RecommendedWatcher>,
+}
+
+/// Editors write files in several steps; wait for the burst to end.
+const FILE_SETTLE: Duration = Duration::from_millis(300);
+
+/// Watches the configuration's folder for changes to the configuration and
+/// the templates (SPEC §9 hot reload).
+fn watch(location: &Location, commands: Sender<Command>) -> Option<notify::RecommendedWatcher> {
+    use notify::Watcher as _;
+    let dir = location.path().parent()?.to_path_buf();
+    let names = [
+        location.path().file_name()?.to_os_string(),
+        std::ffi::OsString::from(config_file::TEMPLATES_FILE_NAME),
+    ];
+    let handler = move |event: notify::Result<notify::Event>| {
+        if let Ok(e) = event
+            && e.paths
+                .iter()
+                .any(|p| p.file_name().is_some_and(|n| names.iter().any(|x| x == n)))
+        {
+            let _ = commands.send(Command::FilesChanged);
+        }
+    };
+    match notify::recommended_watcher(handler) {
+        Ok(mut w) => match w.watch(&dir, notify::RecursiveMode::NonRecursive) {
+            Ok(()) => Some(w),
+            Err(e) => {
+                tracing::warn!("no hot reload: cannot watch {}: {e}", dir.display());
+                None
+            }
+        },
+        Err(e) => {
+            tracing::warn!("no hot reload: {e}");
+            None
+        }
+    }
 }
 
 /// Live feedback (overlay trail, debug view) is refreshed at most this often.
@@ -184,6 +233,13 @@ impl Service {
         self.sync_autostart();
         loop {
             self.watch_auto_pause();
+            if self
+                .files_changed_at
+                .is_some_and(|t| t.elapsed() >= FILE_SETTLE)
+            {
+                self.files_changed_at = None;
+                self.check_files();
+            }
             let deadline = [self.engine.next_deadline(), self.dispatcher.deadline()]
                 .into_iter()
                 .flatten()
@@ -654,6 +710,7 @@ impl Service {
                 let warnings = loaded.warnings.iter().map(ToString::to_string).collect();
                 self.config = Arc::new(loaded.config);
                 self.update_shared(|s| s.warnings = warnings);
+                self.read_config_text();
                 self.sync_autostart();
                 self.templates = config_file::load_templates(&self.location);
                 self.rebuild_engine();
@@ -661,6 +718,53 @@ impl Service {
             }
             Err(e) => self.set_status(format!("{e:#}; keeping the previous configuration")),
         }
+    }
+
+    /// Publishes the file's text and a new revision for the editor.
+    fn read_config_text(&mut self) {
+        let text = std::fs::read_to_string(self.location.path()).unwrap_or_default();
+        self.config_text = Arc::new(text);
+        self.revision += 1;
+        let (text, revision) = (self.config_text.clone(), self.revision);
+        let backups = config_file::list_backups(&self.location);
+        self.update_shared(|s| {
+            s.config_text = text;
+            s.revision = revision;
+            s.backups = backups;
+        });
+    }
+
+    /// After a change on disk: reload what really changed. Our own writes
+    /// come back here too and are recognized by their content.
+    fn check_files(&mut self) {
+        let text = std::fs::read_to_string(self.location.path()).unwrap_or_default();
+        if text != *self.config_text {
+            tracing::info!("the configuration changed on disk");
+            self.reload();
+            return;
+        }
+        let templates = config_file::load_templates(&self.location);
+        if templates != self.templates {
+            tracing::info!("the templates changed on disk");
+            self.templates = templates;
+            self.rebuild_engine();
+            self.set_status("templates reloaded");
+        }
+    }
+
+    /// Writes a new configuration after backing up the current one.
+    fn write_config(&mut self, text: &str) -> Result<(), String> {
+        glyphpad_core::config::parse(text).map_err(|errors| {
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        })?;
+        config_file::backup(&self.location, self.config.settings.backup_count)
+            .map_err(|e| format!("{e:#}"))?;
+        config_file::write_atomically(self.location.path(), text).map_err(|e| format!("{e:#}"))?;
+        Ok(())
     }
 
     fn write_templates(&self) -> Result<()> {
@@ -678,8 +782,7 @@ impl Service {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let new = edit(&text)?;
-        config_file::write_atomically(path, &new).map_err(|e| format!("{e:#}"))?;
-        Ok(())
+        self.write_config(&new)
     }
 
     fn on_command(&mut self, cmd: Command) {
@@ -725,8 +828,8 @@ impl Service {
                         return self.set_status(format!("templates not saved: {e:#}"));
                     }
                 }
-                if let Err(e) = config_file::write_atomically(self.location.path(), &new) {
-                    return self.set_status(format!("gesture not saved: {e:#}"));
+                if let Err(e) = self.write_config(&new) {
+                    return self.set_status(format!("gesture not saved: {e}"));
                 }
                 self.reload();
                 self.set_status(format!("gesture \"{name}\" saved"));
@@ -787,6 +890,38 @@ impl Service {
                     Err(e) => self.set_status(format!("setting not saved: {e}")),
                 }
             }
+            Command::WriteConfig {
+                text,
+                base_revision,
+            } => {
+                if base_revision != self.revision {
+                    self.update_shared(|s| s.write_conflict = true);
+                    return self
+                        .set_status("not saved: the configuration changed on disk meanwhile");
+                }
+                match self.write_config(&text) {
+                    Ok(()) => {
+                        self.update_shared(|s| s.write_conflict = false);
+                        self.reload();
+                        self.set_status("configuration saved");
+                    }
+                    Err(e) => self.set_status(format!("not saved: {e}")),
+                }
+            }
+            Command::RestoreBackup { name } => {
+                let path = config_file::backups_dir(&self.location).join(&name);
+                match std::fs::read_to_string(&path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|t| self.write_config(&t))
+                {
+                    Ok(()) => {
+                        self.reload();
+                        self.set_status(format!("restored {name}"));
+                    }
+                    Err(e) => self.set_status(format!("cannot restore {name}: {e}")),
+                }
+            }
+            Command::FilesChanged => self.files_changed_at = Some(Instant::now()),
             Command::RunAction(action) => {
                 let _ = self.actions.send(action);
             }

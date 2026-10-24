@@ -71,6 +71,18 @@ pub enum Command {
     RemoveSetting {
         path: Vec<String>,
     },
+    /// Replace the configuration with `text`, made by the editor from the
+    /// file at `base_revision`; refused if the file changed since.
+    WriteConfig {
+        text: String,
+        base_revision: u64,
+    },
+    /// Restore a backup from `backups/` (the current file is backed up first).
+    RestoreBackup {
+        name: String,
+    },
+    /// A watched file changed on disk (sent by the file watcher).
+    FilesChanged,
     /// Run an action now ("Run now" in the editors).
     RunAction(Action),
     /// Drop a recorded sample or demonstration.
@@ -112,6 +124,14 @@ pub enum Recorded {
 pub struct Shared {
     pub config: Arc<Config>,
     pub config_path: PathBuf,
+    /// The file's text, for the editor, which edits it preserving comments.
+    pub config_text: Arc<String>,
+    /// Increases every time the configuration is (re)loaded.
+    pub revision: u64,
+    /// Backup file names, newest first.
+    pub backups: Vec<String>,
+    /// The editor's save was refused because the file changed on disk.
+    pub write_conflict: bool,
     /// The user's templates file.
     pub templates: Arc<TemplateFile>,
     /// Templates in use: built-in plus the user's.
