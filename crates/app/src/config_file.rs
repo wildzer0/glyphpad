@@ -90,6 +90,15 @@ pub fn log_warnings(loaded: &Loaded) {
 }
 
 pub const TEMPLATES_FILE_NAME: &str = "templates.json";
+pub const HISTORY_FILE_NAME: &str = "history.jsonl";
+
+/// `history.jsonl`, when `save_history` is on, sits next to the configuration.
+pub fn history_path(location: &Location) -> PathBuf {
+    location.path().parent().map_or_else(
+        || PathBuf::from(HISTORY_FILE_NAME),
+        |d| d.join(HISTORY_FILE_NAME),
+    )
+}
 
 /// `templates.json` sits next to the configuration it belongs to.
 pub fn templates_path(location: &Location) -> PathBuf {

@@ -6,6 +6,9 @@ mod config_file;
 mod engine_loop;
 mod live;
 mod print;
+mod service;
+#[cfg(windows)]
+mod tray;
 
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
@@ -69,13 +72,9 @@ enum Cmd {
     },
     /// Print the HID capabilities of every Precision Touchpad.
     DumpDescriptor,
-    /// Print live recognized gestures without executing them (the GUI debug
-    /// tab comes in M4).
-    Debug {
-        /// Also print every touch frame.
-        #[arg(long)]
-        frames: bool,
-    },
+    /// Open the live debug tab in test mode and print recognized gestures
+    /// with their scores; no action runs.
+    Debug,
     /// Record examples of a drawn symbol and save them as its templates.
     Record {
         /// Symbol name, as used in `symbol = "..."` (case-sensitive).
@@ -117,11 +116,7 @@ fn run(cli: Cli) -> Result<()> {
     let toplevel_window = cli.toplevel_window;
     let config_arg = cli.config.as_deref();
     match cli.command.unwrap_or(Cmd::Run) {
-        Cmd::Run => {
-            let (config, templates) = load_config(config_arg)?;
-            let rx = live::start(toplevel_window)?;
-            engine_loop::run(rx, config, &templates.effective(), engine_loop::Mode::Run)
-        }
+        Cmd::Run => gui(config_arg, toplevel_window, false),
         Cmd::Capture {
             file,
             seconds,
@@ -140,23 +135,110 @@ fn run(cli: Cli) -> Result<()> {
             print!("{}", live::dump_descriptors()?);
             Ok(())
         }
-        Cmd::Debug { frames } => {
-            let (config, templates) = load_config(config_arg)?;
-            let rx = live::start(toplevel_window)?;
-            eprintln!("Showing recognized gestures (not executed). Stop with Ctrl+C.");
-            engine_loop::run(
-                rx,
-                config,
-                &templates.effective(),
-                engine_loop::Mode::Debug { frames },
-            )
-        }
+        Cmd::Debug => gui(config_arg, toplevel_window, true),
         Cmd::Record {
             name,
             samples,
             replace,
         } => record(config_arg, toplevel_window, &name, samples.into(), replace),
         Cmd::CheckConfig { file } => check_config(file.as_deref().or(config_arg)),
+    }
+}
+
+/// The window, the tray and the engine: `run` (and `debug`, which starts in
+/// test mode on the live debug tab and prints recognitions).
+fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool) -> Result<()> {
+    use std::sync::{Arc, OnceLock};
+
+    use glyphpad_core::service::{EngineMode, UiLink};
+
+    // A second instance asks the first one to show its window and exits
+    // (SPEC §10.1). `debug` is a diagnostic and may run alongside.
+    let link: Arc<OnceLock<Arc<UiLink>>> = Arc::default();
+    #[cfg(windows)]
+    let _instance = if debug {
+        None
+    } else {
+        let slot = link.clone();
+        match glyphpad_platform::windows::single_instance::acquire(move || {
+            if let Some(ui) = slot.get() {
+                ui.request_show();
+            }
+        }) {
+            glyphpad_platform::windows::single_instance::Instance::Primary(guard) => Some(guard),
+            glyphpad_platform::windows::single_instance::Instance::Secondary => {
+                println!("GlyphPad is already running; showing its window.");
+                return Ok(());
+            }
+        }
+    };
+
+    let location = config_file::locate(explicit)?;
+    tracing::info!("configuration: {}", location.describe());
+    let rx = live::start(toplevel_window)?;
+    let svc = service::spawn(
+        rx,
+        service::Options {
+            location,
+            print: debug,
+            mode: if debug {
+                EngineMode::Test
+            } else {
+                EngineMode::Normal
+            },
+        },
+    )?;
+    let _ = link.set(svc.ui.clone());
+    let start_minimized = svc
+        .shared
+        .lock()
+        .map(|s| s.config.settings.start_minimized)
+        .unwrap_or(false);
+    // Only hide at start when a tray icon can bring the window back.
+    let start_hidden = cfg!(windows) && start_minimized && !debug;
+    if debug {
+        eprintln!("Test mode: gestures are recognized and printed, no action runs.");
+    }
+
+    glyphpad_gui::run(
+        glyphpad_gui::Options {
+            start_hidden,
+            tab: if debug {
+                glyphpad_gui::Tab::Debug
+            } else {
+                glyphpad_gui::Tab::Gestures
+            },
+            version: VERSION.to_string(),
+        },
+        glyphpad_gui::Host {
+            shared: svc.shared.clone(),
+            commands: svc.commands.clone(),
+            ui: svc.ui.clone(),
+            tray: Box::new(|ctx| {
+                #[cfg(windows)]
+                {
+                    tray::create(ctx)
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = ctx;
+                    None
+                }
+            }),
+            open_folder: Box::new(open_folder),
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("the window failed: {e}"))
+}
+
+fn open_folder(path: &Path) {
+    let opener = if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    if let Err(e) = std::process::Command::new(opener).arg(path).spawn() {
+        tracing::warn!("cannot open {}: {e}", path.display());
     }
 }
 

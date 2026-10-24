@@ -17,11 +17,18 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+jiff.workspace = true
 clap.workspace = true
 crossbeam-channel.workspace = true
 directories.workspace = true
 glyphpad-actions.workspace = true
 glyphpad-core.workspace = true
 glyphpad-platform.workspace = true
+glyphpad-gui.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+# The Linux tray (GTK, AppIndicator) arrives with the Linux backend (M7).
+[target.'cfg(windows)'.dependencies]
+tray-icon.workspace = true
