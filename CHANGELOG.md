@@ -19,7 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `glyphpad capture <file>` records touch sessions as JSON Lines; `glyphpad replay <file>`
   plays them back deterministically and prints session statistics.
 - `glyphpad dump-descriptor` prints the HID capabilities of every Precision Touchpad.
-- `glyphpad debug` prints live touch frames in the terminal.
 - The Windows release binary has no console window; CLI subcommands attach to the parent console.
 - Gesture engine with tap and multi-tap, hold and swipe (4 or 8 directions) recognizers,
   each an explicit state machine, and a documented disambiguation policy.
@@ -41,5 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `glyphpad record <name>` records examples of a symbol into `templates.json`, with a
   consistency and lookalike check.
 - Warning at start-up when Windows' own gestures for the drawing finger count are on.
+- Window (egui/eframe, glow backend) with the Gestures, Review gestures, Settings and Live
+  debug tabs: animated playback of every template and of the history, adding a drawing
+  from the history as a template, deleting templates, a settings editor that keeps the
+  file's comments.
+- Gesture wizard: record a symbol or demonstrate a tap, hold or swipe, review and discard
+  samples, quality and lookalike check, name and action, save, then try it in test mode.
+- Tray icon with Open, enable/disable, reload, configuration folder and quit;
+  `close_to_tray` and `start_minimized`; a second start shows the running instance.
+- The engine runs on its own thread and keeps working with the window hidden.
+- `repeat_last` with per-gesture `repeatable`, `repeat_timeout_s` and `repeat_same_app_only`.
+- Feedback overlay showing the stroke and the recognized gesture; `notify` messages appear
+  there. Test mode recognizes without running actions.
+- `glyphpad debug` opens the live debug tab in test mode.
 
 [Unreleased]: https://github.com/wildzer0/glyphpad/commits/main

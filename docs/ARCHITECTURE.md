@@ -101,6 +101,30 @@ file wins.
   Because of this wait, gestures made with the drawing finger count (e.g.
   three-finger swipes) fire `stroke_gap_ms` later than others.
 
+## Threads (glyphpad run)
+
+```
+touch-source ──DeviceEvent──▶ engine ──Action──▶ actions
+ (Raw Input)                    │  ▲                (SendInput, …)
+                                │  │ Command
+            Shared + UiLink ◀───┘  │
+                    │              │
+main: eframe window + tray ────────┘        overlay (Win32 layered window)
+single-instance (message-only window)
+```
+
+- `app::service` owns the engine, history, `repeat_last`, the overlay and the
+  configuration files; it publishes a `core::service::Shared` snapshot and
+  wakes the window through `UiLink` (only for touch frames while the window
+  is visible, so a hidden window costs nothing).
+- `glyphpad-gui` is only a view: it reads `Shared` and sends `Command`s. The
+  tray lives on the main thread with the window's event loop; its events
+  wake the window with `request_repaint`, and eframe's `App::logic` handles
+  them even while the window is hidden. Closing the window with
+  `close_to_tray` sends `CancelClose` and hides it.
+- Writes to `glyphpad.toml` go through `core::config_edit` (`toml_edit`), are
+  validated before writing and written atomically; templates likewise.
+
 ## Known limitations
 
 - **Late palm detection.** The reference touchpad reports a palm as a
@@ -111,11 +135,14 @@ file wins.
   replace.
 - **Elevated windows (UIPI).** Without administrator rights, keys sent with
   `SendInput` and window actions do not reach applications running elevated.
-- **`notify` before M4.** Notifications need the tray icon; until then they
-  are only logged.
-- **Release `run` before M4.** The release binary has no console and no tray
-  yet, so `glyphpad run` started from Explorer runs invisibly; stop it from
-  Task Manager. Use the console for now.
+- **Notifications** are shown in GlyphPad's own overlay rather than as
+  Windows toasts, which need an app identity that a portable program without
+  installer does not have.
+- **Overlay scaling.** The overlay is drawn with GDI and is not DPI-aware, so
+  Windows scales it on high-DPI screens (slightly blurry).
+- **Binary size.** With the window and tray the release binary is about
+  11.5 MB.
+- **Linux tray.** Not built yet (M7); on Linux the window runs without it.
 
 - **Maximum contacts.** Read from the Contact Count Maximum feature report when
   the device can be opened for it; otherwise derived from descriptor logical

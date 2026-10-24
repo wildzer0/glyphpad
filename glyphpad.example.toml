@@ -36,6 +36,20 @@ min_stroke_mm = 10.0
 default_confidence = 0.80    # below this score nothing happens
 rotation_tolerance_deg = 0.0 # 0: a rotated L is not an L
 
+# Window and tray.
+close_to_tray = true         # the window's X hides GlyphPad to the tray
+start_minimized = false
+history_size = 20            # recognitions kept in "Review gestures"
+save_history = false         # also write them to history.jsonl
+
+# repeat_last re-runs the last gesture's action.
+repeat_same_app_only = true  # never into another application
+# repeat_timeout_s = 60
+
+# On-screen feedback: the stroke while drawing, then the gesture's name.
+# `notify` actions are shown here too.
+overlay = { enabled = true, position = "bottom_right", duration_ms = 1500, opacity = 0.85, width_px = 240 }
+
 [update]
 mode = "notify"          # off | notify | auto
 channel = "stable"       # stable | prerelease
@@ -79,6 +93,13 @@ name = "hello"
 type = "hold"
 fingers = 5
 action = { type = "notify", title = "GlyphPad", message = "Gestures are working" }
+
+[[gesture]]
+name = "repeat"
+type = "tap"
+fingers = 3
+taps = 2
+action = { type = "repeat_last" }
 
 # More examples:
 #
