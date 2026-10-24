@@ -2,6 +2,8 @@
 
 use std::fmt::Write as _;
 
+use glyphpad_core::config::Gesture;
+use glyphpad_core::engine::Recognition;
 use glyphpad_core::{DeviceEvent, TouchFrame};
 
 pub fn event(event: &DeviceEvent) {
@@ -19,6 +21,24 @@ pub fn format_event(event: &DeviceEvent) -> String {
             format!("[device {}] {}", device.0, format_frame(frame))
         }
     }
+}
+
+/// A recognition and the gesture it maps to, for `debug` and `replay`.
+pub fn recognition(r: &Recognition, gesture: Option<&Gesture>) -> String {
+    let target = match gesture {
+        Some(g) => format!(
+            "gesture \"{}\" → {} (not executed)",
+            g.def.name,
+            g.def.action.kind()
+        ),
+        None => "no gesture configured".to_string(),
+    };
+    format!(
+        "[device {}] {:>10.3} s  ▶ {}  ⇒ {target}",
+        r.device.0,
+        r.at_us as f64 / 1e6,
+        r.observation
+    )
 }
 
 /// One line per frame: time, click, and per contact `#id x,y` in mm with

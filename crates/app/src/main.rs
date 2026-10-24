@@ -2,6 +2,8 @@
 // subcommands attach to the parent's console instead.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod config_file;
+mod engine_loop;
 mod live;
 mod print;
 
@@ -12,10 +14,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use glyphpad_core::DeviceEvent;
-use glyphpad_core::TouchSource;
 use glyphpad_core::capture::{Capture, CaptureWriter};
-use glyphpad_core::replay::{Pacing, ReplaySource};
+use glyphpad_core::config::Config;
+use glyphpad_core::engine::resolve;
 use glyphpad_core::stats::SessionStats;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -31,6 +32,10 @@ struct Cli {
     /// message-only one (Windows; for diagnosing missing background input).
     #[arg(long, global = true)]
     toplevel_window: bool,
+
+    /// Configuration file to use instead of the portable or standard one.
+    #[arg(long, global = true, value_name = "FILE")]
+    config: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -50,23 +55,31 @@ enum Cmd {
         #[arg(long)]
         verbose: bool,
     },
-    /// Play back a capture and print its frames and statistics.
+    /// Run a capture through the gesture engine and print what it recognizes.
     Replay {
         file: PathBuf,
-        /// Reproduce the recorded timing instead of playing instantly.
+        /// Recognize every variant (any fingers, holds, triple taps, 8
+        /// directions) instead of only what the configuration uses.
         #[arg(long)]
-        realtime: bool,
-        /// Playback speed with --realtime.
-        #[arg(long, default_value_t = 1.0)]
-        speed: f32,
-        /// Only print the statistics.
+        all: bool,
+        /// Also print every frame.
         #[arg(long)]
-        stats_only: bool,
+        frames: bool,
     },
     /// Print the HID capabilities of every Precision Touchpad.
     DumpDescriptor,
-    /// Print live touch frames (the GUI debug tab comes in M4).
-    Debug,
+    /// Print live recognized gestures without executing them (the GUI debug
+    /// tab comes in M4).
+    Debug {
+        /// Also print every touch frame.
+        #[arg(long)]
+        frames: bool,
+    },
+    /// Validate a configuration file and print its errors and warnings.
+    CheckConfig {
+        /// Defaults to the configuration GlyphPad would use.
+        file: Option<PathBuf>,
+    },
 }
 
 fn main() {
@@ -89,10 +102,12 @@ fn main() {
 
 fn run(cli: Cli) -> Result<()> {
     let toplevel_window = cli.toplevel_window;
+    let config_arg = cli.config.as_deref();
     match cli.command.unwrap_or(Cmd::Run) {
         Cmd::Run => {
-            println!("GlyphPad {VERSION}: the gesture engine arrives in M2. Try `glyphpad debug`.");
-            Ok(())
+            let config = load_config(config_arg)?;
+            let rx = live::start(toplevel_window)?;
+            engine_loop::run(rx, config, engine_loop::Mode::Run)
         }
         Cmd::Capture {
             file,
@@ -100,18 +115,49 @@ fn run(cli: Cli) -> Result<()> {
             force,
             verbose,
         } => capture(&file, seconds, force, verbose, toplevel_window),
-        Cmd::Replay {
-            file,
-            realtime,
-            speed,
-            stats_only,
-        } => replay(&file, realtime, speed, stats_only),
+        Cmd::Replay { file, all, frames } => {
+            let config = match config_arg {
+                Some(_) => load_config(config_arg)?,
+                None if all => Config::default(),
+                None => load_config(None)?,
+            };
+            replay(&file, &config, all, frames)
+        }
         Cmd::DumpDescriptor => {
             print!("{}", live::dump_descriptors()?);
             Ok(())
         }
-        Cmd::Debug => debug(toplevel_window),
+        Cmd::Debug { frames } => {
+            let config = load_config(config_arg)?;
+            let rx = live::start(toplevel_window)?;
+            eprintln!("Showing recognized gestures (not executed). Stop with Ctrl+C.");
+            engine_loop::run(rx, config, engine_loop::Mode::Debug { frames })
+        }
+        Cmd::CheckConfig { file } => check_config(file.as_deref().or(config_arg)),
     }
+}
+
+fn load_config(explicit: Option<&Path>) -> Result<Config> {
+    let location = config_file::locate(explicit)?;
+    tracing::info!("configuration: {}", location.describe());
+    let loaded = config_file::load(&location, true)?;
+    config_file::log_warnings(&loaded);
+    tracing::info!("{} gesture(s) loaded", loaded.config.gestures.len());
+    Ok(loaded.config)
+}
+
+fn check_config(explicit: Option<&Path>) -> Result<()> {
+    let location = config_file::locate(explicit)?;
+    let loaded = config_file::load(&location, false)?;
+    println!(
+        "{}: OK, {} gesture(s)",
+        location.path().display(),
+        loaded.config.gestures.len()
+    );
+    for w in &loaded.warnings {
+        println!("  warning: {w}");
+    }
+    Ok(())
 }
 
 fn capture(
@@ -180,7 +226,7 @@ fn capture(
     Ok(())
 }
 
-fn replay(path: &Path, realtime: bool, speed: f32, stats_only: bool) -> Result<()> {
+fn replay(path: &Path, config: &Config, all: bool, frames: bool) -> Result<()> {
     let file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let capture = Capture::read(BufReader::new(file))
         .with_context(|| format!("invalid capture {}", path.display()))?;
@@ -189,38 +235,19 @@ fn replay(path: &Path, realtime: bool, speed: f32, stats_only: bool) -> Result<(
         capture.header.glyphpad_version,
         capture.events.len()
     );
-    let stats = SessionStats::from_events(&capture.events);
-    if !stats_only {
-        let pacing = if realtime {
-            Pacing::RealTime { speed }
-        } else {
-            Pacing::Instant
-        };
-        let (tx, rx) = crossbeam_channel::unbounded();
-        let source = ReplaySource::new(capture, pacing);
-        let player = std::thread::spawn(move || source.run(tx));
-        for event in rx {
-            print::event(&event);
-        }
-        player
-            .join()
-            .map_err(|_| anyhow::anyhow!("replay thread panicked"))?
-            .map_err(|e| anyhow::anyhow!(e))?;
+    if frames {
+        capture.events.iter().for_each(print::event);
     }
-    println!("\n{stats}");
+    let recognitions = engine_loop::evaluate(&capture.events, config, all);
+    println!("\nRecognized ({}):", recognitions.len());
+    for r in &recognitions {
+        println!(
+            "{}",
+            print::recognition(r, resolve(config, &r.observation, None))
+        );
+    }
+    println!("\n{}", SessionStats::from_events(&capture.events));
     Ok(())
-}
-
-fn debug(toplevel_window: bool) -> Result<()> {
-    let rx = live::start(toplevel_window)?;
-    eprintln!("Showing live touch frames. Stop with Ctrl+C.");
-    for event in rx {
-        if let DeviceEvent::Connected(_) | DeviceEvent::Disconnected { .. } = event {
-            eprintln!();
-        }
-        print::event(&event);
-    }
-    bail!("the touch source stopped")
 }
 
 #[cfg(test)]
