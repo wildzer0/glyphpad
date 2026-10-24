@@ -6,7 +6,7 @@ La specifica vincolante del progetto è importata qui sotto. Se qualcosa è ambi
 
 ## Modo di lavorare
 
-- **Una milestone alla volta** (§14). Prima di ogni milestone proponi il piano e attendi l'approvazione. Alla fine: test verdi, clippy pulito, `CHANGELOG.md` aggiornato e riepilogo.
+- **Una milestone alla volta** (§14). Su indicazione dell'utente, che prevale sul §15, **non serve proporre un piano prima di ogni milestone**: si passa direttamente all'implementazione. Le domande su punti ambigui o contraddittori restano necessarie. Alla fine: test verdi, clippy pulito, `CHANGELOG.md` aggiornato e riepilogo.
 - **Git:**
   - solo il branch `main`: mai branch, worktree o PR;
   - mai push forzati né riscrittura della storia pubblicata;
