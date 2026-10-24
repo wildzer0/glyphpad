@@ -92,22 +92,19 @@ fn contact(id: u32, x: f32, y: f32, tip: bool) -> Contact {
     }
 }
 
-/// Feeds the frames, ticking at every deadline in between as the
-/// application's loop does, then lets all timeouts expire.
 fn run_at(engine: &mut Engine, frames: &[TouchFrame]) -> Vec<(u64, Observation)> {
-    let mut out = Vec::new();
-    let mut collect =
-        |r: Vec<Recognition>| out.extend(r.into_iter().map(|r| (r.at_us, r.observation)));
-    for f in frames {
-        while let Some(d) = engine.next_deadline().filter(|&d| d <= f.timestamp_us) {
-            collect(engine.tick(d));
-        }
-        collect(engine.on_frame(DeviceId(1), f));
-    }
-    while let Some(d) = engine.next_deadline() {
-        collect(engine.tick(d));
-    }
-    out
+    let events: Vec<DeviceEvent> = frames
+        .iter()
+        .map(|f| DeviceEvent::Frame {
+            device: DeviceId(1),
+            frame: f.clone(),
+        })
+        .collect();
+    engine
+        .process_all(&events)
+        .into_iter()
+        .map(|r| (r.at_us, r.observation))
+        .collect()
 }
 
 fn run(engine: &mut Engine, frames: &[TouchFrame]) -> Vec<Observation> {
@@ -242,6 +239,31 @@ fn clicks_and_palms() {
         run(&mut engine(Spec::default()), &pad.frames),
         vec![tap(3, 1)]
     );
+}
+
+#[test]
+fn late_palm_voids_the_session() {
+    // Recorded on the reference touchpad: a palm reported as two confident
+    // contacts that are flagged as palms 70 ms later.
+    let mut pad = Pad::new();
+    let c = |id, conf| Contact {
+        confident: conf,
+        ..contact(id, 60.0 + 20.0 * id as f32, 80.0, true)
+    };
+    pad.push(vec![c(0, true)], false);
+    pad.push(vec![c(0, true), c(1, true)], false);
+    for _ in 0..10 {
+        pad.push(vec![c(0, false), c(1, true)], false);
+    }
+    for _ in 0..4 {
+        pad.push(vec![c(0, false), c(1, false), c(2, true)], false);
+    }
+    let lift = |id| Contact {
+        tip: false,
+        ..c(id, false)
+    };
+    pad.push(vec![lift(0), lift(1), lift(2)], false);
+    assert_eq!(run(&mut engine(Spec::everything()), &pad.frames), vec![]);
 }
 
 #[test]

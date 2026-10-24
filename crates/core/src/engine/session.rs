@@ -2,7 +2,7 @@
 //! lifting. The tracker turns frames into session state that every
 //! recognizer reads.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::TouchFrame;
 
@@ -40,6 +40,9 @@ pub struct Session {
     /// A recognizer fired during the session (e.g. a hold), so no other
     /// gesture may come from it.
     pub consumed: bool,
+    /// Contacts counted as fingers and later flagged as palms. The session
+    /// stays open until they lift.
+    pub palms: BTreeSet<u32>,
 }
 
 impl Session {
@@ -57,6 +60,7 @@ impl Session {
             peak_centroid_end: (0.0, 0.0),
             peak_over: false,
             consumed: false,
+            palms: BTreeSet::new(),
         }
     }
 
@@ -126,6 +130,21 @@ impl SessionTracker {
         s.last_us = ts;
         s.clicked |= frame.button_pressed;
 
+        // Touchpads often report a palm as a confident contact for the first
+        // few frames (30–70 ms on the reference device) and flag it only
+        // afterwards. By then it was counted as a finger and its removal
+        // would look like a lift, turning every palm into a tap; so a late
+        // palm voids the whole session instead, and the session lasts until
+        // the palm lifts, so fingers touching beside it start nothing either.
+        for c in &frame.contacts {
+            if c.tip && !c.confident && s.fingers.contains_key(&c.id) {
+                s.palms.insert(c.id);
+                s.consumed = true;
+            }
+        }
+        s.palms
+            .retain(|id| frame.contacts.iter().any(|c| c.id == *id && c.tip));
+
         s.fingers.retain(|id, _| active.iter().any(|c| c.id == *id));
         for c in &active {
             let pos = (c.x_mm, c.y_mm);
@@ -150,7 +169,7 @@ impl SessionTracker {
             }
         }
 
-        Some(if n == 0 {
+        Some(if n == 0 && s.palms.is_empty() {
             SessionUpdate::Ended
         } else if began {
             SessionUpdate::Began

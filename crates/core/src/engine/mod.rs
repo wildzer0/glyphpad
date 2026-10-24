@@ -306,6 +306,28 @@ impl Engine {
         all
     }
 
+    /// Runs a recorded session deterministically: ticks at every deadline
+    /// between frames, exactly as the live loop does, then lets the last
+    /// timeouts expire.
+    pub fn process_all<'a>(
+        &mut self,
+        events: impl IntoIterator<Item = &'a DeviceEvent>,
+    ) -> Vec<Recognition> {
+        let mut out = Vec::new();
+        for event in events {
+            if let DeviceEvent::Frame { frame, .. } = event {
+                while let Some(d) = self.next_deadline().filter(|&d| d <= frame.timestamp_us) {
+                    out.extend(self.tick(d));
+                }
+            }
+            out.extend(self.on_event(event));
+        }
+        while let Some(d) = self.next_deadline() {
+            out.extend(self.tick(d));
+        }
+        out
+    }
+
     /// Earliest time at which [`tick`](Self::tick) may produce something.
     pub fn next_deadline(&self) -> Option<u64> {
         self.devices
