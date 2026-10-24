@@ -1,0 +1,4 @@
+# Gestures (by name in gestures.toml) each fixture must produce, in order.
+"one-finger-circle.jsonl" = []
+"clicks-and-two-finger-taps.jsonl" = ["tap-2", "tap-2"]
+"palm.jsonl" = []

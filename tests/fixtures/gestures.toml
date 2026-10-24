@@ -1,0 +1,53 @@
+# Gesture set the regression fixtures are evaluated with: a typical setup
+# that exercises every recognizer (multi-tap waiting, holds, 4-way swipes).
+
+[[gesture]]
+name = "tap-1"
+type = "tap"
+fingers = 1
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "tap-2"
+type = "tap"
+fingers = 2
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "double-tap-3"
+type = "tap"
+fingers = 3
+taps = 2
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "tap-4"
+type = "tap"
+fingers = 4
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "hold-3"
+type = "hold"
+fingers = 3
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "hold-5"
+type = "hold"
+fingers = 5
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "swipe-3-up"
+type = "swipe"
+fingers = 3
+direction = "up"
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "swipe-4-left"
+type = "swipe"
+fingers = 4
+direction = "left"
+action = { type = "lock_screen" }
