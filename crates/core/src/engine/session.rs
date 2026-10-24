@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::TouchFrame;
+use crate::symbols::{Stroke, TracePoint};
 
 pub type Point = (f32, f32);
 
@@ -57,6 +58,8 @@ pub struct Session {
     pub palms: BTreeSet<u32>,
     /// Centroid of the fingers in every frame with at least one finger down.
     pub trace: Vec<TraceSample>,
+    /// Path of every finger, with times from the session start.
+    pub paths: BTreeMap<u32, Stroke>,
 }
 
 impl Session {
@@ -76,6 +79,7 @@ impl Session {
             consumed: false,
             palms: BTreeSet::new(),
             trace: Vec::new(),
+            paths: BTreeMap::new(),
         }
     }
 
@@ -163,6 +167,11 @@ impl SessionTracker {
         s.fingers.retain(|id, _| active.iter().any(|c| c.id == *id));
         for c in &active {
             let pos = (c.x_mm, c.y_mm);
+            s.paths.entry(c.id).or_default().push(TracePoint {
+                x_mm: c.x_mm,
+                y_mm: c.y_mm,
+                t_us: ts - s.start_us,
+            });
             let f = s.fingers.entry(c.id).or_insert(Finger { start: pos, pos });
             f.pos = pos;
             s.max_drift_mm = s.max_drift_mm.max(distance(f.start, pos));

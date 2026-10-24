@@ -27,6 +27,7 @@ mod tap;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::sync::Arc;
 
 use crate::action::AppInfo;
 use crate::config::{Config, Direction, Gesture, GestureKind, Settings};
@@ -278,7 +279,28 @@ pub struct Recognition {
     pub observation: Observation,
     /// Timestamp, in the frame time base, of the moment of recognition.
     pub at_us: u64,
+    /// What the fingers drew, for the history and its playback.
+    pub trace: Arc<GestureTrace>,
 }
+
+/// The movement behind a recognition, with point times, so the history can
+/// replay it faithfully (SPEC §10.1).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GestureTrace {
+    /// Path of every finger, by contact id (taps, holds, swipes).
+    pub fingers: BTreeMap<u32, Stroke>,
+    /// Strokes of a drawing.
+    pub strokes: Vec<Stroke>,
+}
+
+fn session_trace(s: &Session) -> Arc<GestureTrace> {
+    Arc::new(GestureTrace {
+        fingers: s.paths.clone(),
+        strokes: Vec::new(),
+    })
+}
+
+type Out = Vec<(Observation, Arc<GestureTrace>)>;
 
 /// A session whose device sends nothing for this long is dropped: the lift
 /// was lost (e.g. the device was unplugged mid-touch). Touchpads report
@@ -293,6 +315,8 @@ struct DeviceState {
     swipe: swipe::SwipeRecognizer,
     draw: draw::DrawRecognizer,
     last_frame_us: u64,
+    /// Trace of the last finished session, for taps confirmed later.
+    last_trace: Arc<GestureTrace>,
 }
 
 impl DeviceState {
@@ -401,7 +425,7 @@ impl Engine {
         let st = self.devices.entry(device).or_default();
         let ts = frame.timestamp_us;
         st.last_frame_us = ts;
-        let mut out = Vec::new();
+        let mut out: Out = Vec::new();
 
         match st.tracker.update(frame) {
             None => {}
@@ -415,21 +439,27 @@ impl Engine {
                     match stroke {
                         Some((samples, p)) => {
                             // A tap sequence cannot continue through a stroke.
-                            st.tap.reset_into(&mut out);
+                            Self::flush_taps(st, &mut out);
                             st.draw.add(samples, s, p);
                         }
                         None => {
                             // Not a stroke: a symbol in progress is complete.
                             out.extend(Self::finish_symbol(st, spec, t, symbols, recording));
-                            out.extend(st.tap.session_ended(&s, spec, t));
-                            out.extend(st.swipe.session_ended(&s, spec, t));
+                            let trace = session_trace(&s);
+                            st.last_trace = trace.clone();
+                            let obs = st.tap.session_ended(&s, spec, t).into_iter();
+                            out.extend(
+                                obs.chain(st.swipe.session_ended(&s, spec, t))
+                                    .map(|o| (o, trace.clone())),
+                            );
                         }
                     }
                 }
             }
             Some(update) => {
                 if update == session::SessionUpdate::Began {
-                    out.extend(st.tap.session_began(ts));
+                    let previous = st.last_trace.clone();
+                    out.extend(st.tap.session_began(ts).map(|o| (o, previous)));
                     if st.draw.deadline().is_some_and(|d| ts >= d) {
                         out.extend(Self::finish_symbol(st, spec, t, symbols, recording));
                     }
@@ -443,12 +473,21 @@ impl Engine {
             }
         }
         out.into_iter()
-            .map(|observation| Recognition {
+            .map(|(observation, trace)| Recognition {
                 device,
                 observation,
                 at_us: ts,
+                trace,
             })
             .collect()
+    }
+
+    /// Confirms a tap sequence waiting for more taps; it belongs to the
+    /// last finished session.
+    fn flush_taps(st: &mut DeviceState, out: &mut Out) {
+        let mut taps = Vec::new();
+        st.tap.reset_into(&mut taps);
+        out.extend(taps.into_iter().map(|o| (o, st.last_trace.clone())));
     }
 
     /// Recognizes the symbol in progress, if any; an unrecognized single
@@ -459,14 +498,21 @@ impl Engine {
         t: &Thresholds,
         symbols: &SymbolRecognizer,
         recording: bool,
-    ) -> Vec<Observation> {
+    ) -> Out {
         let Some(done) = st.draw.finish() else {
             return Vec::new();
         };
+        let trace = Arc::new(GestureTrace {
+            fingers: BTreeMap::new(),
+            strokes: done.strokes.clone(),
+        });
         if recording {
-            return vec![Observation::Sample {
-                strokes: done.strokes,
-            }];
+            return vec![(
+                Observation::Sample {
+                    strokes: done.strokes,
+                },
+                trace,
+            )];
         }
         let xy: Vec<Vec<(f32, f32)>> = done
             .strokes
@@ -480,32 +526,43 @@ impl Engine {
                 .symbol_threshold(&best.symbol)
                 .is_some_and(|min| best.score >= min)
         {
-            return vec![Observation::Symbol {
-                name: best.symbol.clone(),
-                score: best.score,
+            return vec![(
+                Observation::Symbol {
+                    name: best.symbol.clone(),
+                    score: best.score,
+                    candidates,
+                    strokes: done.strokes,
+                },
+                trace,
+            )];
+        }
+        let mut out = vec![(
+            Observation::UnrecognizedSymbol {
                 candidates,
                 strokes: done.strokes,
-            }];
-        }
-        let mut out = vec![Observation::UnrecognizedSymbol {
-            candidates,
-            strokes: done.strokes,
-        }];
+            },
+            trace,
+        )];
         if let Some(s) = done.fallback {
-            out.extend(st.tap.session_ended(&s, spec, t));
-            out.extend(st.swipe.session_ended(&s, spec, t));
+            let trace = session_trace(&s);
+            let obs = st.tap.session_ended(&s, spec, t).into_iter();
+            out.extend(
+                obs.chain(st.swipe.session_ended(&s, spec, t))
+                    .map(|o| (o, trace.clone())),
+            );
         }
         out
     }
 
     /// A hold fired mid-session: a tap sequence waiting for this touch is
     /// confirmed first, then the session is closed to other recognizers.
-    fn consume(st: &mut DeviceState, out: &mut Vec<Observation>, hold: Observation) {
-        st.tap.reset_into(out);
+    fn consume(st: &mut DeviceState, out: &mut Out, hold: Observation) {
+        Self::flush_taps(st, out);
+        let trace = st.tracker.session().map(session_trace).unwrap_or_default();
         if let Some(s) = st.tracker.session_mut() {
             s.consumed = true;
         }
-        out.push(hold);
+        out.push((hold, trace));
     }
 
     /// Advances time without new frames, for timeouts (multi-tap gap, holds,
@@ -515,13 +572,14 @@ impl Engine {
             (&self.spec, &self.thresholds, &self.symbols, self.recording);
         let mut all = Vec::new();
         for (&device, st) in &mut self.devices {
-            let mut out = Vec::new();
+            let mut out: Out = Vec::new();
             if st.tracker.session().is_some() && now_us >= st.last_frame_us + STALE_SESSION_US {
                 tracing::debug!(device = device.0, "dropping a stale touch session");
                 st.tracker.cancel();
                 st.hold.reset();
             }
-            out.extend(st.tap.tick(now_us));
+            let previous = st.last_trace.clone();
+            out.extend(st.tap.tick(now_us).map(|o| (o, previous)));
             if st.draw.deadline().is_some_and(|d| now_us >= d) {
                 out.extend(Self::finish_symbol(st, spec, t, symbols, recording));
             }
@@ -530,10 +588,11 @@ impl Engine {
             {
                 Self::consume(st, &mut out, hold);
             }
-            all.extend(out.into_iter().map(|observation| Recognition {
+            all.extend(out.into_iter().map(|(observation, trace)| Recognition {
                 device,
                 observation,
                 at_us: now_us,
+                trace,
             }));
         }
         all

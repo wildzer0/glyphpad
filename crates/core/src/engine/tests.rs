@@ -673,3 +673,29 @@ fn recording_produces_samples() {
     pad.draw(3, &[(70.0, 20.0), (30.0, 60.0)]);
     assert_eq!(names(&run(&mut engine, &pad.frames)), ["sample 2"]);
 }
+
+#[test]
+fn recognitions_carry_their_trace() {
+    let config = symbol_config("");
+    let mut pad = Pad::new();
+    pad.stroke(4, (30.0, 50.0), (0.0, 0.0), 100);
+    pad.wait_ms(400);
+    pad.draw(3, L);
+    let events: Vec<DeviceEvent> = pad
+        .frames
+        .iter()
+        .map(|f| DeviceEvent::Frame {
+            device: DeviceId(1),
+            frame: f.clone(),
+        })
+        .collect();
+    let out = Engine::from_config(&config).process_all(&events);
+    assert_eq!(out.len(), 2);
+    // The four-finger tap: one path per finger, timed from the touch.
+    let tap = &out[0].trace;
+    assert_eq!(tap.fingers.len(), 4);
+    assert_eq!(tap.fingers[&0][0].t_us, 0);
+    assert!(tap.strokes.is_empty());
+    // The L: its strokes.
+    assert_eq!(out[1].trace.strokes.len(), 1);
+}
