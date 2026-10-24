@@ -30,7 +30,7 @@ enum State {
         fingers: usize,
         /// The session of the first stroke, judged as a tap or swipe if the
         /// symbol is not recognized and it stays the only stroke.
-        fallback: Option<Session>,
+        fallback: Option<Box<Session>>,
         /// Lift of the last stroke plus the stroke gap; `None` while another
         /// touch is in progress.
         deadline_us: Option<u64>,
@@ -57,7 +57,7 @@ impl Default for DrawRecognizer {
 /// fall back on.
 pub struct Finished {
     pub strokes: Vec<Stroke>,
-    pub fallback: Option<Session>,
+    pub fallback: Option<Box<Session>>,
 }
 
 impl DrawRecognizer {
@@ -170,7 +170,7 @@ impl DrawRecognizer {
                     strokes: vec![to_stroke(&samples, origin_us)],
                     origin_us,
                     fingers: session.max_fingers,
-                    fallback: Some(session),
+                    fallback: Some(Box::new(session)),
                     deadline_us: Some(end + p.stroke_gap_us),
                 };
             }

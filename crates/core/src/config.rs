@@ -56,9 +56,59 @@ pub struct Settings {
     /// 0 keeps symbols orientation-sensitive: a rotated L is not an L.
     pub rotation_tolerance_deg: f32,
 
-    // repeat_last (M4).
+    // repeat_last (SPEC §9.1).
+    /// Seconds after which `repeat_last` does nothing; none by default.
     pub repeat_timeout_s: Option<u64>,
+    /// Do not repeat into a different foreground application.
     pub repeat_same_app_only: bool,
+
+    // Window and tray (SPEC §10.1).
+    /// The window's close button hides it to the tray instead of quitting.
+    pub close_to_tray: bool,
+    /// Start in the tray without showing the window.
+    pub start_minimized: bool,
+    /// Recognitions kept in the history.
+    pub history_size: usize,
+    /// Also keep the history in `history.jsonl` next to the configuration.
+    pub save_history: bool,
+
+    /// Feedback overlay (SPEC §13).
+    pub overlay: OverlaySettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Corner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    #[default]
+    BottomRight,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OverlaySettings {
+    pub enabled: bool,
+    pub position: Corner,
+    /// How long a recognized gesture's name stays on screen.
+    pub duration_ms: u64,
+    /// 0 (invisible) to 1 (opaque).
+    pub opacity: f32,
+    /// Width of the overlay panel in pixels; its height follows the touchpad's proportions.
+    pub width_px: u32,
+}
+
+impl Default for OverlaySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            position: Corner::BottomRight,
+            duration_ms: 1500,
+            opacity: 0.85,
+            width_px: 240,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -79,6 +129,11 @@ impl Default for Settings {
             rotation_tolerance_deg: 0.0,
             repeat_timeout_s: None,
             repeat_same_app_only: true,
+            close_to_tray: true,
+            start_minimized: false,
+            history_size: 20,
+            save_history: false,
+            overlay: OverlaySettings::default(),
         }
     }
 }
@@ -663,15 +718,6 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
         };
         for w in def.action.warnings() {
             warn("action", w);
-        }
-        if matches!(def.action, Action::RepeatLast | Action::ShowWindow) {
-            warn(
-                "action",
-                format!(
-                    "`{}` arrives with the GUI (M4); it does nothing for now",
-                    def.action.kind()
-                ),
-            );
         }
 
         if errors.len() == before {
