@@ -44,12 +44,17 @@ pub struct Settings {
     /// Slowest average speed for a swipe; slower travel is a drag.
     pub swipe_min_speed_mm_s: f32,
 
-    // Symbols and draw mode (M3).
+    // Symbols and draw mode (SPEC §5, §6.2).
+    /// How a touch becomes a stroke of a drawn symbol.
+    pub draw_activation: DrawActivation,
+    /// Strokes closer together than this form one symbol (an X is two strokes).
     pub stroke_gap_ms: u64,
+    /// Shortest stroke; anything shorter is a tap or fingers settling.
+    pub min_stroke_mm: f32,
+    /// Minimum score for a symbol when the gesture sets no `confidence`.
     pub default_confidence: f32,
-    /// Draw-mode activation, interpreted from M3 on.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub draw_activation: Option<toml::Table>,
+    /// 0 keeps symbols orientation-sensitive: a rotated L is not an L.
+    pub rotation_tolerance_deg: f32,
 
     // repeat_last (M4).
     pub repeat_timeout_s: Option<u64>,
@@ -67,13 +72,107 @@ impl Default for Settings {
             hold_max_movement_mm: 4.0,
             swipe_min_distance_mm: 18.0,
             swipe_min_speed_mm_s: 60.0,
+            draw_activation: DrawActivation::default(),
             stroke_gap_ms: 400,
+            min_stroke_mm: 10.0,
             default_confidence: 0.80,
-            draw_activation: None,
+            rotation_tolerance_deg: 0.0,
             repeat_timeout_s: None,
             repeat_same_app_only: true,
         }
     }
+}
+
+/// Draw-mode strategies (SPEC §5). Raw Input cannot stop Windows from
+/// moving the cursor, so a symbol must be drawn in a way the system ignores
+/// (several fingers) or that GlyphPad can tell apart from pointing.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DrawActivation {
+    /// Draw with `count` fingers; the stroke is their centroid. Windows does
+    /// not move the cursor with several fingers, but its own 3- and 4-finger
+    /// gestures must be turned off.
+    Fingers {
+        #[serde(default = "default_draw_fingers")]
+        count: u8,
+    },
+    /// Draw with one finger starting inside a zone along an edge.
+    Edge {
+        #[serde(default)]
+        edge: Edge,
+        /// Depth of the zone, in percent of the touchpad's size.
+        #[serde(default = "default_zone_percent")]
+        zone_percent: f32,
+        /// Experimental: pin the cursor while drawing (Windows `ClipCursor`).
+        #[serde(default)]
+        freeze_cursor: bool,
+    },
+    /// Rest one finger for `ms`, then draw.
+    Hold {
+        #[serde(default = "default_hold_to_draw_ms")]
+        ms: u64,
+        #[serde(default)]
+        freeze_cursor: bool,
+    },
+    /// Draw with one finger only after a gesture with the `draw_symbol`
+    /// action; the arming lasts `timeout_ms`.
+    Toggle {
+        #[serde(default = "default_toggle_timeout_ms")]
+        timeout_ms: u64,
+        #[serde(default)]
+        freeze_cursor: bool,
+    },
+}
+
+impl Default for DrawActivation {
+    fn default() -> Self {
+        DrawActivation::Fingers {
+            count: default_draw_fingers(),
+        }
+    }
+}
+
+impl DrawActivation {
+    pub fn freeze_cursor(&self) -> bool {
+        match *self {
+            DrawActivation::Fingers { .. } => false,
+            DrawActivation::Edge { freeze_cursor, .. }
+            | DrawActivation::Hold { freeze_cursor, .. }
+            | DrawActivation::Toggle { freeze_cursor, .. } => freeze_cursor,
+        }
+    }
+
+    /// How long a `draw_symbol` arming lasts.
+    pub fn arm_timeout_ms(&self) -> u64 {
+        match *self {
+            DrawActivation::Toggle { timeout_ms, .. } => timeout_ms,
+            _ => default_toggle_timeout_ms(),
+        }
+    }
+}
+
+fn default_draw_fingers() -> u8 {
+    3
+}
+fn default_zone_percent() -> f32 {
+    10.0
+}
+/// Long enough to tell apart from a pause while moving the pointer.
+fn default_hold_to_draw_ms() -> u64 {
+    400
+}
+fn default_toggle_timeout_ms() -> u64 {
+    5_000
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Edge {
+    #[default]
+    Left,
+    Right,
+    Top,
+    Bottom,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -405,6 +504,11 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
         ("swipe_min_distance_mm", s.swipe_min_distance_mm > 0.0),
         ("swipe_min_speed_mm_s", s.swipe_min_speed_mm_s >= 0.0),
         ("stroke_gap_ms", (1..=5_000).contains(&s.stroke_gap_ms)),
+        ("min_stroke_mm", s.min_stroke_mm > 0.0),
+        (
+            "rotation_tolerance_deg",
+            (0.0..=180.0).contains(&s.rotation_tolerance_deg),
+        ),
         (
             "default_confidence",
             (0.0..=1.0).contains(&s.default_confidence),
@@ -419,13 +523,38 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
             );
         }
     }
-    if s.draw_activation.is_some() {
-        warnings.push(Diagnostic {
+    match s.draw_activation {
+        DrawActivation::Fingers { count } if !(1..=crate::MAX_CONTACTS as u8).contains(&count) => err(
+            &mut errors,
+            None,
+            "settings → draw_activation → count".into(),
+            format!("must be between 1 and {}", crate::MAX_CONTACTS),
+        ),
+        DrawActivation::Fingers { count: 1 } => warnings.push(Diagnostic {
             line: None,
             column: None,
-            field: Some("settings → draw_activation".into()),
-            message: "draw mode arrives with symbol recognition (M3); ignored for now".into(),
-        });
+            field: Some("settings → draw_activation → count".into()),
+            message: "with one finger every pointer movement is a stroke; use `edge`, `hold` or `toggle` instead".into(),
+        }),
+        DrawActivation::Edge { zone_percent, .. } if !(1.0..=50.0).contains(&zone_percent) => err(
+            &mut errors,
+            None,
+            "settings → draw_activation → zone_percent".into(),
+            "must be between 1 and 50".into(),
+        ),
+        DrawActivation::Hold { ms, .. } if !(100..=5_000).contains(&ms) => err(
+            &mut errors,
+            None,
+            "settings → draw_activation → ms".into(),
+            "must be between 100 and 5000".into(),
+        ),
+        DrawActivation::Toggle { timeout_ms, .. } if !(500..=60_000).contains(&timeout_ms) => err(
+            &mut errors,
+            None,
+            "settings → draw_activation → timeout_ms".into(),
+            "must be between 500 and 60000".into(),
+        ),
+        _ => {}
     }
 
     let mut names = HashSet::new();
@@ -535,12 +664,6 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
         for w in def.action.warnings() {
             warn("action", w);
         }
-        if def.kind == GestureKind::Symbol {
-            warn(
-                "type",
-                "symbol recognition arrives in M3; this gesture is ignored for now".into(),
-            );
-        }
         if matches!(def.action, Action::RepeatLast | Action::ShowWindow) {
             warn(
                 "action",
@@ -638,8 +761,11 @@ action = { type = "keys", combo = "Ctrl+Tab" }
         let loaded = parse(text).unwrap();
         assert_eq!(loaded.config.gestures.len(), 4);
         assert_eq!(loaded.config.gestures[2].line, 20);
-        // draw_activation and the two symbol gestures.
-        assert_eq!(loaded.warnings.len(), 3);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(
+            loaded.config.settings.draw_activation,
+            DrawActivation::Fingers { count: 3 }
+        );
     }
 
     #[test]
@@ -677,6 +803,32 @@ action = { type = "keys" }
                 "line 8: gesture \"a\" → action: `keys` needs a `combo` or a `sequence`",
             ]
         );
+    }
+
+    #[test]
+    fn draw_activation_modes() {
+        let mode = |t: &str| {
+            parse(&format!("[settings]\ndraw_activation = {t}"))
+                .map(|l| l.config.settings.draw_activation)
+        };
+        assert_eq!(
+            mode(r#"{ mode = "edge", edge = "right", freeze_cursor = true }"#).unwrap(),
+            DrawActivation::Edge {
+                edge: Edge::Right,
+                zone_percent: 10.0,
+                freeze_cursor: true
+            }
+        );
+        assert_eq!(
+            mode(r#"{ mode = "hold" }"#).unwrap(),
+            DrawActivation::Hold {
+                ms: 400,
+                freeze_cursor: false
+            }
+        );
+        assert!(mode(r#"{ mode = "toggle", timeout_ms = 10 }"#).is_err());
+        assert!(mode(r#"{ mode = "fingers", count = 3, freeze_cursor = true }"#).is_err());
+        assert!(mode(r#"{ mode = "telepathy" }"#).is_err());
     }
 
     #[test]

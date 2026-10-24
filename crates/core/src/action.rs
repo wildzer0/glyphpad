@@ -55,6 +55,8 @@ pub enum Action {
     RepeatLast,
     /// Opens or focuses the GlyphPad window (M4).
     ShowWindow,
+    /// Lets the next symbol be drawn with one finger (draw mode `toggle`).
+    DrawSymbol,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +87,7 @@ impl Action {
             Action::ToggleEnabled => "toggle_enabled",
             Action::RepeatLast => "repeat_last",
             Action::ShowWindow => "show_window",
+            Action::DrawSymbol => "draw_symbol",
         }
     }
 
@@ -106,7 +109,10 @@ impl Action {
                     return Err("`chain` needs at least one action".into());
                 }
                 for (i, a) in actions.iter().enumerate() {
-                    if matches!(a, Action::Chain { .. } | Action::RepeatLast) {
+                    if matches!(
+                        a,
+                        Action::Chain { .. } | Action::RepeatLast | Action::DrawSymbol
+                    ) {
                         return Err(format!("`chain` item {} cannot be `{}`", i + 1, a.kind()));
                     }
                     a.validate()
@@ -148,8 +154,8 @@ impl Action {
 pub type ActionError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 /// Carries out the platform actions. `chain`, `wait`, `toggle_enabled`,
-/// `repeat_last` and `show_window` are handled by the application, never
-/// passed here.
+/// `repeat_last`, `show_window` and `draw_symbol` are handled by the
+/// application, never passed here.
 pub trait ActionExecutor {
     fn execute(&self, action: &Action) -> Result<(), ActionError>;
 }
