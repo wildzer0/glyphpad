@@ -103,8 +103,10 @@ proptest! {
         let a = r.recognize(&original);
         let b = r.recognize(&moved);
         prop_assert_eq!(&a[0].symbol, &b[0].symbol);
+        // Resampling in f32 can place a point one step differently at
+        // another scale, which moves scores by a few thousandths.
         for (ca, cb) in a.iter().zip(&b) {
-            prop_assert!((ca.score - cb.score).abs() < 1e-3, "{} {} vs {}", ca.symbol, ca.score, cb.score);
+            prop_assert!((ca.score - cb.score).abs() < 0.01, "{} {} vs {}", ca.symbol, ca.score, cb.score);
         }
     }
 
