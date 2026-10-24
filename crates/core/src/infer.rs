@@ -3,8 +3,9 @@
 
 use std::collections::HashMap;
 
-use crate::config::{Config, Direction, GestureKind};
+use crate::config::{Config, Direction, Edge, GestureKind};
 use crate::engine::Observation;
+use crate::trigger::{Trigger, TriggerDef, Turn, Zoom};
 
 /// What the demonstrations had in common.
 #[derive(Debug, Clone, PartialEq)]
@@ -13,20 +14,116 @@ pub struct Inferred {
     pub fingers: u8,
     pub taps: Option<u8>,
     pub direction: Option<Direction>,
+    pub edge: Option<Edge>,
+    pub zoom: Option<Zoom>,
+    pub rotation: Option<Turn>,
+    /// Resting fingers of a chord.
+    pub modifiers: Option<u8>,
     /// How many demonstrations agreed with this, out of `total`.
     pub agreeing: usize,
     pub total: usize,
 }
 
-fn key(o: &Observation) -> Option<(GestureKind, u8, Option<u8>, Option<Direction>)> {
-    match *o {
-        Observation::Tap { fingers, taps } => Some((GestureKind::Tap, fingers, Some(taps), None)),
-        Observation::Hold { fingers } => Some((GestureKind::Hold, fingers, None, None)),
+type Key = (
+    GestureKind,
+    u8,
+    Option<u8>,
+    Option<Direction>,
+    Option<Edge>,
+    Option<Zoom>,
+    Option<Turn>,
+    Option<u8>,
+);
+
+fn key(o: &Observation) -> Option<Key> {
+    Some(match *o {
+        Observation::Tap { fingers, taps } => (
+            GestureKind::Tap,
+            fingers,
+            Some(taps),
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        Observation::Hold { fingers } => (
+            GestureKind::Hold,
+            fingers,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
         Observation::Swipe {
             fingers, direction, ..
-        } => Some((GestureKind::Swipe, fingers, None, Some(direction))),
-        _ => None,
-    }
+        } => (
+            GestureKind::Swipe,
+            fingers,
+            None,
+            Some(direction),
+            None,
+            None,
+            None,
+            None,
+        ),
+        Observation::EdgeSwipe {
+            edge,
+            fingers,
+            direction,
+            ..
+        } => (
+            GestureKind::EdgeSwipe,
+            fingers,
+            None,
+            Some(direction),
+            Some(edge),
+            None,
+            None,
+            None,
+        ),
+        Observation::Pinch { fingers, zoom, .. } => (
+            GestureKind::Pinch,
+            fingers,
+            None,
+            None,
+            None,
+            Some(zoom),
+            None,
+            None,
+        ),
+        Observation::Rotate { fingers, turn, .. } => (
+            GestureKind::Rotate,
+            fingers,
+            None,
+            None,
+            None,
+            None,
+            Some(turn),
+            None,
+        ),
+        Observation::Click { fingers, direction } => (
+            GestureKind::Click,
+            fingers,
+            None,
+            direction,
+            None,
+            None,
+            None,
+            None,
+        ),
+        Observation::Chord {
+            modifiers,
+            ref gesture,
+        } => {
+            let mut k = key(gesture)?;
+            k.7 = Some(modifiers);
+            k
+        }
+        _ => return None,
+    })
 }
 
 /// The most common gesture among the demonstrations, or `None` if none was
@@ -51,29 +148,49 @@ pub fn infer(demonstrations: &[Observation]) -> Option<Inferred> {
         }
     }
     let best = best?;
-    let (kind, fingers, taps, direction) = best;
+    let (kind, fingers, taps, direction, edge, zoom, rotation, modifiers) = best;
     Some(Inferred {
         kind,
         fingers,
         taps,
         direction,
+        edge,
+        zoom,
+        rotation,
+        modifiers,
         agreeing: counts[&best],
         total,
     })
 }
 
+impl Inferred {
+    pub fn trigger(&self) -> Option<Trigger> {
+        TriggerDef {
+            kind: Some(self.kind),
+            fingers: Some(self.fingers),
+            taps: self.taps.filter(|&t| t > 1),
+            direction: self.direction,
+            edge: self.edge,
+            zoom: self.zoom,
+            rotation: self.rotation,
+            modifier_fingers: self.modifiers,
+            ..Default::default()
+        }
+        .build()
+        .ok()
+    }
+}
+
 /// Configured gestures that the same movement would also trigger, ignoring
 /// conditions (they may overlap).
 pub fn conflicts<'a>(config: &'a Config, g: &Inferred) -> Vec<&'a str> {
+    let Some(t) = g.trigger() else {
+        return Vec::new();
+    };
     config
         .gestures
         .iter()
-        .filter(|c| {
-            c.def.kind == g.kind
-                && c.fingers() == g.fingers
-                && (g.kind != GestureKind::Tap || Some(c.taps()) == g.taps)
-                && (g.kind != GestureKind::Swipe || c.def.direction == g.direction)
-        })
+        .filter(|c| c.trigger.as_ref() == Some(&t))
         .map(|c| c.def.name.as_str())
         .collect()
 }

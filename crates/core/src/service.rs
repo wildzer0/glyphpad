@@ -83,6 +83,8 @@ pub enum Command {
     },
     /// A watched file changed on disk (sent by the file watcher).
     FilesChanged,
+    /// Refresh `open_apps`, the applications with a window.
+    ListWindows,
     /// Run an action now ("Run now" in the editors).
     RunAction(Action),
     /// Drop a recorded sample or demonstration.
@@ -132,6 +134,8 @@ pub struct Shared {
     pub backups: Vec<String>,
     /// The editor's save was refused because the file changed on disk.
     pub write_conflict: bool,
+    /// Applications with a visible window, for picking conditions.
+    pub open_apps: Vec<crate::action::AppInfo>,
     /// The user's templates file.
     pub templates: Arc<TemplateFile>,
     /// Templates in use: built-in plus the user's.

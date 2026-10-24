@@ -373,9 +373,11 @@ impl Service {
                 return;
             }
             EngineMode::RecordDemonstration => {
-                if matches!(
+                if !matches!(
                     r.observation,
-                    Observation::Tap { .. } | Observation::Hold { .. } | Observation::Swipe { .. }
+                    Observation::Symbol { .. }
+                        | Observation::UnrecognizedSymbol { .. }
+                        | Observation::Sample { .. }
                 ) {
                     self.update_shared(|s| {
                         s.recorded.push(Recorded::Demonstration {
@@ -922,6 +924,11 @@ impl Service {
                 }
             }
             Command::FilesChanged => self.files_changed_at = Some(Instant::now()),
+            Command::ListWindows => {
+                let apps = self.foreground.windows();
+                self.update_shared(|s| s.open_apps = apps);
+                self.ui.wake();
+            }
             Command::RunAction(action) => {
                 let _ = self.actions.send(action);
             }
