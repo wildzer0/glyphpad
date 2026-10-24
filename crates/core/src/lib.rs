@@ -13,6 +13,7 @@ pub mod keys;
 pub mod model;
 pub mod repeat;
 pub mod replay;
+pub mod service;
 pub mod source;
 pub mod stats;
 pub mod symbols;

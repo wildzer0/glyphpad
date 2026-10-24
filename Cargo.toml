@@ -29,7 +29,7 @@ eframe = { version = "0.37.0", default-features = false, features = ["glow", "de
 directories = "6.0.0"
 # Window-title conditions (`when.title`) are regular expressions (SPEC §9).
 regex = "1.13.1"
-serde = { version = "1.0.229", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
 toml = { version = "1.1.8", features = ["preserve_order"] }

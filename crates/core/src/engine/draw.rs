@@ -188,6 +188,14 @@ impl DrawRecognizer {
         }
     }
 
+    /// Strokes of the symbol in progress so far.
+    pub fn strokes(&self) -> &[Stroke] {
+        match &self.state {
+            State::Collecting { strokes, .. } => strokes,
+            State::Idle => &[],
+        }
+    }
+
     /// Ends the symbol in progress, if any.
     pub fn finish(&mut self) -> Option<Finished> {
         match std::mem::replace(&mut self.state, State::Idle) {

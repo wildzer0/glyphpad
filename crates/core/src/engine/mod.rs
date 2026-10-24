@@ -285,7 +285,7 @@ pub struct Recognition {
 
 /// The movement behind a recognition, with point times, so the history can
 /// replay it faithfully (SPEC §10.1).
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct GestureTrace {
     /// Path of every finger, by contact id (taps, holds, swipes).
     pub fingers: BTreeMap<u32, Stroke>,
@@ -301,6 +301,9 @@ fn session_trace(s: &Session) -> Arc<GestureTrace> {
 }
 
 type Out = Vec<(Observation, Arc<GestureTrace>)>;
+
+/// Points in millimeters.
+pub type Polyline = Vec<(f32, f32)>;
 
 /// A session whose device sends nothing for this long is dropped: the lift
 /// was lost (e.g. the device was unplugged mid-touch). Touchpads report
@@ -401,6 +404,28 @@ impl Engine {
         self.devices
             .values()
             .any(|st| st.tracker.session().is_some_and(|s| st.draw.drawing(s, p)))
+    }
+
+    /// The symbol being drawn, in millimeters: its finished strokes and the
+    /// one in progress, for live feedback.
+    pub fn drawing_preview(&self) -> Option<(DeviceId, Vec<Polyline>)> {
+        let p = self.spec.draw.as_ref()?;
+        self.devices.iter().find_map(|(&id, st)| {
+            let drawing = st.tracker.session().filter(|s| st.draw.drawing(s, p));
+            if drawing.is_none() && st.draw.strokes().is_empty() {
+                return None;
+            }
+            let mut strokes: Vec<Polyline> = st
+                .draw
+                .strokes()
+                .iter()
+                .map(|s| s.iter().map(|p| (p.x_mm, p.y_mm)).collect())
+                .collect();
+            if let Some(s) = drawing {
+                strokes.push(s.trace.iter().map(|t| t.mm).collect());
+            }
+            Some((id, strokes))
+        })
     }
 
     /// Forgets every touch in progress and pending tap sequence.
