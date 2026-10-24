@@ -138,14 +138,8 @@ fn templates_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String>
         ui.horizontal_wrapped(|ui| {
             for (i, sample) in samples.iter().enumerate() {
                 ui.vertical(|ui| {
-                    let (_, painter, pad) = Pad::new(ui, 200.0, sample.width_mm, sample.height_mm);
-                    canvas::draw_strokes(
-                        &painter,
-                        &pad,
-                        &sample.strokes,
-                        Some(st.playback.t_us),
-                        true,
-                    );
+                    ui.set_width(200.0);
+                    canvas::thumbnail(ui, 200.0, sample, Some(st.playback.t_us));
                     ui.horizontal(|ui| {
                         if i < n_builtin {
                             ui.weak(format!("built-in {}", i + 1));
@@ -225,7 +219,10 @@ fn history_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) {
 }
 
 fn entry_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State, e: &HistoryEntry) {
-    ui.strong(&e.recognized);
+    // A fixed width: the playback must not resize anything around it.
+    let width = (ui.available_width() - 8.0).clamp(240.0, 520.0);
+    ui.set_max_width(width);
+    ui.add(egui::Label::new(egui::RichText::new(&e.recognized).strong()).truncate());
     let strokes = &e.trace.strokes;
     let total = if strokes.is_empty() {
         canvas::duration_us(e.trace.fingers.values())
@@ -234,7 +231,6 @@ fn entry_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State, e: &HistoryEntry) {
     };
     st.playback.controls(ui, total);
     st.playback.advance(ui.ctx(), total);
-    let width = ui.available_width().min(520.0);
     let (_, painter, pad) = Pad::new(ui, width, e.width_mm, e.height_mm);
     if strokes.is_empty() {
         canvas::draw_fingers(&painter, &pad, &e.trace.fingers, Some(st.playback.t_us));

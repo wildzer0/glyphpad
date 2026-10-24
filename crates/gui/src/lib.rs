@@ -13,6 +13,7 @@ mod gestures;
 mod icon;
 mod review;
 mod settings;
+mod style;
 mod wizard;
 
 use std::path::{Path, PathBuf};
@@ -68,6 +69,9 @@ pub struct Host {
     /// tray events wake the window up.
     pub tray: Box<dyn FnOnce(egui::Context) -> Option<Box<dyn Tray>>>,
     pub open_folder: Box<dyn Fn(&Path)>,
+    /// Activates the window given its native handle, past the system's
+    /// focus-stealing prevention.
+    pub bring_to_front: Box<dyn Fn(isize)>,
 }
 
 pub fn run(options: Options, host: Host) -> Result<(), String> {
@@ -92,11 +96,13 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
         ui,
         tray,
         open_folder,
+        bring_to_front,
     } = host;
     eframe::run_native(
         "GlyphPad",
         native,
         Box::new(move |cc| {
+            style::install(&cc.egui_ctx);
             let ctx = cc.egui_ctx.clone();
             ui.set_repaint(move || ctx.request_repaint());
             ui.set_visible(!options.start_hidden);
@@ -107,6 +113,8 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
                 ui,
                 tray,
                 open_folder,
+                bring_to_front,
+                hwnd: None,
                 tab: options.tab,
                 visible: !options.start_hidden,
                 quitting: false,
@@ -128,6 +136,9 @@ struct App {
     ui: Arc<UiLink>,
     tray: Option<Box<dyn Tray>>,
     open_folder: Box<dyn Fn(&Path)>,
+    bring_to_front: Box<dyn Fn(isize)>,
+    /// Native handle of the window, once known.
+    hwnd: Option<isize>,
     tab: Tab,
     visible: bool,
     /// Quitting for real, not hiding to the tray.
@@ -162,6 +173,9 @@ impl App {
         ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(ViewportCommand::Focus);
+        if let Some(hwnd) = self.hwnd {
+            (self.bring_to_front)(hwnd);
+        }
         self.visible = true;
         self.ui.set_visible(true);
     }
@@ -183,7 +197,15 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.hwnd.is_none() {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(h) = frame.window_handle()
+                && let RawWindowHandle::Win32(w) = h.as_raw()
+            {
+                self.hwnd = Some(w.hwnd.get());
+            }
+        }
         let actions = self.tray.as_mut().map(|t| t.poll()).unwrap_or_default();
         for action in actions {
             match action {

@@ -225,6 +225,10 @@ fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool) -> Result<()
                 }
             }),
             open_folder: Box::new(open_folder),
+            bring_to_front: Box::new(|_hwnd| {
+                #[cfg(windows)]
+                glyphpad_platform::windows::foreground::bring_to_front(_hwnd);
+            }),
         },
     )
     .map_err(|e| anyhow::anyhow!("the window failed: {e}"))

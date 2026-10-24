@@ -190,6 +190,49 @@ pub fn bounds(strokes: &[Trace]) -> Option<(f32, f32, f32, f32)> {
     ))
 }
 
+/// Strokes uniformly scaled and centered to fill a `width_mm`×`height_mm`
+/// surface, leaving `margin` (a fraction) around them. Templates keep the
+/// position where they were drawn, which in a thumbnail put small symbols
+/// in a corner or cut them off.
+pub fn fit_into(strokes: &[Trace], width_mm: f32, height_mm: f32, margin: f32) -> Vec<Trace> {
+    let Some((x0, y0, x1, y1)) = bounds(strokes) else {
+        return strokes.to_vec();
+    };
+    let (w, h) = ((x1 - x0).max(1e-3), (y1 - y0).max(1e-3));
+    let k = ((width_mm * (1.0 - 2.0 * margin)) / w).min((height_mm * (1.0 - 2.0 * margin)) / h);
+    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    strokes
+        .iter()
+        .map(|s| {
+            s.iter()
+                .map(|p| glyphpad_core::symbols::TracePoint {
+                    x_mm: width_mm / 2.0 + (p.x_mm - cx) * k,
+                    y_mm: height_mm / 2.0 + (p.y_mm - cy) * k,
+                    t_us: p.t_us,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Paints a sample fitted into a thumbnail of its touchpad's proportions.
+pub fn thumbnail(
+    ui: &mut egui::Ui,
+    width: f32,
+    sample: &glyphpad_core::symbols::Sample,
+    until_us: Option<u64>,
+) -> egui::Response {
+    let (w_mm, h_mm) = if sample.width_mm > 0.0 {
+        (sample.width_mm, sample.height_mm)
+    } else {
+        (100.0, 70.0)
+    };
+    let (response, painter, pad) = Pad::new(ui, width, w_mm, h_mm);
+    let fitted = fit_into(&sample.strokes, w_mm, h_mm, 0.12);
+    draw_strokes(&painter, &pad, &fitted, until_us, true);
+    response
+}
+
 /// `template` moved and uniformly scaled onto the bounding box of `onto`,
 /// to compare a drawing with the template that recognized it.
 pub fn fit_onto(template: &[Trace], onto: &[Trace]) -> Vec<Trace> {
