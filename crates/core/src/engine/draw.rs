@@ -119,6 +119,26 @@ impl DrawRecognizer {
         p: &DrawParams,
         arming: Arming,
     ) -> Option<Vec<TraceSample>> {
+        let samples = dejitter(self.stroke_samples(s, p, arming)?);
+        let length: f32 = samples.windows(2).map(|w| distance(w[0].mm, w[1].mm)).sum();
+        (samples.len() >= 2 && length >= p.min_stroke_mm).then_some(samples)
+    }
+
+    /// The stroke so far of a session in progress, in millimeters, chosen
+    /// exactly as the recognizer will: with three-finger drawing, the
+    /// moments with fewer fingers down (landing, lifting) are left out.
+    pub fn preview(&self, s: &Session, p: &DrawParams, arming: Arming) -> Vec<(f32, f32)> {
+        self.stroke_samples(s, p, arming)
+            .map(|v| v.iter().map(|t| t.mm).collect())
+            .unwrap_or_default()
+    }
+
+    fn stroke_samples(
+        &self,
+        s: &Session,
+        p: &DrawParams,
+        arming: Arming,
+    ) -> Option<Vec<TraceSample>> {
         if s.consumed || s.clicked || s.trace.is_empty() {
             return None;
         }
@@ -156,9 +176,7 @@ impl DrawRecognizer {
                     DrawActivation::Toggle { .. } => return None,
                 }
             };
-        let samples = dejitter(samples);
-        let length: f32 = samples.windows(2).map(|w| distance(w[0].mm, w[1].mm)).sum();
-        (samples.len() >= 2 && length >= p.min_stroke_mm).then_some(samples)
+        Some(samples)
     }
 
     /// A one-finger symbol is under way.

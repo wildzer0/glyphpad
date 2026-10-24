@@ -447,7 +447,7 @@ impl Engine {
                 .map(|s| s.iter().map(|p| (p.x_mm, p.y_mm)).collect())
                 .collect();
             if let Some(s) = drawing {
-                strokes.push(s.trace.iter().map(|t| t.mm).collect());
+                strokes.push(st.draw.preview(s, p, self.arming));
             }
             Some((id, strokes))
         })
