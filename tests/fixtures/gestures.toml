@@ -51,3 +51,15 @@ type = "swipe"
 fingers = 4
 direction = "left"
 action = { type = "lock_screen" }
+
+[[gesture]]
+name = "symbol-L"
+type = "symbol"
+symbol = "L"
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "symbol-q-X"
+type = "symbol"
+symbol = ["q", "X"]
+action = { type = "lock_screen" }

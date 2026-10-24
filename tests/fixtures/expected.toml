@@ -7,3 +7,4 @@
 "five-finger-holds.jsonl" = ["hold-5", "hold-5"]
 "three-finger-swipes-up.jsonl" = ["swipe-3-up", "swipe-3-up", "swipe-3-up"]
 "four-finger-swipes-left.jsonl" = ["swipe-4-left", "swipe-4-left", "swipe-4-left"]
+"three-finger-L.jsonl" = ["symbol-L", "symbol-L", "symbol-L"]
