@@ -1,12 +1,76 @@
-# GlyphPad example configuration.
+# GlyphPad configuration.
 #
-# Copy this file next to the executable as `glyphpad.toml` to run in portable
-# mode, or into the OS config directory. Gestures and settings will be added
-# here as the corresponding features land.
+# Portable mode: put this file next to glyphpad.exe as `glyphpad.toml`.
+# Otherwise GlyphPad uses the OS config directory (on Windows
+# %APPDATA%\GlyphPad\config\glyphpad.toml) and creates it on first start.
+# Check a file with `glyphpad check-config <file>`.
 
 config_version = 1
+
+[settings]
+active_profile = "default"
+
+# Thresholds. Distances are millimeters, so they work on any touchpad size.
+tap_max_duration_ms = 250
+tap_max_movement_mm = 4.0
+multi_tap_gap_ms = 300
+hold_duration_ms = 600
+hold_max_movement_mm = 4.0
+swipe_min_distance_mm = 25.0
+swipe_min_speed_mm_s = 60.0
 
 [update]
 mode = "notify"          # off | notify | auto
 channel = "stable"       # stable | prerelease
 check_interval_h = 24
+
+# Gestures, in priority order: when two could fire, the first one wins.
+#
+# Windows has its own 3- and 4-finger gestures (Settings → Bluetooth & devices
+# → Touchpad). Turn off the ones you replace here, or both will run.
+
+[[gesture]]
+name = "show-desktop"
+type = "tap"
+fingers = 4
+action = { type = "keys", combo = "Win+D" }
+
+[[gesture]]
+name = "play-pause"
+type = "tap"
+fingers = 5
+action = { type = "media", key = "play_pause" }
+
+[[gesture]]
+name = "hello"
+type = "hold"
+fingers = 5
+action = { type = "notify", title = "GlyphPad", message = "Gestures are working" }
+
+# More examples:
+#
+# [[gesture]]
+# name = "terminal"
+# type = "tap"
+# fingers = 3
+# taps = 2
+# action = { type = "run", command = "wt.exe" }
+#
+# [[gesture]]
+# name = "next-tab-in-browser"
+# type = "swipe"
+# fingers = 3
+# direction = "right"
+# when = { app = ["chrome.exe", "firefox.exe"] }
+# action = { type = "keys", combo = "Ctrl+Tab" }
+#
+# [[gesture]]
+# name = "copy-paste"
+# type = "swipe"
+# fingers = 4
+# direction = "down"
+# action = { type = "chain", actions = [
+#     { type = "keys", combo = "Ctrl+C" },
+#     { type = "wait", ms = 100 },
+#     { type = "keys", combo = "Ctrl+V" },
+# ] }

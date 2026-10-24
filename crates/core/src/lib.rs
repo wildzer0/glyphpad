@@ -3,7 +3,10 @@
 //!
 //! This crate must not depend on any OS API (SPEC §3).
 
+pub mod action;
 pub mod capture;
+pub mod config;
+pub mod keys;
 pub mod model;
 pub mod replay;
 pub mod source;
