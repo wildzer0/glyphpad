@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "xtask"]
 default-members = ["crates/*"]
 
 [workspace.package]
@@ -21,6 +21,9 @@ glyphpad-updater = { path = "crates/updater" }
 
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
+jiff = "0.2.38"
+semver = "1.0.28"
+toml_edit = "0.25.17"
 
 [workspace.lints.rust]
 # SPEC §2: no `unsafe` outside platform FFI modules, which opt in with `#[allow(unsafe_code)]`.
