@@ -40,16 +40,25 @@ enum State {
 #[derive(Debug)]
 pub struct DrawRecognizer {
     state: State,
-    /// One-finger drawing armed by the `draw_symbol` action until then.
-    armed_until: Option<u64>,
 }
 
 impl Default for DrawRecognizer {
     fn default() -> Self {
-        Self {
-            state: State::Idle,
-            armed_until: None,
-        }
+        Self { state: State::Idle }
+    }
+}
+
+/// One-finger drawing armed by the `draw_symbol` action, or permanently
+/// while recording templates in `toggle` mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Arming {
+    pub until_us: Option<u64>,
+    pub always: bool,
+}
+
+impl Arming {
+    fn at(&self, t_us: u64) -> bool {
+        self.always || self.until_us.is_some_and(|u| t_us <= u)
     }
 }
 
@@ -61,17 +70,8 @@ pub struct Finished {
 }
 
 impl DrawRecognizer {
-    pub fn arm(&mut self, until_us: u64) {
-        self.armed_until = Some(until_us);
-    }
-
-    fn armed_at(&self, t_us: u64) -> bool {
-        self.armed_until.is_some_and(|u| t_us <= u)
-    }
-
     pub fn reset(&mut self) {
         self.state = State::Idle;
-        self.armed_until = None;
     }
 
     pub fn deadline(&self) -> Option<u64> {
@@ -90,14 +90,14 @@ impl DrawRecognizer {
 
     /// Whether the session in progress is (so far) being drawn, e.g. to
     /// freeze the cursor while it is.
-    pub fn drawing(&self, s: &Session, p: &DrawParams) -> bool {
+    pub fn drawing(&self, s: &Session, p: &DrawParams, arming: Arming) -> bool {
         if s.consumed || s.clicked {
             return false;
         }
         let Some(first) = s.trace.first() else {
             return false;
         };
-        if s.max_fingers == 1 && (self.armed_at(s.start_us) || self.continues_one_finger()) {
+        if s.max_fingers == 1 && (arming.at(s.start_us) || self.continues_one_finger()) {
             return true;
         }
         match p.activation {
@@ -113,7 +113,12 @@ impl DrawRecognizer {
     }
 
     /// The part of a finished session that is a stroke, if any.
-    pub fn stroke_of(&self, s: &Session, p: &DrawParams) -> Option<Vec<TraceSample>> {
+    pub fn stroke_of(
+        &self,
+        s: &Session,
+        p: &DrawParams,
+        arming: Arming,
+    ) -> Option<Vec<TraceSample>> {
         if s.consumed || s.clicked || s.trace.is_empty() {
             return None;
         }
@@ -122,7 +127,7 @@ impl DrawRecognizer {
         // one-finger touch continues it whatever the activation mode, so a
         // symbol can be finished in the same way it was started.
         let samples: Vec<TraceSample> =
-            if one_finger && (self.armed_at(s.start_us) || self.continues_one_finger()) {
+            if one_finger && (arming.at(s.start_us) || self.continues_one_finger()) {
                 s.trace.clone()
             } else {
                 match p.activation {
@@ -201,10 +206,7 @@ impl DrawRecognizer {
         match std::mem::replace(&mut self.state, State::Idle) {
             State::Collecting {
                 strokes, fallback, ..
-            } => {
-                self.armed_until = None;
-                Some(Finished { strokes, fallback })
-            }
+            } => Some(Finished { strokes, fallback }),
             State::Idle => None,
         }
     }

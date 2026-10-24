@@ -67,6 +67,10 @@ pub enum Command {
         path: Vec<String>,
         value: toml::Value,
     },
+    /// Remove a configuration value so its default applies.
+    RemoveSetting {
+        path: Vec<String>,
+    },
     /// Run an action now ("Run now" in the editors).
     RunAction(Action),
     /// Drop a recorded sample or demonstration.
@@ -109,7 +113,7 @@ pub struct Shared {
     pub config: Arc<Config>,
     pub config_path: PathBuf,
     /// The user's templates file.
-    pub templates: TemplateFile,
+    pub templates: Arc<TemplateFile>,
     /// Templates in use: built-in plus the user's.
     pub effective: Arc<BTreeMap<String, Vec<Sample>>>,
     pub devices: Vec<DeviceInfo>,
@@ -142,5 +146,58 @@ impl Shared {
             .and_then(|id| self.device(id))
             .or(self.devices.first())
             .map_or((100.0, 70.0), |d| (d.width_mm, d.height_mm))
+    }
+}
+
+/// How the engine thread reaches the interface: waking it up to repaint,
+/// asking it to show the window, and knowing whether it is visible (so the
+/// engine does not wake a hidden window for every touch frame).
+#[derive(Default)]
+pub struct UiLink {
+    repaint: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    visible: std::sync::atomic::AtomicBool,
+    show: std::sync::atomic::AtomicBool,
+}
+
+impl UiLink {
+    pub fn set_repaint(&self, f: impl Fn() + Send + Sync + 'static) {
+        if let Ok(mut r) = self.repaint.lock() {
+            *r = Some(Box::new(f));
+        }
+    }
+
+    pub fn wake(&self) {
+        if let Ok(r) = self.repaint.lock()
+            && let Some(f) = r.as_ref()
+        {
+            f();
+        }
+    }
+
+    pub fn set_visible(&self, visible: bool) {
+        self.visible
+            .store(visible, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.visible.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Asks the interface to show and focus its window.
+    pub fn request_show(&self) {
+        self.show.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.wake();
+    }
+
+    pub fn take_show_request(&self) -> bool {
+        self.show.swap(false, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl std::fmt::Debug for UiLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UiLink")
+            .field("visible", &self.is_visible())
+            .finish_non_exhaustive()
     }
 }

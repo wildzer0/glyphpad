@@ -338,6 +338,7 @@ pub struct Engine {
     devices: HashMap<DeviceId, DeviceState>,
     /// Drawings become samples instead of being recognized (`glyphpad record`).
     recording: bool,
+    arming: draw::Arming,
 }
 
 impl Engine {
@@ -349,6 +350,7 @@ impl Engine {
             symbols: SymbolRecognizer::new(&templates::defaults(), 0.0),
             devices: HashMap::new(),
             recording: false,
+            arming: draw::Arming::default(),
         }
     }
 
@@ -390,9 +392,27 @@ impl Engine {
     /// Lets the next symbol be drawn with one finger, until `until_us`
     /// (the `draw_symbol` action).
     pub fn arm_drawing(&mut self, until_us: u64) {
-        self.devices
-            .values_mut()
-            .for_each(|st| st.draw.arm(until_us));
+        self.arming.until_us = Some(until_us);
+    }
+
+    /// Keeps one-finger drawing armed for every symbol (recording templates
+    /// in `toggle` mode).
+    pub fn keep_drawing_armed(&mut self, always: bool) {
+        self.arming.always = always;
+    }
+
+    /// A symbol was completed: a `draw_symbol` arming is spent.
+    fn spend_arming(&mut self, out: &[Recognition]) {
+        if out.iter().any(|r| {
+            matches!(
+                r.observation,
+                Observation::Symbol { .. }
+                    | Observation::UnrecognizedSymbol { .. }
+                    | Observation::Sample { .. }
+            )
+        }) {
+            self.arming.until_us = None;
+        }
     }
 
     /// Whether some touch in progress is being drawn, e.g. to freeze the
@@ -401,9 +421,11 @@ impl Engine {
         let Some(p) = &self.spec.draw else {
             return false;
         };
-        self.devices
-            .values()
-            .any(|st| st.tracker.session().is_some_and(|s| st.draw.drawing(s, p)))
+        self.devices.values().any(|st| {
+            st.tracker
+                .session()
+                .is_some_and(|s| st.draw.drawing(s, p, self.arming))
+        })
     }
 
     /// The symbol being drawn, in millimeters: its finished strokes and the
@@ -411,7 +433,10 @@ impl Engine {
     pub fn drawing_preview(&self) -> Option<(DeviceId, Vec<Polyline>)> {
         let p = self.spec.draw.as_ref()?;
         self.devices.iter().find_map(|(&id, st)| {
-            let drawing = st.tracker.session().filter(|s| st.draw.drawing(s, p));
+            let drawing = st
+                .tracker
+                .session()
+                .filter(|s| st.draw.drawing(s, p, self.arming));
             if drawing.is_none() && st.draw.strokes().is_empty() {
                 return None;
             }
@@ -445,8 +470,13 @@ impl Engine {
     }
 
     pub fn on_frame(&mut self, device: DeviceId, frame: &TouchFrame) -> Vec<Recognition> {
-        let (spec, t, symbols, recording) =
-            (&self.spec, &self.thresholds, &self.symbols, self.recording);
+        let (spec, t, symbols, recording, arming) = (
+            &self.spec,
+            &self.thresholds,
+            &self.symbols,
+            self.recording,
+            self.arming,
+        );
         let st = self.devices.entry(device).or_default();
         let ts = frame.timestamp_us;
         st.last_frame_us = ts;
@@ -460,7 +490,7 @@ impl Engine {
                     let stroke = spec
                         .draw
                         .as_ref()
-                        .and_then(|p| Some((st.draw.stroke_of(&s, p)?, p)));
+                        .and_then(|p| Some((st.draw.stroke_of(&s, p, arming)?, p)));
                     match stroke {
                         Some((samples, p)) => {
                             // A tap sequence cannot continue through a stroke.
@@ -497,14 +527,17 @@ impl Engine {
                 }
             }
         }
-        out.into_iter()
+        let out: Vec<Recognition> = out
+            .into_iter()
             .map(|(observation, trace)| Recognition {
                 device,
                 observation,
                 at_us: ts,
                 trace,
             })
-            .collect()
+            .collect();
+        self.spend_arming(&out);
+        out
     }
 
     /// Confirms a tap sequence waiting for more taps; it belongs to the
@@ -620,6 +653,7 @@ impl Engine {
                 trace,
             }));
         }
+        self.spend_arming(&all);
         all
     }
 

@@ -101,6 +101,21 @@ pub fn set_value<V: serde::Serialize>(
     validated(doc)
 }
 
+/// Removes a value such as `settings.repeat_timeout_s`, so its default applies.
+pub fn remove_value(text: &str, path: &[&str]) -> Result<String, String> {
+    let (key, tables) = path.split_last().ok_or("empty path")?;
+    let mut doc = parse(text)?;
+    let mut table: &mut dyn toml_edit::TableLike = doc.as_table_mut();
+    for name in tables {
+        match table.get_mut(name).and_then(Item::as_table_like_mut) {
+            Some(t) => table = t,
+            None => return validated(doc),
+        }
+    }
+    table.remove(key);
+    validated(doc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +196,16 @@ action = { type = "lock_screen" }
         assert_eq!(s.overlay.opacity, 0.5);
         // Invalid values are refused.
         assert!(set_value(FILE, &["settings", "history_size"], 0).is_err());
+        let out = set_value(FILE, &["settings", "repeat_timeout_s"], 30).unwrap();
+        let out = remove_value(&out, &["settings", "repeat_timeout_s"]).unwrap();
+        assert_eq!(
+            config::parse(&out)
+                .unwrap()
+                .config
+                .settings
+                .repeat_timeout_s,
+            None
+        );
+        assert!(out.contains("# hide instead of quitting"));
     }
 }
