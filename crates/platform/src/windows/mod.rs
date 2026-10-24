@@ -5,8 +5,10 @@
 #![allow(unsafe_code)]
 
 pub mod console;
+pub mod cursor;
 mod device;
 mod hid;
+pub mod native_gestures;
 mod source;
 
 pub use hid::MaxContactsSource;
