@@ -2,3 +2,8 @@
 "one-finger-circle.jsonl" = []
 "clicks-and-two-finger-taps.jsonl" = ["tap-2", "tap-2"]
 "palm.jsonl" = []
+"four-finger-taps.jsonl" = ["tap-4", "tap-4", "tap-4", "tap-4", "tap-4", "tap-4"]
+"three-finger-double-taps.jsonl" = ["double-tap-3", "double-tap-3", "double-tap-3", "double-tap-3"]
+"five-finger-holds.jsonl" = ["hold-5", "hold-5"]
+"three-finger-swipes-up.jsonl" = ["swipe-3-up", "swipe-3-up", "swipe-3-up"]
+"four-finger-swipes-left.jsonl" = ["swipe-4-left", "swipe-4-left", "swipe-4-left"]
