@@ -1,0 +1,27 @@
+# Rust build output
+/target/
+**/*.rs.bk
+*.pdb
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Personal runtime files: config, logs, backups, captures, templates.
+# Only the committed example config and test fixtures belong in git.
+/glyphpad.toml
+/templates/
+/backups/
+/logs/
+/captures/
+*.log
+*.jsonl
+!/tests/fixtures/**
+
+# Signing material must never be committed
+*.key
+*.minisign
