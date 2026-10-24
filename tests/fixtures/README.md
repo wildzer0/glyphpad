@@ -3,8 +3,9 @@
 Real sessions recorded with `glyphpad capture` on the reference hardware
 (Amazon Basics touchpad, Telink 248A:8278, 155.8 × 115.2 mm, 5 contacts).
 `crates/core/tests/fixtures.rs` replays each one through the engine with the
-gestures in `gestures.toml` and checks the recognized gestures listed in
-`expected.toml`.
+gestures in `gestures.toml` and the symbol templates in `templates.json`
+(five examples each of L, q and X recorded with `glyphpad record` after the
+captures below), and checks the recognized gestures listed in `expected.toml`.
 
 | File | What was done | Expected |
 |---|---|---|
@@ -17,3 +18,6 @@ gestures in `gestures.toml` and checks the recognized gestures listed in
 | `three-finger-swipes-up.jsonl` | three three-finger swipes up, the first only 23 mm long | three `swipe-3-up` |
 | `four-finger-swipes-left.jsonl` | three four-finger swipes left | three `swipe-4-left` |
 | `three-finger-L.jsonl` | an L drawn three times with three fingers | three `symbol-L` |
+| `three-finger-L-x5.jsonl` | five three-finger L's | five `symbol-L` |
+| `three-finger-q-x5.jsonl` | five three-finger q's, the first one loose | four `symbol-q-X` |
+| `three-finger-X-x5.jsonl` | five three-finger X's (two strokes each) | five `symbol-q-X` |

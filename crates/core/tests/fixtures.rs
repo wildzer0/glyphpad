@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use glyphpad_core::capture::Capture;
 use glyphpad_core::config;
 use glyphpad_core::engine::{Engine, Observation, resolve};
+use glyphpad_core::symbols::TemplateFile;
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures")
@@ -21,11 +22,18 @@ fn recorded_sessions_produce_expected_gestures() {
     let expected: BTreeMap<String, Vec<String>> =
         toml::from_str(&std::fs::read_to_string(dir.join("expected.toml")).unwrap()).unwrap();
     assert!(!expected.is_empty());
+    // Templates the user recorded for L, q and X; the other symbols use the built-in ones.
+    let templates =
+        TemplateFile::parse(&std::fs::read_to_string(dir.join("templates.json")).unwrap())
+            .unwrap()
+            .effective();
 
     for (file, want) in &expected {
         let capture = Capture::read(BufReader::new(File::open(dir.join(file)).unwrap()))
             .unwrap_or_else(|e| panic!("{file}: {e}"));
-        let got: Vec<String> = Engine::from_config(&config)
+        let mut engine = Engine::from_config(&config);
+        engine.set_templates(&templates, config.settings.rotation_tolerance_deg);
+        let got: Vec<String> = engine
             .process_all(&capture.events)
             .iter()
             // Diagnostics of strokes that turned out not to be symbols.

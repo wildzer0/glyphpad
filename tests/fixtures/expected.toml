@@ -8,3 +8,7 @@
 "three-finger-swipes-up.jsonl" = ["swipe-3-up", "swipe-3-up", "swipe-3-up"]
 "four-finger-swipes-left.jsonl" = ["swipe-4-left", "swipe-4-left", "swipe-4-left"]
 "three-finger-L.jsonl" = ["symbol-L", "symbol-L", "symbol-L"]
+# The first q is drawn loosely and scores 0.77, below the 0.80 threshold.
+"three-finger-L-x5.jsonl" = ["symbol-L", "symbol-L", "symbol-L", "symbol-L", "symbol-L"]
+"three-finger-q-x5.jsonl" = ["symbol-q-X", "symbol-q-X", "symbol-q-X", "symbol-q-X"]
+"three-finger-X-x5.jsonl" = ["symbol-q-X", "symbol-q-X", "symbol-q-X", "symbol-q-X", "symbol-q-X"]
