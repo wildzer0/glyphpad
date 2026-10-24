@@ -77,9 +77,11 @@ impl Repeater {
         }
         if settings.repeat_same_app_only {
             let then = last.app.as_ref();
-            // The same process, not merely the same program: closing one
-            // browser window must not be repeated on another one's process.
+            // The same window, not merely the same program: a `close_window`
+            // repeated after switching to another Explorer or browser window
+            // (same process) would close the wrong one.
             let same = match (then, app) {
+                (Some(a), Some(b)) if a.window != 0 && b.window != 0 => a.window == b.window,
                 (Some(a), Some(b)) => a.pid == b.pid && a.exe.eq_ignore_ascii_case(&b.exe),
                 (None, None) => true,
                 _ => false,
@@ -141,6 +143,14 @@ action = { type = "lock_screen" }
             exe: exe.into(),
             title: String::new(),
             pid,
+            window: 0,
+        }
+    }
+
+    fn window(exe: &str, pid: u32, window: u64) -> AppInfo {
+        AppInfo {
+            window,
+            ..app(exe, pid)
         }
     }
 
@@ -175,6 +185,19 @@ action = { type = "lock_screen" }
         settings.repeat_same_app_only = false;
         assert!(matches!(
             r.decide(&settings, Some(&app("chrome.exe", 9)), t0),
+            Decision::Repeat(_)
+        ));
+
+        // Another window of the same process is another target.
+        settings.repeat_same_app_only = true;
+        let mut r2 = Repeater::default();
+        r2.record(&g[0], Some(window("explorer.exe", 5, 100)), t0);
+        assert!(matches!(
+            r2.decide(&settings, Some(&window("explorer.exe", 5, 200)), t0),
+            Decision::OtherApp { .. }
+        ));
+        assert!(matches!(
+            r2.decide(&settings, Some(&window("explorer.exe", 5, 100)), t0),
             Decision::Repeat(_)
         ));
 

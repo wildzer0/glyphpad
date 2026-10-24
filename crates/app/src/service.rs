@@ -450,11 +450,11 @@ impl Service {
                     }
                     Decision::OtherApp { then, now } => {
                         tracing::info!(
-                            "repeat_last: not repeated, the foreground app changed ({then} → {now})"
+                            "repeat_last: not repeated, another window is in front ({then} → {now})"
                         );
                         self.feedback.message(
                             "Not repeated",
-                            format!("it ran in {then}, now {now} is in front"),
+                            format!("it ran in another window ({then}); now {now} is in front"),
                             false,
                         );
                         false

@@ -303,11 +303,15 @@ impl ForegroundInfo for WindowsForeground {
         let n = unsafe { GetWindowTextW(hwnd, &mut buf) };
         let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
         let pid = window_pid(hwnd);
+        // SAFETY: `hwnd` is a window handle.
+        let root = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
+        let window = if root.0.is_null() { hwnd } else { root };
         Some(AppInfo {
             // Elevated or protected processes may refuse even limited queries.
             exe: process_exe(pid).unwrap_or_default(),
             title,
             pid,
+            window: window.0 as usize as u64,
         })
     }
 }

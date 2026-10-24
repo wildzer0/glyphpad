@@ -59,7 +59,8 @@ pub struct Settings {
     // repeat_last (SPEC §9.1).
     /// Seconds after which `repeat_last` does nothing; none by default.
     pub repeat_timeout_s: Option<u64>,
-    /// Do not repeat into a different foreground application.
+    /// Do not repeat into a different foreground window (the key keeps the
+    /// name from the specification).
     pub repeat_same_app_only: bool,
 
     // Window and tray (SPEC §10.1).
@@ -911,6 +912,7 @@ action = { type = "lock_screen" }
             exe: exe.into(),
             title: title.into(),
             pid: 1,
+            window: 0,
         };
         assert!(g.applies(
             "work",

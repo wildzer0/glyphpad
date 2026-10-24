@@ -168,6 +168,8 @@ pub struct AppInfo {
     pub exe: String,
     pub title: String,
     pub pid: u32,
+    /// Identifier of the top-level window (0 if unknown).
+    pub window: u64,
 }
 
 pub trait ForegroundInfo {

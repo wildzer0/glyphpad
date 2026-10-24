@@ -707,10 +707,18 @@ fn preview_ignores_fingers_still_landing() {
     let mut pad = Pad::new();
     // One finger far away first, then all three together.
     pad.push(vec![contact(0, 5.0, 5.0, true)], false);
-    pad.push(vec![contact(0, 5.0, 5.0, true), contact(1, 20.0, 5.0, true)], false);
+    pad.push(
+        vec![contact(0, 5.0, 5.0, true), contact(1, 20.0, 5.0, true)],
+        false,
+    );
     for i in 0..5 {
         let y = 40.0 + i as f32;
-        pad.push((0..3).map(|id| contact(id, 40.0 + 15.0 * id as f32, y, true)).collect(), false);
+        pad.push(
+            (0..3)
+                .map(|id| contact(id, 40.0 + 15.0 * id as f32, y, true))
+                .collect(),
+            false,
+        );
     }
     for f in &pad.frames {
         engine.on_frame(DeviceId(1), f);
@@ -719,5 +727,9 @@ fn preview_ignores_fingers_still_landing() {
     let points = strokes.last().unwrap();
     assert_eq!(points.len(), 5);
     // The centroid of the three fingers, not the first finger's corner.
-    assert!(points.iter().all(|&(x, y)| (x - 55.0).abs() < 0.01 && y >= 40.0));
+    assert!(
+        points
+            .iter()
+            .all(|&(x, y)| (x - 55.0).abs() < 0.01 && y >= 40.0)
+    );
 }
