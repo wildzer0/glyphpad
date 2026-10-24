@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 use glyphpad_core::config::Config;
-use glyphpad_core::engine::{Engine, Observation, Recognition};
+use glyphpad_core::engine::{Engine, Observation};
 use glyphpad_core::symbols::Sample;
 use glyphpad_core::{DeviceEvent, DeviceId, DeviceInfo, TouchFrame};
 
@@ -98,13 +98,14 @@ fn engine_for(config: &Config, templates: &BTreeMap<String, Vec<Sample>>) -> Eng
     engine
 }
 
-/// Offline evaluation of a capture: what would have been recognized.
+/// Offline evaluation of a capture: what would have been recognized, and
+/// which gestures it would have triggered.
 pub fn evaluate(
     events: &[DeviceEvent],
     config: &Config,
     templates: &BTreeMap<String, Vec<Sample>>,
     everything: bool,
-) -> Vec<Recognition> {
+) -> Vec<glyphpad_core::dispatch::Dispatched> {
     let mut engine = if everything {
         let mut e = Engine::new(
             glyphpad_core::engine::Spec::everything(),
@@ -115,7 +116,7 @@ pub fn evaluate(
     } else {
         engine_for(config, templates)
     };
-    engine.process_all(events)
+    glyphpad_core::dispatch::run_all(&mut engine, config, events)
 }
 
 /// Records `count` drawings of a symbol with the configured draw mode.

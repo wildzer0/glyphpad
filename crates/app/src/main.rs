@@ -19,7 +19,6 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use glyphpad_core::capture::{Capture, CaptureWriter};
 use glyphpad_core::config::Config;
-use glyphpad_core::engine::resolve;
 use glyphpad_core::stats::SessionStats;
 use glyphpad_core::symbols::TemplateFile;
 
@@ -435,13 +434,11 @@ fn replay(
     if frames {
         capture.events.iter().for_each(print::event);
     }
-    let recognitions = engine_loop::evaluate(&capture.events, config, templates, all);
-    println!("\nRecognized ({}):", recognitions.len());
-    for r in &recognitions {
-        println!(
-            "{}",
-            print::recognition(r, resolve(config, &r.observation, None))
-        );
+    let dispatched = engine_loop::evaluate(&capture.events, config, templates, all);
+    println!("\nRecognized ({}):", dispatched.len());
+    for d in &dispatched {
+        let gesture = d.gesture.map(|i| &config.gestures[i]);
+        println!("{}", print::recognition(&d.recognition, gesture));
     }
     println!("\n{}", SessionStats::from_events(&capture.events));
     Ok(())

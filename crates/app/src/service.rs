@@ -11,7 +11,8 @@ use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender, select};
 use glyphpad_core::action::{Action, ActionExecutor, AppInfo, ForegroundInfo};
 use glyphpad_core::config::{Config, Gesture};
-use glyphpad_core::engine::{Engine, Observation, Recognition, Spec, resolve};
+use glyphpad_core::dispatch::{Dispatched, Dispatcher};
+use glyphpad_core::engine::{Engine, Observation, Recognition, Spec};
 use glyphpad_core::repeat::{Decision, Repeater};
 use glyphpad_core::service::{Command, EngineMode, HistoryEntry, Recorded, Shared, UiLink};
 use glyphpad_core::symbols::{Sample, TemplateFile};
@@ -120,6 +121,7 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
         foreground: glyphpad_actions::foreground(),
         actions,
         repeater: Repeater::default(),
+        dispatcher: Dispatcher::default(),
         devices: HashMap::new(),
         clock: (0, Instant::now()),
         shared,
@@ -146,6 +148,7 @@ struct Service {
     foreground: Box<dyn ForegroundInfo + Send>,
     actions: Sender<Action>,
     repeater: Repeater,
+    dispatcher: Dispatcher,
     devices: HashMap<DeviceId, DeviceInfo>,
     /// Last frame timestamp and when it arrived: maps wall-clock time onto
     /// the frame time base for timeouts.
@@ -174,7 +177,11 @@ impl Service {
     fn run(mut self, events: Receiver<DeviceEvent>, commands: Receiver<Command>) {
         warn_about_native_gestures(&self.config);
         loop {
-            let wait = self.engine.next_deadline().map_or(IDLE_WAIT, |d| {
+            let deadline = [self.engine.next_deadline(), self.dispatcher.deadline()]
+                .into_iter()
+                .flatten()
+                .min();
+            let wait = deadline.map_or(IDLE_WAIT, |d| {
                 Duration::from_micros(d.saturating_sub(self.now_us()))
             });
             let recognitions = select! {
@@ -199,6 +206,10 @@ impl Service {
             }
             for r in recognitions {
                 self.on_recognition(r);
+            }
+            let config = self.config.clone();
+            for d in self.dispatcher.tick(&config, self.now_us()) {
+                self.on_dispatched(d);
             }
         }
     }
@@ -310,10 +321,23 @@ impl Service {
             }
             EngineMode::Normal | EngineMode::Test => {}
         }
-
         let app = self.foreground.foreground_app();
         let config = self.config.clone();
-        let gesture = resolve(&config, &r.observation, app.as_ref());
+        for d in self.dispatcher.on_recognition(&config, r, app) {
+            self.on_dispatched(d);
+        }
+    }
+
+    /// A recognition and the gesture it triggers, sequences resolved.
+    fn on_dispatched(&mut self, d: Dispatched) {
+        let Dispatched {
+            gesture,
+            recognition: r,
+            app,
+        } = d;
+        let (width_mm, height_mm) = self.pad_size(r.device);
+        let config = self.config.clone();
+        let gesture = gesture.map(|i| &config.gestures[i]);
         if self.print {
             println!("{}", print::recognition(&r, gesture));
         }
@@ -500,6 +524,7 @@ impl Service {
     }
 
     fn rebuild_engine(&mut self) {
+        self.dispatcher.reset();
         let effective = self.templates.effective();
         let config = &self.config;
         self.engine = if self.mode == EngineMode::RecordDemonstration {

@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 use glyphpad_core::capture::Capture;
 use glyphpad_core::config;
-use glyphpad_core::engine::{Engine, Observation, resolve};
+use glyphpad_core::dispatch;
+use glyphpad_core::engine::{Engine, Observation};
 use glyphpad_core::symbols::TemplateFile;
 
 fn fixtures_dir() -> PathBuf {
@@ -33,14 +34,18 @@ fn recorded_sessions_produce_expected_gestures() {
             .unwrap_or_else(|e| panic!("{file}: {e}"));
         let mut engine = Engine::from_config(&config);
         engine.set_templates(&templates, config.settings.rotation_tolerance_deg);
-        let got: Vec<String> = engine
-            .process_all(&capture.events)
+        let got: Vec<String> = dispatch::run_all(&mut engine, &config, &capture.events)
             .iter()
             // Diagnostics of strokes that turned out not to be symbols.
-            .filter(|r| !matches!(r.observation, Observation::UnrecognizedSymbol { .. }))
-            .map(|r| match resolve(&config, &r.observation, None) {
-                Some(g) => g.def.name.clone(),
-                None => format!("unmatched {}", r.observation),
+            .filter(|d| {
+                !matches!(
+                    d.recognition.observation,
+                    Observation::UnrecognizedSymbol { .. }
+                )
+            })
+            .map(|d| match d.gesture {
+                Some(i) => config.gestures[i].def.name.clone(),
+                None => format!("unmatched {}", d.recognition.observation),
             })
             .collect();
         assert_eq!(&got, want, "{file}");
