@@ -71,8 +71,11 @@ pub struct Editor {
     /// The file changed on disk while the draft had unsaved changes.
     pub external_change: bool,
     pub show_diff: bool,
-    /// A save is on its way; the next revision is ours.
-    saving: bool,
+    /// The text of a save on its way: the revision showing exactly this
+    /// text is ours; any other one is a change made elsewhere.
+    sent: Option<String>,
+    /// Refusals counted when the save was sent.
+    refusals: u64,
 }
 
 impl Editor {
@@ -89,7 +92,8 @@ impl Editor {
             checked: None,
             external_change: false,
             show_diff: false,
-            saving: false,
+            sent: None,
+            refusals: shared.write_refusals,
         }
     }
 
@@ -100,18 +104,25 @@ impl Editor {
     /// Follows the file: a new revision replaces a clean draft, and is
     /// reported when the draft has unsaved changes.
     pub fn sync(&mut self, shared: &Shared) {
-        if shared.revision == self.base_revision {
+        if self.sent.is_some() && shared.write_refusals > self.refusals {
+            // Our save was refused: the file changed first.
+            self.sent = None;
+            self.external_change = true;
             return;
         }
-        if self.saving || !self.dirty() {
+        if shared.revision == self.base_revision || self.external_change {
+            return;
+        }
+        let ours = self.sent.as_deref() == Some(shared.config_text.as_str());
+        if ours || !self.dirty() {
             let undo = std::mem::take(&mut self.undo);
-            let saving = self.saving;
             *self = Self::new(shared);
-            if saving {
+            if ours {
                 // Undo history survives our own saves.
                 self.undo = undo;
             }
         } else {
+            self.sent = None;
             self.external_change = true;
         }
     }
@@ -201,8 +212,8 @@ impl Editor {
 
     pub fn save(&mut self, shared: &Shared) -> Option<Command> {
         let text = self.check().ok()?;
-        self.saving = true;
-        self.base = self.draft.clone();
+        self.sent = Some(text.clone());
+        self.refusals = shared.write_refusals;
         // Overwriting after a conflict writes over the newer file.
         let base_revision = if self.external_change {
             shared.revision
@@ -289,7 +300,86 @@ pub fn line_diff(a: &str, b: &str) -> Vec<(char, String)> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+
+    fn shared(text: &str, revision: u64) -> Shared {
+        Shared {
+            config: Arc::new(config::parse(text).unwrap().config),
+            config_text: Arc::new(text.to_string()),
+            revision,
+            ..Default::default()
+        }
+    }
+
+    const FILE: &str = "[settings]\nclose_to_tray = true\n";
+
+    fn edited(e: &mut Editor) {
+        e.draft.settings.close_to_tray = false;
+    }
+
+    #[test]
+    fn own_save_is_recognized_and_keeps_undo() {
+        let s1 = shared(FILE, 1);
+        let mut e = Editor::new(&s1);
+        edited(&mut e);
+        e.undo.push(e.base.clone());
+        let Some(Command::WriteConfig {
+            text,
+            base_revision,
+        }) = e.save(&s1)
+        else {
+            panic!()
+        };
+        assert_eq!(base_revision, 1);
+        // Until the file shows our text, the draft stays unsaved.
+        e.sync(&s1);
+        assert!(e.dirty());
+        e.sync(&shared(&text, 2));
+        assert!(!e.dirty() && !e.external_change);
+        assert!(e.can_undo());
+        assert!(!e.draft.settings.close_to_tray);
+    }
+
+    #[test]
+    fn external_change_keeps_the_draft() {
+        let s1 = shared(FILE, 1);
+        let mut e = Editor::new(&s1);
+        edited(&mut e);
+        e.sync(&shared("[settings]\nstart_minimized = true\n", 2));
+        assert!(e.external_change);
+        assert!(!e.draft.settings.close_to_tray, "the draft survives");
+        // A clean editor simply follows the file.
+        let mut clean = Editor::new(&s1);
+        clean.sync(&shared("[settings]\nstart_minimized = true\n", 2));
+        assert!(clean.draft.settings.start_minimized && !clean.external_change);
+    }
+
+    #[test]
+    fn refused_save_becomes_a_conflict() {
+        let s1 = shared(FILE, 1);
+        let mut e = Editor::new(&s1);
+        edited(&mut e);
+        e.save(&s1);
+        let refused = Shared {
+            write_refusals: 1,
+            ..s1.clone()
+        };
+        e.sync(&refused);
+        assert!(e.external_change && e.dirty());
+        // Overwriting writes against the current revision.
+        let newer = Shared {
+            revision: 3,
+            ..refused
+        };
+        let Some(Command::WriteConfig { base_revision, .. }) =
+            e.resolve_conflict(ConflictChoice::Overwrite, &newer)
+        else {
+            panic!()
+        };
+        assert_eq!(base_revision, 3);
+    }
 
     #[test]
     fn diff_marks_changes() {

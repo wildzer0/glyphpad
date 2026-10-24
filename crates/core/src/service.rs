@@ -132,8 +132,8 @@ pub struct Shared {
     pub revision: u64,
     /// Backup file names, newest first.
     pub backups: Vec<String>,
-    /// The editor's save was refused because the file changed on disk.
-    pub write_conflict: bool,
+    /// How many editor saves were refused because the file had changed on disk.
+    pub write_refusals: u64,
     /// Applications with a visible window, for picking conditions.
     pub open_apps: Vec<crate::action::AppInfo>,
     /// The user's templates file.

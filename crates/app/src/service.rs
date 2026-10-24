@@ -897,13 +897,12 @@ impl Service {
                 base_revision,
             } => {
                 if base_revision != self.revision {
-                    self.update_shared(|s| s.write_conflict = true);
+                    self.update_shared(|s| s.write_refusals += 1);
                     return self
                         .set_status("not saved: the configuration changed on disk meanwhile");
                 }
                 match self.write_config(&text) {
                     Ok(()) => {
-                        self.update_shared(|s| s.write_conflict = false);
                         self.reload();
                         self.set_status("configuration saved");
                     }
