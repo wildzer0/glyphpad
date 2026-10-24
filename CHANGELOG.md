@@ -31,5 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `glyphpad run` executes gestures; `glyphpad check-config` validates a configuration;
   `debug` and `replay` print recognized gestures without executing them.
 - Regression tests on touch sessions recorded on real hardware (`tests/fixtures/`).
+- Drawn symbols with the $Q point-cloud recognizer: unistroke and multistroke (strokes
+  closer than `stroke_gap_ms` form one symbol), orientation-sensitive with an optional
+  rotation tolerance, per-gesture confidence, and the best candidate logged when nothing
+  fires. Built-in templates for L, q, X, C, V, Z, O, arrow-up and arrow-down.
+- Draw mode strategies: `fingers` (default, three fingers), `edge`, `hold` and `toggle`
+  (with the new `draw_symbol` action); experimental `freeze_cursor` for one-finger modes.
+  A stroke that matches no symbol falls back to a tap or swipe.
+- `glyphpad record <name>` records examples of a symbol into `templates.json`, with a
+  consistency and lookalike check.
+- Warning at start-up when Windows' own gestures for the drawing finger count are on.
 
 [Unreleased]: https://github.com/wildzer0/glyphpad/commits/main

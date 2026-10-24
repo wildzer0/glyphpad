@@ -78,6 +78,29 @@ gesture comes in M5); a hold consumes its session; taps and swipes exclude
 each other by their thresholds; among matching gestures the first in the
 file wins.
 
+## Symbols and draw mode
+
+- `core::symbols::dollar_q`: the $Q recognizer. Traces are resampled to 64
+  points (never across a gap between strokes), scaled uniformly and centred;
+  matching is greedy point-cloud matching with $Q's lower bounds and early
+  abandoning, checked against an exhaustive version in property tests.
+  Order and direction of strokes do not matter; orientation does, unless
+  `rotation_tolerance_deg` lets the trace be tried rotated.
+- Scores are `1 − rms / 0.4`, where `rms` is the matched points' RMS distance
+  as a fraction of the symbol's size; see `symbols::ZERO_SCORE_RMS` for the
+  calibration on real captures. One recognition against the 63 built-in
+  templates takes about 2.5 ms in a release build.
+- `core::symbols::templates`: `templates.json` next to the configuration
+  holds the user's samples, with the time of every point. A symbol's
+  recorded samples replace its built-in ones. Built-in shapes come in seven
+  variants (proportions, slant) because uniform scaling keeps proportions.
+- `core::engine::draw`: decides which sessions are strokes, per draw mode,
+  collects strokes until `stroke_gap_ms` passes, then recognizes. A symbol
+  is accepted only if a configured gesture uses it and its score reaches that
+  gesture's confidence; otherwise a single stroke is judged as a tap or swipe.
+  Because of this wait, gestures made with the drawing finger count (e.g.
+  three-finger swipes) fire `stroke_gap_ms` later than others.
+
 ## Known limitations
 
 - **Late palm detection.** The reference touchpad reports a palm as a
@@ -102,4 +125,13 @@ file wins.
   without units (non-compliant with PTP) fall back to an assumed 100 mm width.
 - **Console output of the release binary.** It is a GUI-subsystem program, so
   the shell does not wait for it and the prompt can appear before its output.
-- _Still to be assessed: draw mode and cursor interference (SPEC §5)._
+- **One-finger draw modes.** Windows still moves the pointer and turns a
+  quick touch into a click while drawing with one finger (`edge`, `hold`,
+  `toggle`). `freeze_cursor` pins the pointer with `ClipCursor` while a stroke
+  is detected, but only from the moment it is detected (for `hold`, after the
+  rest), and taps still click. A freeze left by a crash is released at the
+  next start. Three-finger drawing has none of these problems as long as
+  Windows' own three-finger gestures are off.
+- **Native gesture detection.** It reads Windows' touchpad settings from the
+  registry; a missing value counts as "on" (Windows' default). The meaning of
+  the tap values is inferred from the swipe ones.
