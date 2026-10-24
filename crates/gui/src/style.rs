@@ -8,6 +8,9 @@ use eframe::egui::{
 
 /// Accent used for selection, active states and strokes.
 pub const ACCENT: Color32 = Color32::from_rgb(64, 132, 246);
+pub const OK: Color32 = Color32::from_rgb(110, 205, 140);
+pub const WARN: Color32 = Color32::from_rgb(236, 190, 80);
+pub const BAD: Color32 = Color32::from_rgb(236, 110, 110);
 
 /// The system UI font and its symbol and emoji fallbacks: egui's built-in
 /// fonts lack most symbols (they rendered as boxes). On Windows these are
@@ -84,4 +87,30 @@ pub fn install(ctx: &egui::Context) {
             }
         }
     });
+}
+
+/// A titled card: a framed group with some breathing room.
+pub fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::group(ui.style())
+        .fill(ui.visuals().faint_bg_color)
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::same(12))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            if !title.is_empty() {
+                ui.label(egui::RichText::new(title).strong().size(15.5));
+                ui.add_space(4.0);
+            }
+            add(ui)
+        })
+        .inner
+}
+
+/// A page title with an optional subtitle.
+pub fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+    ui.label(egui::RichText::new(title).heading());
+    if !subtitle.is_empty() {
+        ui.label(egui::RichText::new(subtitle).weak());
+    }
+    ui.add_space(6.0);
 }

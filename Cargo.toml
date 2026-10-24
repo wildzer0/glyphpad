@@ -21,6 +21,8 @@ glyphpad-updater = { path = "crates/updater" }
 
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
+# Native file dialog for picking programs in the action editor (SPEC §10.2).
+rfd = "0.17.2"
 # Native window handle of the eframe window, to bring it to the front on Windows.
 raw-window-handle = "0.6.2"
 # Channels with select! across several receivers, used by the engine for gesture timeouts.

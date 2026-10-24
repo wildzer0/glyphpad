@@ -1,21 +1,25 @@
-//! The gesture recording wizard (SPEC §10.3): kind, recording with live
-//! feedback, samples to review or discard, quality check, name and action,
-//! save, then an offer to try it in test mode.
+//! The gesture recording wizard (SPEC §10.3), as a full page: kind,
+//! recording with live feedback, samples to replay or discard, quality
+//! check, name, action and conditions, save, then an offer to try it in
+//! test mode.
 
-use eframe::egui::{self, Color32, Stroke};
-use glyphpad_core::action::{Action, MediaKey};
-use glyphpad_core::config::{GestureDef, GestureKind, OneOrMany, When};
+use eframe::egui::{self, Color32, Id, RichText, Stroke};
+use glyphpad_core::action::Action;
+use glyphpad_core::config::{GestureDef, GestureKind, OneOrMany};
 use glyphpad_core::config_edit;
 use glyphpad_core::infer::{self, Inferred};
 use glyphpad_core::service::{Command, EngineMode, Recorded};
-use glyphpad_core::symbols::{self, Sample};
+use glyphpad_core::symbols::{self, Assessment, Sample};
+use glyphpad_core::trigger::TriggerDef;
 
 use crate::Ctx;
 use crate::canvas::{self, Pad, Playback};
+use crate::forms;
+use crate::style;
 
 pub enum Start {
     New,
-    /// Record more templates for an existing symbol.
+    /// Record more examples of an existing symbol.
     AddTemplates(String),
 }
 
@@ -32,7 +36,7 @@ enum Kind {
     Demonstration,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 enum Step {
     Kind,
     Record,
@@ -44,29 +48,28 @@ enum Step {
 pub struct Wizard {
     step: Step,
     kind: Kind,
-    /// Only add templates, no new gesture.
+    /// Only add examples to a symbol, no new gesture.
     templates_only: bool,
     symbol: String,
     target: usize,
     playback: Playback,
-    /// Frozen at the end of recording.
+    /// Frozen when recording ends.
     samples: Vec<Sample>,
     demos: Vec<glyphpad_core::engine::Observation>,
-    name: String,
-    action: ActionDraft,
-    confidence: Option<f32>,
-    apps: String,
-    saved: bool,
+    /// Computed once per set of samples: assessing is expensive.
+    assessment: Option<Assessment>,
+    def: Option<GestureDef>,
+    validation: Option<(String, Result<(), String>)>,
 }
 
 impl Wizard {
     pub fn new(start: Start) -> Self {
-        let (symbol, templates_only, step) = match start {
-            Start::New => (String::new(), false, Step::Kind),
-            Start::AddTemplates(s) => (s, true, Step::Kind),
+        let (symbol, templates_only) = match start {
+            Start::New => (String::new(), false),
+            Start::AddTemplates(s) => (s, true),
         };
         Self {
-            step,
+            step: Step::Kind,
             kind: Kind::Symbol,
             templates_only,
             symbol,
@@ -74,80 +77,116 @@ impl Wizard {
             playback: Playback::default(),
             samples: Vec::new(),
             demos: Vec::new(),
-            name: String::new(),
-            action: ActionDraft::default(),
-            confidence: None,
-            apps: String::new(),
-            saved: false,
+            assessment: None,
+            def: None,
+            validation: None,
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, cx: &Ctx) -> Outcome {
-        let mut open = true;
-        let mut outcome = Outcome::Open;
+    pub fn show(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Outcome {
         let title = if self.templates_only {
-            format!("Record templates of “{}”", self.symbol)
+            format!("Record examples of “{}”", self.symbol)
         } else {
             "New gesture".to_string()
         };
-        egui::Window::new(title)
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_size([720.0, 560.0])
-            .show(ctx, |ui| {
-                outcome = match self.step {
-                    Step::Kind => self.kind_step(ui, cx),
-                    Step::Record => self.record_step(ui, cx),
-                    Step::Quality => self.quality_step(ui, cx),
-                    Step::Details => self.details_step(ui, cx),
-                    Step::Done => self.done_step(ui, cx),
-                };
+        let mut cancel = false;
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| style::page_header(ui, &title, ""));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                cancel = self.step != Step::Done && ui.button("Cancel").clicked();
             });
-        if !open {
-            outcome = Outcome::Closed;
+        });
+        if cancel {
+            if cx.shared.mode.is_recording() {
+                cx.send(Command::SetMode(EngineMode::Normal));
+            }
+            return Outcome::Closed;
         }
-        if matches!(outcome, Outcome::Closed) && cx.shared.mode.is_recording() {
-            cx.send(Command::SetMode(EngineMode::Normal));
+        self.steps_bar(ui);
+        ui.add_space(8.0);
+        match self.step {
+            Step::Kind => self.kind_step(ui, cx),
+            Step::Record => self.record_step(ui, cx),
+            Step::Quality => self.quality_step(ui, cx),
+            Step::Details => self.details_step(ui, cx),
+            Step::Done => self.done_step(ui, cx),
         }
-        outcome
+    }
+
+    fn steps_bar(&self, ui: &mut egui::Ui) {
+        let steps: &[(Step, &str)] = if self.templates_only {
+            &[
+                (Step::Kind, "Start"),
+                (Step::Record, "Record"),
+                (Step::Quality, "Check"),
+            ]
+        } else {
+            &[
+                (Step::Kind, "Kind"),
+                (Step::Record, "Record"),
+                (Step::Quality, "Check"),
+                (Step::Details, "Name and action"),
+                (Step::Done, "Try it"),
+            ]
+        };
+        ui.horizontal(|ui| {
+            for (i, (s, name)) in steps.iter().enumerate() {
+                let (color, strong) = if *s == self.step {
+                    (style::ACCENT, true)
+                } else if *s < self.step {
+                    (style::OK, false)
+                } else {
+                    (Color32::GRAY, false)
+                };
+                let text = RichText::new(format!("{}  {name}", i + 1)).color(color);
+                ui.label(if strong { text.strong() } else { text });
+                if i + 1 < steps.len() {
+                    ui.weak("—");
+                }
+            }
+        });
     }
 
     fn kind_step(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Outcome {
-        if !self.templates_only {
-            ui.label("What kind of gesture?");
-            ui.radio_value(
-                &mut self.kind,
-                Kind::Symbol,
-                "A symbol drawn on the touchpad",
-            );
-            ui.radio_value(
-                &mut self.kind,
-                Kind::Demonstration,
-                "A tap, hold or swipe, shown by doing it",
-            );
-            ui.add_space(8.0);
-        }
-        if self.kind == Kind::Symbol {
-            ui.horizontal(|ui| {
-                ui.label("Symbol name");
-                ui.add_enabled(
-                    !self.templates_only,
-                    egui::TextEdit::singleline(&mut self.symbol).hint_text("e.g. L, q, star"),
+        style::card(ui, "", |ui| {
+            if !self.templates_only {
+                ui.label(RichText::new("What kind of gesture?").strong());
+                ui.radio_value(
+                    &mut self.kind,
+                    Kind::Symbol,
+                    "A symbol drawn on the touchpad",
                 );
-            });
-            ui.add(egui::Slider::new(&mut self.target, 3..=10).text("examples to draw"));
-            ui.weak(format!(
-                "Draw it the way you will use it: {}. An example ends when you pause.",
-                describe_draw_mode(cx)
-            ));
-        } else {
-            ui.add(egui::Slider::new(&mut self.target, 2..=10).text("demonstrations"));
-        }
+                ui.radio_value(
+                    &mut self.kind,
+                    Kind::Demonstration,
+                    "A tap, hold, swipe, pinch… shown by doing it a few times",
+                );
+                ui.add_space(8.0);
+            }
+            if self.kind == Kind::Symbol {
+                ui.horizontal(|ui| {
+                    ui.label("Symbol name");
+                    ui.add_enabled(
+                        !self.templates_only,
+                        egui::TextEdit::singleline(&mut self.symbol).hint_text("e.g. L, q, star"),
+                    );
+                });
+                ui.add(egui::Slider::new(&mut self.target, 3..=10).text("examples"));
+                ui.weak(format!(
+                    "Draw it the way you will use it: {}. An example ends when you pause.",
+                    describe_draw_mode(cx)
+                ));
+            } else {
+                ui.add(egui::Slider::new(&mut self.target, 2..=10).text("demonstrations"));
+            }
+        });
         ui.add_space(8.0);
         let ready = self.kind == Kind::Demonstration || !self.symbol.trim().is_empty();
         if ui
-            .add_enabled(ready, egui::Button::new("Start recording →"))
+            .add_enabled(
+                ready,
+                egui::Button::new(RichText::new("Start recording  →").strong()),
+            )
             .clicked()
         {
             self.symbol = self.symbol.trim().to_string();
@@ -163,21 +202,7 @@ impl Wizard {
     fn record_step(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Outcome {
         let s = cx.shared;
         let n = s.recorded.len();
-        ui.horizontal(|ui| {
-            ui.colored_label(Color32::from_rgb(240, 110, 110), "● Recording");
-            ui.label(format!("{n} of {}", self.target));
-            ui.weak("Gestures and actions are suspended meanwhile.");
-        });
         let (w_mm, h_mm) = s.pad_size_mm();
-        let (_, painter, pad) = Pad::new(ui, ui.available_width().min(360.0), w_mm, h_mm);
-        canvas::draw_polylines(
-            &painter,
-            &pad,
-            &s.drawing,
-            Stroke::new(3.0, Color32::from_rgb(90, 170, 255)),
-        );
-        canvas::draw_contacts(&painter, &pad, &s.contacts);
-
         let total = s
             .recorded
             .iter()
@@ -190,170 +215,223 @@ impl Wizard {
             .max()
             .unwrap_or(0);
         self.playback.advance(ui.ctx(), total);
-        ui.add_space(6.0);
-        egui::ScrollArea::horizontal().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for (i, r) in s.recorded.iter().enumerate() {
-                    ui.vertical(|ui| {
-                        let (_, painter, pad) = Pad::new(ui, 140.0, w_mm, h_mm);
-                        match r {
-                            Recorded::Sample(x) => canvas::draw_strokes(
-                                &painter,
-                                &pad,
-                                &x.strokes,
-                                Some(self.playback.t_us),
-                                true,
-                            ),
-                            Recorded::Demonstration { trace, observation } => {
-                                canvas::draw_fingers(
-                                    &painter,
-                                    &pad,
-                                    &trace.fingers,
-                                    Some(self.playback.t_us),
-                                );
-                                ui.small(observation.to_string());
-                            }
-                        }
-                        if ui
-                            .small_button("Discard")
-                            .on_hover_text("Drop it and record another")
-                            .clicked()
-                        {
-                            cx.send(Command::DiscardRecorded(i));
-                        }
-                    });
+
+        ui.horizontal(|ui| {
+            ui.colored_label(style::BAD, RichText::new("● Recording").strong());
+            ui.label(format!("{n} of {}", self.target));
+            ui.weak("Gestures and actions are suspended meanwhile.");
+        });
+        ui.columns(2, |cols| {
+            let ui = &mut cols[0];
+            style::card(ui, "Live", |ui| {
+                let (_, painter, pad) = Pad::new(ui, ui.available_width().min(420.0), w_mm, h_mm);
+                canvas::draw_polylines(&painter, &pad, &s.drawing, Stroke::new(3.0, style::ACCENT));
+                canvas::draw_contacts(&painter, &pad, &s.contacts);
+            });
+            let ui = &mut cols[1];
+            style::card(ui, "Recorded", |ui| {
+                if s.recorded.is_empty() {
+                    ui.weak("Nothing yet.");
                 }
+                egui::ScrollArea::vertical()
+                    .max_height(420.0)
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            for (i, r) in s.recorded.iter().enumerate() {
+                                ui.vertical(|ui| {
+                                    ui.set_width(130.0);
+                                    match r {
+                                        Recorded::Sample(x) => {
+                                            canvas::thumbnail(
+                                                ui,
+                                                130.0,
+                                                x,
+                                                Some(self.playback.t_us),
+                                            );
+                                        }
+                                        Recorded::Demonstration { trace, observation } => {
+                                            let (_, painter, pad) = Pad::new(ui, 130.0, w_mm, h_mm);
+                                            canvas::draw_fingers(
+                                                &painter,
+                                                &pad,
+                                                &trace.fingers,
+                                                Some(self.playback.t_us),
+                                            );
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(observation.to_string()).small(),
+                                                )
+                                                .truncate(),
+                                            );
+                                        }
+                                    }
+                                    if ui
+                                        .small_button("Discard")
+                                        .on_hover_text("Drop it and record another")
+                                        .clicked()
+                                    {
+                                        cx.send(Command::DiscardRecorded(i));
+                                    }
+                                });
+                            }
+                        });
+                    });
             });
         });
 
         let min = if self.kind == Kind::Symbol { 3 } else { 1 };
+        let mut next = n >= self.target;
         ui.horizontal(|ui| {
-            if ui.button("Cancel").clicked() {
-                cx.send(Command::SetMode(EngineMode::Normal));
-                return Outcome::Closed;
-            }
-            if ui
-                .add_enabled(n >= min, egui::Button::new("Next →"))
+            next |= ui
+                .add_enabled(
+                    n >= min,
+                    egui::Button::new(RichText::new("Check  →").strong()),
+                )
                 .on_disabled_hover_text(format!("Record at least {min}"))
-                .clicked()
-                || n >= self.target
-            {
-                self.samples.clear();
-                self.demos.clear();
-                for r in &s.recorded {
-                    match r {
-                        Recorded::Sample(x) => self.samples.push(x.clone()),
-                        Recorded::Demonstration { observation, .. } => {
-                            self.demos.push(observation.clone())
-                        }
+                .clicked();
+        });
+        if next {
+            self.samples.clear();
+            self.demos.clear();
+            for r in &s.recorded {
+                match r {
+                    Recorded::Sample(x) => self.samples.push(x.clone()),
+                    Recorded::Demonstration { observation, .. } => {
+                        self.demos.push(observation.clone())
                     }
                 }
-                cx.send(Command::SetMode(EngineMode::Normal));
-                self.step = Step::Quality;
             }
-            Outcome::Open
-        })
-        .inner
+            self.assessment = None;
+            cx.send(Command::SetMode(EngineMode::Normal));
+            self.step = Step::Quality;
+        }
+        Outcome::Open
     }
 
     fn quality_step(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Outcome {
-        ui.heading("Quality check");
+        let threshold = cx.shared.config.settings.default_confidence;
         match self.kind {
             Kind::Symbol => {
-                let a = symbols::assess(&self.symbol, &self.samples, &cx.shared.effective);
+                let a = self
+                    .assessment
+                    .get_or_insert_with(|| {
+                        symbols::assess(&self.symbol, &self.samples, &cx.shared.effective)
+                    })
+                    .clone();
                 let mean = a.consistency.iter().sum::<f32>() / a.consistency.len().max(1) as f32;
                 let total = canvas::duration_us(self.samples.iter().flat_map(|s| &s.strokes));
                 self.playback.advance(ui.ctx(), total);
                 let mut drop = None;
-                egui::Grid::new("quality").striped(true).show(ui, |ui| {
-                    for (i, (sample, (c, near))) in self
-                        .samples
-                        .iter()
-                        .zip(a.consistency.iter().zip(&a.nearest_other))
-                        .enumerate()
-                    {
-                        let (_, painter, pad) =
-                            Pad::new(ui, 120.0, sample.width_mm, sample.height_mm);
-                        canvas::draw_strokes(
-                            &painter,
-                            &pad,
-                            &sample.strokes,
-                            Some(self.playback.t_us),
-                            true,
-                        );
-                        ui.vertical(|ui| {
-                            let odd = self.samples.len() > 2 && *c < mean - 0.1;
-                            let text = format!("consistency {c:.2}");
-                            if odd {
-                                ui.colored_label(
-                                    Color32::from_rgb(240, 160, 80),
-                                    format!("{text} — unlike the others"),
-                                );
-                            } else {
-                                ui.label(text);
-                            }
-                            if let Some(n) = near {
-                                let warn = n.score >= cx.shared.config.settings.default_confidence;
-                                let t =
-                                    format!("closest other symbol: {} {:.2}", n.symbol, n.score);
-                                if warn {
-                                    ui.colored_label(
-                                        Color32::from_rgb(240, 110, 110),
-                                        format!("{t} — may be confused"),
-                                    );
-                                } else {
-                                    ui.weak(t);
-                                }
-                            }
-                            if ui.small_button("Discard").clicked() {
-                                drop = Some(i);
-                            }
-                        });
-                        // Side by side with the symbol it resembles.
-                        if let Some(n) = near
-                            .as_ref()
-                            .filter(|n| n.score >= cx.shared.config.settings.default_confidence)
-                            && let Some(other) =
-                                cx.shared.effective.get(&n.symbol).and_then(|s| s.first())
+                egui::ScrollArea::vertical()
+                    .max_height(ui.available_height() - 60.0)
+                    .show(ui, |ui| {
+                        for (i, (sample, (c, near))) in self
+                            .samples
+                            .iter()
+                            .zip(a.consistency.iter().zip(&a.nearest_other))
+                            .enumerate()
                         {
-                            let (_, painter, pad) =
-                                Pad::new(ui, 120.0, other.width_mm, other.height_mm);
-                            canvas::draw_strokes(&painter, &pad, &other.strokes, None, true);
+                            style::card(ui, "", |ui| {
+                                ui.horizontal(|ui| {
+                                    canvas::thumbnail(ui, 140.0, sample, Some(self.playback.t_us));
+                                    ui.vertical(|ui| {
+                                        ui.set_width(300.0);
+                                        ui.label(
+                                            RichText::new(format!("Example {}", i + 1)).strong(),
+                                        );
+                                        let odd = self.samples.len() > 2 && *c < mean - 0.1;
+                                        ui.add(
+                                            egui::ProgressBar::new(*c)
+                                                .desired_width(240.0)
+                                                .text(format!("like the others: {c:.2}"))
+                                                .fill(if odd {
+                                                    style::WARN.gamma_multiply(0.5)
+                                                } else {
+                                                    style::OK.gamma_multiply(0.5)
+                                                }),
+                                        );
+                                        if odd {
+                                            ui.colored_label(
+                                                style::WARN,
+                                                "Unlike the others: consider discarding it.",
+                                            );
+                                        }
+                                        if let Some(n) = near {
+                                            let confusing = n.score >= threshold;
+                                            let text = format!(
+                                                "Closest other symbol: {} ({:.2})",
+                                                n.symbol, n.score
+                                            );
+                                            if confusing {
+                                                ui.colored_label(
+                                                    style::BAD,
+                                                    format!("{text} — may be confused"),
+                                                );
+                                            } else {
+                                                ui.weak(text);
+                                            }
+                                        }
+                                        if ui.small_button("Discard").clicked() {
+                                            drop = Some(i);
+                                        }
+                                    });
+                                    // Side by side with the symbol it may be confused with.
+                                    if let Some(n) = near.as_ref().filter(|n| n.score >= threshold)
+                                        && let Some(other) = cx
+                                            .shared
+                                            .effective
+                                            .get(&n.symbol)
+                                            .and_then(|s| s.first())
+                                    {
+                                        ui.vertical(|ui| {
+                                            canvas::thumbnail(ui, 140.0, other, None);
+                                            ui.weak(&n.symbol);
+                                        });
+                                    }
+                                });
+                            });
+                            ui.add_space(6.0);
                         }
-                        ui.end_row();
-                    }
-                });
+                    });
                 if let Some(i) = drop {
                     self.samples.remove(i);
+                    self.assessment = None;
                 }
             }
-            Kind::Demonstration => match infer::infer(&self.demos) {
-                Some(g) => {
-                    ui.label(format!(
-                        "Recognized as: {} ({} of {} demonstrations agree)",
-                        describe(&g),
-                        g.agreeing,
-                        g.total
-                    ));
-                    let conflicts = infer::conflicts(&cx.shared.config, &g);
-                    if !conflicts.is_empty() {
-                        ui.colored_label(
-                            Color32::from_rgb(240, 160, 80),
-                            format!(
-                                "The same movement already triggers: {}",
-                                conflicts.join(", ")
-                            ),
+            Kind::Demonstration => {
+                style::card(ui, "", |ui| match infer::infer(&self.demos) {
+                    Some(g) => {
+                        ui.label(
+                            RichText::new(format!("Recognized: {}", describe(&g)))
+                                .size(17.0)
+                                .strong(),
                         );
+                        ui.label(format!(
+                            "{} of {} demonstrations agree.",
+                            g.agreeing, g.total
+                        ));
+                        let conflicts = infer::conflicts(&cx.shared.config, &g);
+                        if !conflicts.is_empty() {
+                            ui.colored_label(
+                                style::WARN,
+                                format!(
+                                    "The same movement already triggers: {}",
+                                    conflicts.join(", ")
+                                ),
+                            );
+                        }
+                        ui.weak("You can change type, fingers and direction in the next step.");
                     }
-                }
-                None => {
-                    ui.label("None of the demonstrations was a tap, hold or swipe. Go back and try again.");
-                }
-            },
+                    None => {
+                        ui.label("None of the demonstrations was a gesture GlyphPad knows. Record again.");
+                    }
+                })
+            }
         }
         ui.add_space(8.0);
+        let mut outcome = Outcome::Open;
         ui.horizontal(|ui| {
-            if ui.button("← Record again").clicked() {
+            if ui.button("←  Record again").clicked() {
                 cx.send(Command::SetMode(match self.kind {
                     Kind::Symbol => EngineMode::RecordSymbol,
                     Kind::Demonstration => EngineMode::RecordDemonstration,
@@ -366,7 +444,10 @@ impl Wizard {
             };
             if self.templates_only {
                 if ui
-                    .add_enabled(ok, egui::Button::new("Save templates"))
+                    .add_enabled(
+                        ok,
+                        egui::Button::new(RichText::new("Save examples").strong()),
+                    )
                     .clicked()
                 {
                     for sample in self.samples.drain(..) {
@@ -375,148 +456,165 @@ impl Wizard {
                             sample,
                         });
                     }
-                    return Outcome::Closed;
+                    outcome = Outcome::Closed;
                 }
-            } else if ui.add_enabled(ok, egui::Button::new("Next →")).clicked() {
-                if self.name.is_empty() {
-                    self.name = match self.kind {
-                        Kind::Symbol => self.symbol.clone(),
-                        Kind::Demonstration => infer::infer(&self.demos)
-                            .map(|g| describe(&g).replace([' ', ','], "-"))
-                            .unwrap_or_default(),
-                    };
-                }
+            } else if ui
+                .add_enabled(ok, egui::Button::new(RichText::new("Next  →").strong()))
+                .clicked()
+            {
+                self.def = Some(self.initial_def(cx));
                 self.step = Step::Details;
             }
-            Outcome::Open
-        })
-        .inner
+        });
+        outcome
     }
 
-    fn build(&self, cx: &Ctx) -> Result<GestureDef, String> {
-        let name = self.name.trim().to_string();
-        if name.is_empty() {
-            return Err("give the gesture a name".into());
-        }
-        if cx.shared.config.gestures.iter().any(|g| g.def.name == name) {
-            return Err(format!("a gesture named “{name}” already exists"));
-        }
-        let action = self.action.build()?;
-        let apps: Vec<String> = self
-            .apps
-            .split(',')
-            .map(|a| a.trim().to_string())
-            .filter(|a| !a.is_empty())
-            .collect();
-        let when = (!apps.is_empty()).then_some(When {
-            app: Some(OneOrMany::Many(apps)),
+    fn initial_def(&self, cx: &Ctx) -> GestureDef {
+        let taken = |n: &str| cx.shared.config.gestures.iter().any(|g| g.def.name == n);
+        let unique = |base: String| {
+            if !taken(&base) {
+                base
+            } else {
+                (2..)
+                    .map(|i| format!("{base}-{i}"))
+                    .find(|n| !taken(n))
+                    .unwrap_or(base)
+            }
+        };
+        let action = Action::Notify {
             title: None,
-        });
-        let mut def = GestureDef::new(name, Default::default(), action);
-        def.kind = GestureKind::Symbol;
-        def.when = when;
+            message: "It works!".into(),
+        };
         match self.kind {
-            Kind::Symbol => {
-                def.symbol = Some(OneOrMany::One(self.symbol.clone()));
-                def.confidence = self.confidence;
-            }
+            Kind::Symbol => GestureDef::new(
+                unique(format!("draw-{}", self.symbol)),
+                TriggerDef {
+                    kind: Some(GestureKind::Symbol),
+                    symbol: Some(OneOrMany::One(self.symbol.clone())),
+                    ..Default::default()
+                },
+                action,
+            ),
             Kind::Demonstration => {
-                let g = infer::infer(&self.demos).ok_or("no demonstration to learn from")?;
-                def.kind = g.kind;
-                def.fingers = Some(g.fingers);
-                def.taps = g.taps.filter(|&t| t > 1);
-                def.direction = g.direction;
+                let g = infer::infer(&self.demos).expect("checked before");
+                GestureDef::new(
+                    unique(describe(&g).replace([' ', ','], "-").replace("--", "-")),
+                    TriggerDef {
+                        kind: Some(g.kind),
+                        fingers: Some(g.fingers),
+                        taps: g.taps.filter(|&t| t > 1),
+                        direction: g.direction,
+                        zoom: g.zoom,
+                        rotation: g.rotation,
+                        edge: g.edge,
+                        modifier_fingers: g.modifiers,
+                        ..Default::default()
+                    },
+                    action,
+                )
             }
         }
-        // The same validation as the configuration file's.
-        config_edit::append_gesture("", &def)?;
-        Ok(def)
     }
 
     fn details_step(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Outcome {
-        egui::Grid::new("details")
-            .num_columns(2)
-            .spacing([12.0, 8.0])
+        let symbols: Vec<String> = cx
+            .shared
+            .effective
+            .keys()
+            .cloned()
+            .chain(std::iter::once(self.symbol.clone()))
+            .collect();
+        let profiles: Vec<String> =
+            std::iter::once(cx.shared.config.settings.active_profile.clone())
+                .chain(cx.shared.config.settings.profiles.iter().cloned())
+                .collect();
+        let Some(def) = &mut self.def else {
+            return Outcome::Closed;
+        };
+        let id = Id::unique("wizard-details");
+        egui::ScrollArea::vertical()
+            .max_height(ui.available_height() - 50.0)
             .show(ui, |ui| {
-                ui.label("Gesture name");
-                ui.text_edit_singleline(&mut self.name);
-                ui.end_row();
-                ui.label("Action");
-                ui.vertical(|ui| {
-                    self.action.ui(ui);
-                    if ui
-                        .small_button("▶ Run now")
-                        .on_hover_text("Try the action")
-                        .clicked()
-                        && let Ok(a) = self.action.build()
-                    {
-                        cx.send(Command::RunAction(a));
-                    }
+                style::card(ui, "Name", |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut def.name).desired_width(260.0));
                 });
-                ui.end_row();
-                if self.kind == Kind::Symbol {
-                    ui.label("Minimum score");
-                    ui.horizontal(|ui| {
-                        let mut custom = self.confidence.is_some();
-                        ui.checkbox(&mut custom, "custom");
-                        let mut c = self
-                            .confidence
-                            .unwrap_or(cx.shared.config.settings.default_confidence);
-                        ui.add_enabled(custom, egui::Slider::new(&mut c, 0.5..=0.99));
-                        self.confidence = custom.then_some(c);
-                    });
-                    ui.end_row();
-                }
-                ui.label("Only in apps");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.apps)
-                        .hint_text("e.g. chrome.exe, firefox.exe (empty: everywhere)"),
-                );
-                ui.end_row();
+                ui.add_space(6.0);
+                style::card(ui, "Trigger", |ui| {
+                    let mut t = def.trigger_def();
+                    forms::trigger_form(
+                        ui,
+                        id.with("trigger"),
+                        &mut t,
+                        &symbols,
+                        cx.shared.config.settings.default_confidence,
+                        false,
+                    );
+                    forms::set_trigger(def, &t);
+                });
+                ui.add_space(6.0);
+                style::card(ui, "Action", |ui| {
+                    forms::action_form(ui, cx, id.with("action"), &mut def.action, false)
+                });
+                ui.add_space(6.0);
+                style::card(ui, "Conditions", |ui| {
+                    forms::conditions_form(ui, cx, id.with("when"), def, &profiles)
+                });
             });
-        let built = self.build(cx);
-        if let Err(e) = &built {
-            ui.colored_label(Color32::from_rgb(240, 110, 110), e);
+        // Validated against the file it will be appended to.
+        let key = format!("{def:?}");
+        if self.validation.as_ref().is_none_or(|v| v.0 != key) {
+            let r = config_edit::append_gesture(&cx.shared.config_text, def).map(|_| ());
+            self.validation = Some((key, r));
+        }
+        let valid = self
+            .validation
+            .as_ref()
+            .map(|v| v.1.clone())
+            .unwrap_or(Ok(()));
+        if let Err(e) = &valid {
+            ui.colored_label(style::BAD, e);
         }
         ui.horizontal(|ui| {
-            if ui.button("← Back").clicked() {
+            if ui.button("←  Back").clicked() {
                 self.step = Step::Quality;
             }
             if ui
-                .add_enabled(built.is_ok(), egui::Button::new("💾 Save"))
+                .add_enabled(
+                    valid.is_ok(),
+                    egui::Button::new(RichText::new("💾 Save").strong()),
+                )
                 .clicked()
-                && let Ok(def) = built
             {
                 cx.send(Command::SaveGesture {
-                    def: Box::new(def),
+                    def: Box::new(def.clone()),
                     symbol_samples: (self.kind == Kind::Symbol)
                         .then(|| (self.symbol.clone(), self.samples.clone())),
                 });
-                self.saved = true;
                 self.step = Step::Done;
             }
-            Outcome::Open
-        })
-        .inner
+        });
+        Outcome::Open
     }
 
     fn done_step(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Outcome {
-        ui.heading("Saved");
-        ui.label(cx.shared.status.clone().unwrap_or_default());
-        ui.label(
-            "Try it a few times in test mode to check that it is recognized: actions will not run.",
-        );
-        ui.horizontal(|ui| {
-            if ui.button("Try it in test mode").clicked() {
-                cx.send(Command::SetMode(EngineMode::Test));
-                return Outcome::Test;
-            }
-            if ui.button("Close").clicked() {
-                return Outcome::Closed;
-            }
-            Outcome::Open
-        })
-        .inner
+        let mut outcome = Outcome::Open;
+        style::card(ui, "Saved", |ui| {
+            ui.label(cx.shared.status.clone().unwrap_or_default());
+            ui.label("Try it a few times in test mode to check that it is recognized; no action runs there.");
+            ui.horizontal(|ui| {
+                if ui
+                    .button(RichText::new("Try it in test mode").strong())
+                    .clicked()
+                {
+                    cx.send(Command::SetMode(EngineMode::Test));
+                    outcome = Outcome::Test;
+                }
+                if ui.button("Done").clicked() {
+                    outcome = Outcome::Closed;
+                }
+            });
+        });
+        outcome
     }
 }
 
@@ -524,158 +622,28 @@ fn describe_draw_mode(cx: &Ctx) -> String {
     use glyphpad_core::config::DrawActivation as D;
     match cx.shared.config.settings.draw_activation {
         D::Fingers { count } => format!("with {count} fingers"),
-        D::Edge { edge, .. } => {
-            format!("with one finger starting at the {edge:?} edge").to_lowercase()
-        }
+        D::Edge { edge, .. } => format!(
+            "with one finger starting at the {} edge",
+            format!("{edge:?}").to_lowercase()
+        ),
         D::Hold { ms, .. } => format!("rest one finger for {ms} ms, then draw"),
-        D::Toggle { .. } => {
-            "with one finger (each example is armed automatically while recording)".into()
-        }
+        D::Toggle { .. } => "with one finger".into(),
     }
 }
 
 fn describe(g: &Inferred) -> String {
-    match g.kind {
-        GestureKind::Tap => format!("{}× tap with {} finger(s)", g.taps.unwrap_or(1), g.fingers),
-        GestureKind::Hold => format!("hold with {} finger(s)", g.fingers),
-        GestureKind::Swipe => format!(
-            "swipe {} with {} finger(s)",
-            g.direction.map(|d| d.to_string()).unwrap_or_default(),
-            g.fingers
-        ),
-        other => other.label().into(),
-    }
-}
-
-/// A basic action editor; the complete one, with shortcut capture and
-/// chains, comes with the configuration editor (SPEC §10.2, M5).
-pub struct ActionDraft {
-    kind: &'static str,
-    combo: String,
-    command: String,
-    args: String,
-    hidden: bool,
-    force: bool,
-    media: MediaKey,
-    message: String,
-}
-
-impl Default for ActionDraft {
-    fn default() -> Self {
-        Self {
-            kind: "notify",
-            combo: String::new(),
-            command: String::new(),
-            args: String::new(),
-            hidden: false,
-            force: false,
-            media: MediaKey::PlayPause,
-            message: "It works!".into(),
-        }
-    }
-}
-
-const KINDS: &[(&str, &str)] = &[
-    ("keys", "Press keys"),
-    ("lock_screen", "Lock the PC"),
-    ("close_window", "Close the window in front"),
-    ("minimize", "Minimize the window"),
-    ("maximize", "Maximize / restore the window"),
-    ("run", "Run a program"),
-    ("media", "Media key"),
-    ("notify", "Show a message"),
-    ("toggle_enabled", "Pause / resume gestures"),
-    ("repeat_last", "Repeat the last gesture"),
-    ("show_window", "Show the GlyphPad window"),
-    ("draw_symbol", "Draw a symbol with one finger next"),
-];
-
-impl ActionDraft {
-    fn ui(&mut self, ui: &mut egui::Ui) {
-        let label = KINDS
-            .iter()
-            .find(|(k, _)| *k == self.kind)
-            .map_or("", |(_, l)| *l);
-        egui::ComboBox::from_id_salt("action-kind")
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                for (k, l) in KINDS {
-                    ui.selectable_value(&mut self.kind, *k, *l);
-                }
-            });
-        match self.kind {
-            "keys" => {
-                ui.add(egui::TextEdit::singleline(&mut self.combo).hint_text("e.g. Ctrl+Shift+T"));
-                ui.weak("Win+L and Ctrl+Alt+Delete cannot be simulated; use “Lock the PC”.");
-            }
-            "close_window" => {
-                ui.checkbox(
-                    &mut self.force,
-                    "Terminate the program instead of asking it to close",
-                );
-            }
-            "run" => {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.command).hint_text("program, e.g. wt.exe"),
-                );
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.args)
-                        .hint_text("arguments, separated by spaces"),
-                );
-                ui.checkbox(&mut self.hidden, "Without a console window");
-            }
-            "media" => {
-                egui::ComboBox::from_id_salt("media-key")
-                    .selected_text(format!("{:?}", self.media))
-                    .show_ui(ui, |ui| {
-                        for m in [
-                            MediaKey::PlayPause,
-                            MediaKey::Next,
-                            MediaKey::Previous,
-                            MediaKey::Stop,
-                            MediaKey::VolumeUp,
-                            MediaKey::VolumeDown,
-                            MediaKey::Mute,
-                        ] {
-                            ui.selectable_value(&mut self.media, m, format!("{m:?}"));
-                        }
-                    });
-            }
-            "notify" => {
-                ui.text_edit_singleline(&mut self.message);
-            }
-            _ => {}
-        }
-    }
-
-    fn build(&self) -> Result<Action, String> {
-        let a = match self.kind {
-            "keys" => Action::Keys {
-                combo: Some(self.combo.parse().map_err(|e: String| e)?),
-                sequence: Vec::new(),
-            },
-            "lock_screen" => Action::LockScreen,
-            "close_window" => Action::CloseWindow { force: self.force },
-            "minimize" => Action::Minimize,
-            "maximize" => Action::Maximize,
-            "run" => Action::Run {
-                command: self.command.trim().to_string(),
-                args: self.args.split_whitespace().map(str::to_string).collect(),
-                hidden: self.hidden,
-                cwd: None,
-            },
-            "media" => Action::Media { key: self.media },
-            "notify" => Action::Notify {
-                title: None,
-                message: self.message.clone(),
-            },
-            "toggle_enabled" => Action::ToggleEnabled,
-            "repeat_last" => Action::RepeatLast,
-            "show_window" => Action::ShowWindow,
-            "draw_symbol" => Action::DrawSymbol,
-            other => return Err(format!("unknown action {other}")),
-        };
-        a.validate()?;
-        Ok(a)
-    }
+    let t = TriggerDef {
+        kind: Some(g.kind),
+        fingers: Some(g.fingers),
+        taps: g.taps,
+        direction: g.direction,
+        zoom: g.zoom,
+        rotation: g.rotation,
+        edge: g.edge,
+        modifier_fingers: g.modifiers,
+        ..Default::default()
+    };
+    t.build()
+        .map(|t| t.describe())
+        .unwrap_or_else(|_| g.kind.label().to_string())
 }
