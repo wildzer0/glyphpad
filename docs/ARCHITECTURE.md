@@ -30,7 +30,37 @@ Dependency direction: `app` → `gui`, `updater`, `actions`, `platform` → `cor
 - Release profile: fat LTO, one codegen unit, stripped symbols, `panic = "unwind"`
   so a panicking backend thread can be caught and restarted.
 
+## Touch input pipeline (Windows)
+
+```
+WM_INPUT ─▶ RAWHID (dwCount × dwSizeHid) ─▶ TouchpadLayout::parse ─▶ RawReport
+        ─▶ FrameAssembler (hybrid mode) ─▶ ScanClock ─▶ Geometry ─▶ TouchFrame ─▶ channel
+```
+
+- `platform::windows::source`: a hidden window (message-only by default,
+  `--toplevel-window` for a hidden top-level one) registered for usage page
+  0x0D / usage 0x05 with `RIDEV_INPUTSINK | RIDEV_DEVNOTIFY`. Each
+  `WM_INPUT` may hold several reports; `WM_INPUT_DEVICE_CHANGE` handles hot-plug.
+- `platform::windows::hid`: values are located through the preparsed data by
+  usage page, usage and link collection (one collection per finger), never by
+  byte offset.
+- `platform::ptp`: OS-independent and unit-tested on every platform — HID unit
+  conversion, hybrid-mode frame assembly, Scan Time to monotonic microseconds.
+- `core::capture` / `core::replay`: JSON Lines captures (header line, then one
+  `DeviceEvent` per line) and their deterministic playback as a `TouchSource`.
+
+The `TouchSource` trait lives in `glyphpad-core` rather than `glyphpad-platform`
+because the core's own `ReplaySource` implements it.
+
 ## Known limitations
 
-_To be filled in from M1 on: draw mode and cursor interference (SPEC §5), maximum
-number of contacts reported by the device, UIPI restrictions on elevated windows._
+- **Maximum contacts.** Read from the Contact Count Maximum feature report when
+  the device can be opened for it; otherwise derived from descriptor logical
+  maxima or the number of finger slots, which may underestimate it.
+  `dump-descriptor` prints which source was used.
+- **Physical size.** Taken from the X/Y physical range and units. Descriptors
+  without units (non-compliant with PTP) fall back to an assumed 100 mm width.
+- **Console output of the release binary.** It is a GUI-subsystem program, so
+  the shell does not wait for it and the prompt can appear before its output.
+- _Still to be assessed: draw mode and cursor interference (SPEC §5), UIPI
+  restrictions on elevated windows._
