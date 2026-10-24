@@ -21,5 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `glyphpad dump-descriptor` prints the HID capabilities of every Precision Touchpad.
 - `glyphpad debug` prints live touch frames in the terminal.
 - The Windows release binary has no console window; CLI subcommands attach to the parent console.
+- Gesture engine with tap and multi-tap, hold and swipe (4 or 8 directions) recognizers,
+  each an explicit state machine, and a documented disambiguation policy.
+- TOML configuration with validation errors that name line, gesture and field; per-app
+  (`when.app`, `when.title`) and profile conditions; the default configuration is created
+  on first start, or read from `glyphpad.toml` next to the executable (portable mode).
+- Windows actions: `keys`, `lock_screen`, `close_window` (with `force`), `minimize`,
+  `maximize`, `run`, `media`, `chain`/`wait` and `toggle_enabled`.
+- `glyphpad run` executes gestures; `glyphpad check-config` validates a configuration;
+  `debug` and `replay` print recognized gestures without executing them.
+- Regression tests on touch sessions recorded on real hardware (`tests/fixtures/`).
 
 [Unreleased]: https://github.com/wildzer0/glyphpad/commits/main
