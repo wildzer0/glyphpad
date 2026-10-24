@@ -78,6 +78,7 @@ impl TapRecognizer {
     pub fn session_ended(&mut self, s: &Session, spec: &Spec, t: &Thresholds) -> Vec<Observation> {
         let mut out = Vec::new();
         let is_tap = !s.consumed
+            && !s.chorded
             && !s.clicked
             && s.max_fingers > 0
             && s.duration_us() <= t.tap_max_duration_us

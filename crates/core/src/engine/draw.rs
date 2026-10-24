@@ -139,7 +139,7 @@ impl DrawRecognizer {
         p: &DrawParams,
         arming: Arming,
     ) -> Option<Vec<TraceSample>> {
-        if s.consumed || s.clicked || s.trace.is_empty() {
+        if s.consumed || s.chorded || s.clicked || s.trace.is_empty() {
             return None;
         }
         let one_finger = s.max_fingers == 1;

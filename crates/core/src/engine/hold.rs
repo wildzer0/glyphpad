@@ -45,7 +45,7 @@ impl HoldRecognizer {
     }
 
     pub fn update(&mut self, s: &Session, spec: &Spec, t: &Thresholds) -> Option<Observation> {
-        if s.consumed || s.clicked {
+        if s.consumed || s.chorded || s.clicked {
             if !matches!(self.state, State::Fired) {
                 self.state = State::Idle;
             }

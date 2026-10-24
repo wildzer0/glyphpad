@@ -17,6 +17,10 @@ pub fn distance(a: Point, b: Point) -> f32 {
 pub struct Finger {
     pub start: Point,
     pub pos: Point,
+    /// When it touched down.
+    pub down_us: u64,
+    /// Farthest it moved from where it touched down.
+    pub drift_mm: f32,
 }
 
 /// The fingers' centroid in one frame of the session.
@@ -49,10 +53,19 @@ pub struct Session {
     pub peak_end_us: u64,
     pub peak_centroid_start: Point,
     pub peak_centroid_end: Point,
+    /// Normalized centroid when the peak phase began (edge swipes).
+    pub peak_start_norm: Point,
+    /// Position of each finger at the start and end of the peak phase
+    /// (pinches, rotations).
+    pub peak_start_fingers: BTreeMap<u32, Point>,
+    pub peak_end_fingers: BTreeMap<u32, Point>,
     pub peak_over: bool,
     /// A recognizer fired during the session (e.g. a hold), so no other
     /// gesture may come from it.
     pub consumed: bool,
+    /// A chord fired: the session's own tap, hold or swipe is void, but
+    /// further chords may follow while the modifier finger rests.
+    pub chorded: bool,
     /// Contacts counted as fingers and later flagged as palms. The session
     /// stays open until they lift.
     pub palms: BTreeSet<u32>,
@@ -75,8 +88,12 @@ impl Session {
             peak_end_us: ts,
             peak_centroid_start: (0.0, 0.0),
             peak_centroid_end: (0.0, 0.0),
+            peak_start_norm: (0.0, 0.0),
+            peak_start_fingers: BTreeMap::new(),
+            peak_end_fingers: BTreeMap::new(),
             peak_over: false,
             consumed: false,
+            chorded: false,
             palms: BTreeSet::new(),
             trace: Vec::new(),
             paths: BTreeMap::new(),
@@ -172,9 +189,15 @@ impl SessionTracker {
                 y_mm: c.y_mm,
                 t_us: ts - s.start_us,
             });
-            let f = s.fingers.entry(c.id).or_insert(Finger { start: pos, pos });
+            let f = s.fingers.entry(c.id).or_insert(Finger {
+                start: pos,
+                pos,
+                down_us: ts,
+                drift_mm: 0.0,
+            });
             f.pos = pos;
-            s.max_drift_mm = s.max_drift_mm.max(distance(f.start, pos));
+            f.drift_mm = f.drift_mm.max(distance(f.start, pos));
+            s.max_drift_mm = s.max_drift_mm.max(f.drift_mm);
         }
 
         let n = s.fingers.len();
@@ -190,16 +213,23 @@ impl SessionTracker {
                 count: n,
             });
         }
+        let positions =
+            || -> BTreeMap<u32, Point> { s.fingers.iter().map(|(id, f)| (*id, f.pos)).collect() };
         if n > s.max_fingers {
+            let start = positions();
             s.max_fingers = n;
             s.peak_over = false;
             s.peak_start_us = ts;
             s.peak_centroid_start = s.centroid();
+            s.peak_start_norm = s.trace.last().map_or((0.0, 0.0), |t| t.norm);
+            s.peak_start_fingers = start;
         }
         if !s.peak_over {
             if n == s.max_fingers {
+                let end = positions();
                 s.peak_end_us = ts;
                 s.peak_centroid_end = s.centroid();
+                s.peak_end_fingers = end;
             } else {
                 s.peak_over = true;
             }

@@ -2,8 +2,9 @@
 //! interval measured on the reference touchpad.
 
 use super::*;
-use crate::config::Config;
+use crate::config::{Config, Edge};
 use crate::model::Contact;
+use crate::trigger::{Turn, Zoom};
 
 const FRAME_US: u64 = 7_000;
 
@@ -232,7 +233,15 @@ fn staggered_fingers_still_make_one_tap() {
 fn clicks_and_palms() {
     let mut pad = Pad::new();
     pad.stroke_with(1, (40.0, 40.0), (0.0, 0.0), 100, true, false);
-    assert_eq!(run(&mut engine(Spec::everything()), &pad.frames), vec![]);
+    // A click is no tap; it is a click gesture only where one is configured.
+    assert_eq!(run(&mut engine(Spec::default()), &pad.frames), vec![]);
+    assert_eq!(
+        run(&mut engine(Spec::everything()), &pad.frames),
+        vec![Observation::Click {
+            fingers: 1,
+            direction: None
+        }]
+    );
 
     let mut pad = Pad::new();
     pad.stroke_with(3, (40.0, 40.0), (0.0, 0.0), 100, false, true);
@@ -731,5 +740,256 @@ fn preview_ignores_fingers_still_landing() {
         points
             .iter()
             .all(|&(x, y)| (x - 55.0).abs() < 0.01 && y >= 40.0)
+    );
+}
+
+// ------------------------------------------------- pinch, rotate, edge, click, chord
+
+fn spec_for(triggers: &str) -> Spec {
+    let mut spec = spec_with(triggers);
+    spec.draw = None;
+    spec
+}
+
+fn gesture(kind_fields: &str) -> String {
+    format!("[[gesture]]\nname = \"g\"\n{kind_fields}\naction = {{ type = \"lock_screen\" }}\n")
+}
+
+impl Pad {
+    /// Two fingers around `center`, `radius` mm from it at `angle_deg`,
+    /// moving to `radius2` and `angle2_deg` over `ms`.
+    fn two_fingers(&mut self, center: (f32, f32), r: (f32, f32), angle_deg: (f32, f32), ms: u64) {
+        let steps = (ms * 1000 / FRAME_US).max(1);
+        let at = |k: f32, id: u32| {
+            let rad = r.0 + (r.1 - r.0) * k;
+            let a = (angle_deg.0 + (angle_deg.1 - angle_deg.0) * k).to_radians()
+                + id as f32 * std::f32::consts::PI;
+            (center.0 + rad * a.cos(), center.1 + rad * a.sin())
+        };
+        for i in 0..=steps {
+            let k = i as f32 / steps as f32;
+            self.push(
+                (0..2)
+                    .map(|id| {
+                        let p = at(k, id);
+                        contact(id, p.0, p.1, true)
+                    })
+                    .collect(),
+                false,
+            );
+        }
+        self.push(
+            (0..2)
+                .map(|id| {
+                    let p = at(1.0, id);
+                    contact(id, p.0, p.1, false)
+                })
+                .collect(),
+            false,
+        );
+    }
+}
+
+#[test]
+fn pinches() {
+    let spec = spec_for(
+        &(gesture("type = \"pinch\"\nfingers = 2\nzoom = \"in\"")
+            + &gesture("type = \"pinch\"\nfingers = 2\nzoom = \"out\"").replace("\"g\"", "\"h\"")),
+    );
+    let mut pad = Pad::new();
+    pad.two_fingers((70.0, 50.0), (25.0, 10.0), (0.0, 0.0), 300);
+    pad.wait_ms(400);
+    pad.two_fingers((70.0, 50.0), (10.0, 25.0), (30.0, 30.0), 300);
+    let out = run(&mut engine(spec), &pad.frames);
+    let zooms: Vec<Zoom> = out
+        .iter()
+        .map(|o| match o {
+            Observation::Pinch { zoom, .. } => *zoom,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(zooms, [Zoom::In, Zoom::Out]);
+}
+
+#[test]
+fn rotations() {
+    let spec = spec_for(&gesture(
+        "type = \"rotate\"\nfingers = 2\nrotation = \"clockwise\"",
+    ));
+    let mut pad = Pad::new();
+    // On screen y grows downwards, so an increasing angle turns clockwise.
+    pad.two_fingers((70.0, 50.0), (20.0, 20.0), (0.0, 60.0), 400);
+    pad.wait_ms(400);
+    pad.two_fingers((70.0, 50.0), (20.0, 20.0), (60.0, 0.0), 400);
+    let out = run(&mut engine(spec), &pad.frames);
+    let turns: Vec<Turn> = out
+        .iter()
+        .map(|o| match o {
+            Observation::Rotate { turn, degrees, .. } => {
+                assert!((degrees.abs() - 60.0).abs() < 1.0, "{degrees}");
+                *turn
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(turns, [Turn::Clockwise, Turn::Counterclockwise]);
+}
+
+#[test]
+fn a_spread_with_drift_is_still_a_pinch() {
+    let spec = spec_for(
+        &(gesture("type = \"pinch\"\nfingers = 2\nzoom = \"out\"")
+            + &gesture("type = \"swipe\"\nfingers = 2\ndirection = \"right\"")
+                .replace("\"g\"", "\"h\"")),
+    );
+    let mut pad = Pad::new();
+    // Spreading 20 mm (2.5× the pinch threshold) while drifting 10 mm right.
+    let steps = 40;
+    for i in 0..=steps {
+        let k = i as f32 / steps as f32;
+        let (cx, r) = (60.0 + 10.0 * k, 5.0 + 20.0 * k);
+        pad.push(
+            vec![
+                contact(0, cx - r, 50.0, true),
+                contact(1, cx + r, 50.0, true),
+            ],
+            false,
+        );
+    }
+    pad.push(
+        vec![contact(0, 45.0, 50.0, false), contact(1, 95.0, 50.0, false)],
+        false,
+    );
+    assert!(matches!(
+        run(&mut engine(spec), &pad.frames)[..],
+        [Observation::Pinch {
+            zoom: Zoom::Out,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn edge_swipes() {
+    let spec = spec_for(
+        &(gesture("type = \"edge_swipe\"\nfingers = 1\nedge = \"right\"\ndirection = \"left\"")
+            + &gesture("type = \"swipe\"\nfingers = 1\ndirection = \"left\"")
+                .replace("\"g\"", "\"h\"")),
+    );
+    let mut pad = Pad::new();
+    // From x = 150 of 155.8 mm (inside the 6 % right zone), then from the middle.
+    pad.stroke(1, (150.0, 50.0), (-40.0, 0.0), 200);
+    pad.wait_ms(300);
+    pad.stroke(1, (90.0, 50.0), (-40.0, 0.0), 200);
+    let out = run(&mut engine(spec), &pad.frames);
+    assert!(
+        matches!(
+            out[0],
+            Observation::EdgeSwipe {
+                edge: Edge::Right,
+                direction: Direction::Left,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert!(
+        matches!(
+            out[1],
+            Observation::Swipe {
+                direction: Direction::Left,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn click_and_drag() {
+    let spec = spec_for(&gesture(
+        "type = \"click\"\nfingers = 2\ndirection = \"down\"",
+    ));
+    let mut pad = Pad::new();
+    pad.stroke_with(2, (40.0, 20.0), (0.0, 40.0), 300, true, false);
+    assert_eq!(
+        run(&mut engine(spec), &pad.frames),
+        vec![Observation::Click {
+            fingers: 2,
+            direction: Some(Direction::Down)
+        }]
+    );
+}
+
+#[test]
+fn chords() {
+    let spec = spec_for(
+        &(gesture("type = \"swipe\"\nfingers = 2\nmodifier_fingers = 1\ndirection = \"up\"")
+            + &gesture("type = \"tap\"\nfingers = 2\nmodifier_fingers = 1")
+                .replace("\"g\"", "\"h\"")),
+    );
+    let mut pad = Pad::new();
+    let anchor = contact(9, 20.0, 80.0, true);
+    // The modifier rests 300 ms, then two fingers swipe up, then two tap.
+    for _ in 0..43 {
+        pad.push(vec![anchor], false);
+    }
+    for i in 0..=30 {
+        let y = 70.0 - i as f32 * 1.5;
+        pad.push(
+            vec![anchor, contact(0, 60.0, y, true), contact(1, 75.0, y, true)],
+            false,
+        );
+    }
+    pad.push(
+        vec![
+            anchor,
+            contact(0, 60.0, 25.0, false),
+            contact(1, 75.0, 25.0, false),
+        ],
+        false,
+    );
+    for _ in 0..30 {
+        pad.push(vec![anchor], false);
+    }
+    for _ in 0..10 {
+        pad.push(
+            vec![
+                anchor,
+                contact(2, 60.0, 50.0, true),
+                contact(3, 75.0, 50.0, true),
+            ],
+            false,
+        );
+    }
+    pad.push(
+        vec![
+            anchor,
+            contact(2, 60.0, 50.0, false),
+            contact(3, 75.0, 50.0, false),
+        ],
+        false,
+    );
+    pad.push(
+        vec![Contact {
+            tip: false,
+            ..anchor
+        }],
+        false,
+    );
+    let out = run(&mut engine(spec), &pad.frames);
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert!(
+        matches!(&out[0], Observation::Chord { modifiers: 1, gesture } if matches!(**gesture, Observation::Swipe { fingers: 2, direction: Direction::Up, .. }))
+    );
+    assert_eq!(
+        out[1],
+        Observation::Chord {
+            modifiers: 1,
+            gesture: Box::new(Observation::Tap {
+                fingers: 2,
+                taps: 1
+            })
+        }
     );
 }

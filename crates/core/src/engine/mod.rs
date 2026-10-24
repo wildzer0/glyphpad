@@ -6,11 +6,15 @@
 //! by [`resolve`] and the application.
 //!
 //! Disambiguation policy:
-//! - a session with a physical click produces no tap, hold or swipe
-//!   ("click + gesture" is a gesture type of its own, M5);
+//! - a session with a physical click produces no tap, hold or swipe, only
+//!   a click (or click-and-drag) gesture;
+//! - a chord (fingers tapping or swiping while another rests) voids the
+//!   session's own tap, hold or swipe;
 //! - a hold fires while the fingers are down and consumes the session, so
 //!   nothing else fires when they lift;
-//! - taps and swipes are exclusive by their movement thresholds;
+//! - taps and movements are exclusive by their thresholds; among swipe,
+//!   pinch and rotation the one exceeding its threshold most wins;
+//! - an edge swipe matches edge-swipe gestures before plain swipes;
 //! - a tap waits `multi_tap_gap_ms` before confirming only if a gesture with
 //!   more taps and the same fingers is configured;
 //! - a touch that the draw mode turns into a stroke waits `stroke_gap_ms`
@@ -19,10 +23,11 @@
 //!   judged as a tap or swipe after all;
 //! - among matching gestures the first in the file wins (priority order).
 
+mod chord;
 mod draw;
 mod hold;
+mod motion;
 mod session;
-mod swipe;
 mod tap;
 
 use std::collections::{BTreeMap, HashMap};
@@ -31,13 +36,13 @@ use std::sync::Arc;
 
 use crate::action::AppInfo;
 use crate::config::{Config, Direction, Edge, Gesture, Settings};
-use crate::trigger::{Trigger, Turn, Zoom};
 use crate::model::{DeviceEvent, DeviceId, MAX_CONTACTS, TouchFrame};
 use crate::symbols::{Candidate, Sample, Stroke, SymbolRecognizer, templates};
+use crate::trigger::{Trigger, Turn, Zoom};
 
 pub use draw::DrawParams;
+pub use motion::{Motion, motion, quantize};
 pub use session::{Session, SessionTracker};
-pub use swipe::quantize;
 
 /// What the fingers did.
 #[derive(Debug, Clone, PartialEq)]
@@ -294,12 +299,18 @@ impl Spec {
         for t in triggers {
             let n = usize::from(t.fingers()).min(MAX_CONTACTS);
             match t {
-                Trigger::Tap { taps, modifiers, .. } => {
+                Trigger::Tap {
+                    taps, modifiers, ..
+                } => {
                     spec.max_taps[n] = spec.max_taps[n].max(*taps);
                     spec.chords |= *modifiers > 0;
                 }
                 Trigger::Hold { .. } => spec.holds[n] = true,
-                Trigger::Swipe { direction, modifiers, .. } => {
+                Trigger::Swipe {
+                    direction,
+                    modifiers,
+                    ..
+                } => {
                     spec.swipes[n] = true;
                     spec.eight_way[n] |= direction.is_diagonal();
                     spec.chords |= *modifiers > 0;
@@ -436,7 +447,9 @@ struct DeviceState {
     tracker: SessionTracker,
     tap: tap::TapRecognizer,
     hold: hold::HoldRecognizer,
-    swipe: swipe::SwipeRecognizer,
+    motion: motion::MotionRecognizer,
+    click: motion::ClickRecognizer,
+    chord: chord::ChordRecognizer,
     draw: draw::DrawRecognizer,
     last_frame_us: u64,
     /// Trace of the last finished session, for taps confirmed later.
@@ -448,6 +461,7 @@ impl DeviceState {
         self.tracker.cancel();
         self.tap.reset();
         self.hold.reset();
+        self.chord.reset();
         self.draw.reset();
     }
 }
@@ -625,7 +639,8 @@ impl Engine {
                             st.last_trace = trace.clone();
                             let obs = st.tap.session_ended(&s, spec, t).into_iter();
                             out.extend(
-                                obs.chain(st.swipe.session_ended(&s, spec, t))
+                                obs.chain(st.motion.session_ended(&s, spec, t))
+                                    .chain(st.click.session_ended(&s, spec, t))
                                     .map(|o| (o, trace.clone())),
                             );
                         }
@@ -645,6 +660,16 @@ impl Engine {
                     && let Some(hold) = st.hold.update(s, spec, t)
                 {
                     Self::consume(st, &mut out, hold);
+                }
+                if let Some(s) = st.tracker.session()
+                    && let Some(chord) = st.chord.update(s, spec, t)
+                {
+                    Self::flush_taps(st, &mut out);
+                    let trace = st.tracker.session().map(session_trace).unwrap_or_default();
+                    if let Some(s) = st.tracker.session_mut() {
+                        s.chorded = true;
+                    }
+                    out.push((chord, trace));
                 }
             }
         }
@@ -726,7 +751,7 @@ impl Engine {
             let trace = session_trace(&s);
             let obs = st.tap.session_ended(&s, spec, t).into_iter();
             out.extend(
-                obs.chain(st.swipe.session_ended(&s, spec, t))
+                obs.chain(st.motion.session_ended(&s, spec, t))
                     .map(|o| (o, trace.clone())),
             );
         }

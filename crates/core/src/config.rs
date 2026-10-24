@@ -648,7 +648,10 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
         ("stroke_gap_ms", (1..=5_000).contains(&s.stroke_gap_ms)),
         ("pinch_min_mm", s.pinch_min_mm > 0.0),
         ("rotate_min_deg", (1.0..=180.0).contains(&s.rotate_min_deg)),
-        ("edge_zone_percent", (1.0..=30.0).contains(&s.edge_zone_percent)),
+        (
+            "edge_zone_percent",
+            (1.0..=30.0).contains(&s.edge_zone_percent),
+        ),
         ("history_size", (1..=1_000).contains(&s.history_size)),
         (
             "overlay → duration_ms",
@@ -744,7 +747,10 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
             let mut stray = def.trigger_def();
             stray.kind = None;
             if stray != TriggerDef::default() {
-                field_err("type", "a sequence only takes `steps` and `within_ms`".into());
+                field_err(
+                    "type",
+                    "a sequence only takes `steps` and `within_ms`".into(),
+                );
             }
             match &def.steps {
                 None => field_err("steps", "required for a sequence".into()),
@@ -1025,7 +1031,13 @@ action = { type = "lock_screen" }
 "#;
         let g = parse(text).unwrap().config.gestures;
         assert_eq!(g.len(), 6);
-        assert_eq!(g[0].trigger, Some(Trigger::Pinch { fingers: 2, zoom: Zoom::Out }));
+        assert_eq!(
+            g[0].trigger,
+            Some(Trigger::Pinch {
+                fingers: 2,
+                zoom: Zoom::Out
+            })
+        );
         assert_eq!(
             g[3].trigger,
             Some(Trigger::Swipe {
@@ -1037,7 +1049,10 @@ action = { type = "lock_screen" }
         assert!(g[5].trigger.is_none());
         assert_eq!(g[5].steps.len(), 2);
         assert_eq!(g[5].within_ms, 600);
-        assert_eq!(g[2].trigger.as_ref().unwrap().describe(), "swipe left from the right edge with 1 finger");
+        assert_eq!(
+            g[2].trigger.as_ref().unwrap().describe(),
+            "swipe left from the right edge with 1 finger"
+        );
     }
 
     #[test]
@@ -1058,10 +1073,25 @@ steps = [{ type = "tap" }]
 action = { type = "lock_screen" }
 "#,
         );
-        assert!(e.iter().any(|e| e.contains("\"a\" → fingers: must be between 2 and 10")), "{e:?}");
-        assert!(e.iter().any(|e| e.contains("\"a\" → zoom: required")), "{e:?}");
-        assert!(e.iter().any(|e| e.contains("\"b\" → type: a sequence only takes")), "{e:?}");
-        assert!(e.iter().any(|e| e.contains("\"b\" → steps: a sequence has 2 to 4 steps")), "{e:?}");
+        assert!(
+            e.iter()
+                .any(|e| e.contains("\"a\" → fingers: must be between 2 and 10")),
+            "{e:?}"
+        );
+        assert!(
+            e.iter().any(|e| e.contains("\"a\" → zoom: required")),
+            "{e:?}"
+        );
+        assert!(
+            e.iter()
+                .any(|e| e.contains("\"b\" → type: a sequence only takes")),
+            "{e:?}"
+        );
+        assert!(
+            e.iter()
+                .any(|e| e.contains("\"b\" → steps: a sequence has 2 to 4 steps")),
+            "{e:?}"
+        );
     }
 
     #[test]

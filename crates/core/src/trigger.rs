@@ -52,16 +52,42 @@ pub struct TriggerDef {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Trigger {
     /// `modifiers` resting fingers make it a chord.
-    Tap { fingers: u8, taps: u8, modifiers: u8 },
-    Hold { fingers: u8 },
-    Swipe { fingers: u8, direction: Direction, modifiers: u8 },
+    Tap {
+        fingers: u8,
+        taps: u8,
+        modifiers: u8,
+    },
+    Hold {
+        fingers: u8,
+    },
+    Swipe {
+        fingers: u8,
+        direction: Direction,
+        modifiers: u8,
+    },
     /// A swipe starting at an edge of the touchpad.
-    EdgeSwipe { edge: Edge, fingers: u8, direction: Direction },
-    Pinch { fingers: u8, zoom: Zoom },
-    Rotate { fingers: u8, turn: Turn },
+    EdgeSwipe {
+        edge: Edge,
+        fingers: u8,
+        direction: Direction,
+    },
+    Pinch {
+        fingers: u8,
+        zoom: Zoom,
+    },
+    Rotate {
+        fingers: u8,
+        turn: Turn,
+    },
     /// A physical click with `fingers` fingers, or a click-and-drag in `direction`.
-    Click { fingers: u8, direction: Option<Direction> },
-    Symbol { names: Vec<String>, confidence: Option<f32> },
+    Click {
+        fingers: u8,
+        direction: Option<Direction>,
+    },
+    Symbol {
+        names: Vec<String>,
+        confidence: Option<f32>,
+    },
 }
 
 type FieldErrors = Vec<(&'static str, String)>;
@@ -90,7 +116,10 @@ impl TriggerDef {
         if kind != GestureKind::Symbol && kind != GestureKind::Sequence {
             need("fingers", self.fingers.is_some(), &mut errors);
             if self.fingers.is_some() && !(min_fingers..=max).contains(&fingers) {
-                errors.push(("fingers", format!("must be between {min_fingers} and {max}")));
+                errors.push((
+                    "fingers",
+                    format!("must be between {min_fingers} and {max}"),
+                ));
             }
         }
         match kind {
@@ -126,7 +155,10 @@ impl TriggerDef {
             ("confidence", self.confidence.is_some()),
         ] {
             if present && !allowed.contains(&field) {
-                errors.push((field, format!("a {} gesture does not take `{field}`", kind.label())));
+                errors.push((
+                    field,
+                    format!("a {} gesture does not take `{field}`", kind.label()),
+                ));
             }
         }
         if let Some(t) = self.taps
@@ -138,7 +170,10 @@ impl TriggerDef {
         if self.modifier_fingers.is_some() && !(1..=3).contains(&modifiers) {
             errors.push(("modifier_fingers", "must be 1, 2 or 3".into()));
         } else if modifiers > 0 && fingers + modifiers > max {
-            errors.push(("modifier_fingers", format!("fingers and modifier fingers exceed {max}")));
+            errors.push((
+                "modifier_fingers",
+                format!("fingers and modifier fingers exceed {max}"),
+            ));
         }
         if kind == GestureKind::Tap && modifiers > 0 && self.taps.is_some_and(|t| t > 1) {
             errors.push(("taps", "chords support single taps only".into()));
@@ -148,8 +183,13 @@ impl TriggerDef {
         {
             errors.push(("confidence", "must be between 0 and 1".into()));
         }
-        let names = self.symbol.as_ref().map(OneOrMany::to_vec).unwrap_or_default();
-        if self.symbol.is_some() && (names.is_empty() || names.iter().any(|n| n.trim().is_empty())) {
+        let names = self
+            .symbol
+            .as_ref()
+            .map(OneOrMany::to_vec)
+            .unwrap_or_default();
+        if self.symbol.is_some() && (names.is_empty() || names.iter().any(|n| n.trim().is_empty()))
+        {
             errors.push(("symbol", "symbol names must not be empty".into()));
         }
         if !errors.is_empty() {
@@ -188,7 +228,12 @@ impl TriggerDef {
                 names,
                 confidence: self.confidence,
             },
-            GestureKind::Sequence => return Err(vec![("type", "a sequence step cannot be a sequence".into())]),
+            GestureKind::Sequence => {
+                return Err(vec![(
+                    "type",
+                    "a sequence step cannot be a sequence".into(),
+                )]);
+            }
         })
     }
 }
@@ -201,40 +246,102 @@ impl Trigger {
     pub fn specificity(&self, obs: &Observation, default_confidence: f32) -> u8 {
         let yes = |b: bool| if b { 2 } else { 0 };
         match (self, obs) {
-            (Trigger::Tap { fingers, taps, modifiers: 0 }, Observation::Tap { fingers: f, taps: t }) => {
-                yes(f == fingers && t == taps)
-            }
-            (Trigger::Tap { fingers, taps, modifiers }, Observation::Chord { modifiers: m, gesture })
-                if *modifiers > 0 =>
-            {
-                yes(m == modifiers && matches!(**gesture, Observation::Tap { fingers: f, taps: t } if f == *fingers && t == *taps))
-            }
-            (Trigger::Hold { fingers }, Observation::Hold { fingers: f }) => yes(f == fingers),
-            (Trigger::Swipe { fingers, direction, modifiers: 0 }, Observation::Swipe { fingers: f, direction: d, .. }) => {
-                yes(f == fingers && d == direction)
-            }
-            (Trigger::Swipe { fingers, direction, modifiers: 0 }, Observation::EdgeSwipe { fingers: f, direction: d, .. }) => {
-                u8::from(f == fingers && d == direction)
-            }
-            (Trigger::Swipe { fingers, direction, modifiers }, Observation::Chord { modifiers: m, gesture })
-                if *modifiers > 0 =>
-            {
-                yes(m == modifiers
-                    && matches!(**gesture, Observation::Swipe { fingers: f, direction: d, .. } if f == *fingers && d == *direction))
-            }
             (
-                Trigger::EdgeSwipe { edge, fingers, direction },
-                Observation::EdgeSwipe { edge: e, fingers: f, direction: d, .. },
+                Trigger::Tap {
+                    fingers,
+                    taps,
+                    modifiers: 0,
+                },
+                Observation::Tap {
+                    fingers: f,
+                    taps: t,
+                },
+            ) => yes(f == fingers && t == taps),
+            (
+                Trigger::Tap {
+                    fingers,
+                    taps,
+                    modifiers,
+                },
+                Observation::Chord {
+                    modifiers: m,
+                    gesture,
+                },
+            ) if *modifiers > 0 => yes(m == modifiers
+                && matches!(**gesture, Observation::Tap { fingers: f, taps: t } if f == *fingers && t == *taps)),
+            (Trigger::Hold { fingers }, Observation::Hold { fingers: f }) => yes(f == fingers),
+            (
+                Trigger::Swipe {
+                    fingers,
+                    direction,
+                    modifiers: 0,
+                },
+                Observation::Swipe {
+                    fingers: f,
+                    direction: d,
+                    ..
+                },
+            ) => yes(f == fingers && d == direction),
+            (
+                Trigger::Swipe {
+                    fingers,
+                    direction,
+                    modifiers: 0,
+                },
+                Observation::EdgeSwipe {
+                    fingers: f,
+                    direction: d,
+                    ..
+                },
+            ) => u8::from(f == fingers && d == direction),
+            (
+                Trigger::Swipe {
+                    fingers,
+                    direction,
+                    modifiers,
+                },
+                Observation::Chord {
+                    modifiers: m,
+                    gesture,
+                },
+            ) if *modifiers > 0 => yes(m == modifiers
+                && matches!(**gesture, Observation::Swipe { fingers: f, direction: d, .. } if f == *fingers && d == *direction)),
+            (
+                Trigger::EdgeSwipe {
+                    edge,
+                    fingers,
+                    direction,
+                },
+                Observation::EdgeSwipe {
+                    edge: e,
+                    fingers: f,
+                    direction: d,
+                    ..
+                },
             ) => yes(e == edge && f == fingers && d == direction),
-            (Trigger::Pinch { fingers, zoom }, Observation::Pinch { fingers: f, zoom: z, .. }) => {
-                yes(f == fingers && z == zoom)
-            }
-            (Trigger::Rotate { fingers, turn }, Observation::Rotate { fingers: f, turn: t, .. }) => {
-                yes(f == fingers && t == turn)
-            }
-            (Trigger::Click { fingers, direction }, Observation::Click { fingers: f, direction: d }) => {
-                yes(f == fingers && d == direction)
-            }
+            (
+                Trigger::Pinch { fingers, zoom },
+                Observation::Pinch {
+                    fingers: f,
+                    zoom: z,
+                    ..
+                },
+            ) => yes(f == fingers && z == zoom),
+            (
+                Trigger::Rotate { fingers, turn },
+                Observation::Rotate {
+                    fingers: f,
+                    turn: t,
+                    ..
+                },
+            ) => yes(f == fingers && t == turn),
+            (
+                Trigger::Click { fingers, direction },
+                Observation::Click {
+                    fingers: f,
+                    direction: d,
+                },
+            ) => yes(f == fingers && d == direction),
             (Trigger::Symbol { names, confidence }, Observation::Symbol { name, score, .. }) => {
                 yes(names.contains(name) && *score >= confidence.unwrap_or(default_confidence))
             }
@@ -258,28 +365,78 @@ impl Trigger {
 
     /// A short human description, e.g. `swipe up with 3 fingers`.
     pub fn describe(&self) -> String {
-        let f = |n: u8| if n == 1 { "1 finger".to_string() } else { format!("{n} fingers") };
-        let chord = |m: u8| if m > 0 { format!(" while {} rest", f(m)) } else { String::new() };
-        match self {
-            Trigger::Tap { fingers, taps: 1, modifiers } => format!("tap with {}{}", f(*fingers), chord(*modifiers)),
-            Trigger::Tap { fingers, taps, modifiers } => format!("{taps}× tap with {}{}", f(*fingers), chord(*modifiers)),
-            Trigger::Hold { fingers } => format!("hold {}", f(*fingers)),
-            Trigger::Swipe { fingers, direction, modifiers } => {
-                format!("swipe {direction} with {}{}", f(*fingers), chord(*modifiers))
+        let f = |n: u8| {
+            if n == 1 {
+                "1 finger".to_string()
+            } else {
+                format!("{n} fingers")
             }
-            Trigger::EdgeSwipe { edge, fingers, direction } => {
-                format!("swipe {direction} from the {} edge with {}", format!("{edge:?}").to_lowercase(), f(*fingers))
+        };
+        let chord = |m: u8| {
+            if m > 0 {
+                format!(" while {} rest", f(m))
+            } else {
+                String::new()
+            }
+        };
+        match self {
+            Trigger::Tap {
+                fingers,
+                taps: 1,
+                modifiers,
+            } => format!("tap with {}{}", f(*fingers), chord(*modifiers)),
+            Trigger::Tap {
+                fingers,
+                taps,
+                modifiers,
+            } => format!("{taps}× tap with {}{}", f(*fingers), chord(*modifiers)),
+            Trigger::Hold { fingers } => format!("hold {}", f(*fingers)),
+            Trigger::Swipe {
+                fingers,
+                direction,
+                modifiers,
+            } => {
+                format!(
+                    "swipe {direction} with {}{}",
+                    f(*fingers),
+                    chord(*modifiers)
+                )
+            }
+            Trigger::EdgeSwipe {
+                edge,
+                fingers,
+                direction,
+            } => {
+                format!(
+                    "swipe {direction} from the {} edge with {}",
+                    format!("{edge:?}").to_lowercase(),
+                    f(*fingers)
+                )
             }
             Trigger::Pinch { fingers, zoom } => {
-                format!("pinch {} with {}", if *zoom == Zoom::In { "in" } else { "out" }, f(*fingers))
+                format!(
+                    "pinch {} with {}",
+                    if *zoom == Zoom::In { "in" } else { "out" },
+                    f(*fingers)
+                )
             }
             Trigger::Rotate { fingers, turn } => format!(
                 "rotate {} with {}",
-                if *turn == Turn::Clockwise { "clockwise" } else { "counterclockwise" },
+                if *turn == Turn::Clockwise {
+                    "clockwise"
+                } else {
+                    "counterclockwise"
+                },
                 f(*fingers)
             ),
-            Trigger::Click { fingers, direction: None } => format!("click with {}", f(*fingers)),
-            Trigger::Click { fingers, direction: Some(d) } => format!("click and drag {d} with {}", f(*fingers)),
+            Trigger::Click {
+                fingers,
+                direction: None,
+            } => format!("click with {}", f(*fingers)),
+            Trigger::Click {
+                fingers,
+                direction: Some(d),
+            } => format!("click and drag {d} with {}", f(*fingers)),
             Trigger::Symbol { names, .. } => format!("draw {}", names.join(" or ")),
         }
     }
