@@ -83,7 +83,8 @@ enum Cmd {
         /// How many examples to draw.
         #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=20))]
         samples: u8,
-        /// Replace the symbol's existing templates instead of adding to them.
+        /// Replace the examples recorded before for this symbol instead of
+        /// adding to them (the built-in ones are kept either way).
         #[arg(long)]
         replace: bool,
     },

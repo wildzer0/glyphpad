@@ -1,6 +1,6 @@
 //! Symbol templates: the on-disk format and the built-in defaults.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +44,9 @@ pub const TEMPLATES_FORMAT: u32 = 1;
 pub struct TemplateFile {
     pub format: u32,
     pub symbols: BTreeMap<String, Vec<Sample>>,
+    /// Symbols whose built-in samples are not used.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub hidden_builtins: BTreeSet<String>,
 }
 
 impl Default for TemplateFile {
@@ -51,6 +54,7 @@ impl Default for TemplateFile {
         Self {
             format: TEMPLATES_FORMAT,
             symbols: BTreeMap::new(),
+            hidden_builtins: BTreeSet::new(),
         }
     }
 }
@@ -71,16 +75,20 @@ impl TemplateFile {
         serde_json::to_string_pretty(self).expect("templates always serialize")
     }
 
-    /// The templates in use: the user's samples for a symbol replace the
-    /// built-in ones for that symbol, so recording your own `L` makes the
-    /// default `L` go away.
+    /// The templates in use: the built-in samples (unless hidden) plus the
+    /// user's. Recorded samples add to the built-in ones rather than replace
+    /// them: on the reference touchpad, five recorded L's alone no longer
+    /// matched L's drawn a day earlier with a rising foot, which the built-in
+    /// variants still cover.
     pub fn effective(&self) -> BTreeMap<String, Vec<Sample>> {
         let mut all = defaults();
+        all.retain(|name, _| !self.hidden_builtins.contains(name));
         for (name, samples) in &self.symbols {
-            if !samples.is_empty() {
-                all.insert(name.clone(), samples.clone());
-            }
+            all.entry(name.clone())
+                .or_default()
+                .extend(samples.iter().cloned());
         }
+        all.retain(|_, samples| !samples.is_empty());
         all
     }
 }
@@ -218,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn user_samples_replace_defaults() {
+    fn user_samples_add_to_defaults() {
         let mut file = TemplateFile::default();
         let sample = Sample {
             strokes: vec![vec![
@@ -239,9 +247,14 @@ mod tests {
         file.symbols.insert("L".into(), vec![sample.clone()]);
         file.symbols.insert("hook".into(), vec![sample]);
         let eff = file.effective();
-        assert_eq!(eff["L"].len(), 1);
+        assert_eq!(eff["L"].len(), 8);
         assert_eq!(eff["hook"].len(), 1);
         assert_eq!(eff["V"].len(), 7);
+        file.hidden_builtins.insert("L".into());
+        file.hidden_builtins.insert("V".into());
+        let eff = file.effective();
+        assert_eq!(eff["L"].len(), 1);
+        assert!(!eff.contains_key("V"));
         let parsed = TemplateFile::parse(&file.to_json()).unwrap();
         assert_eq!(parsed, file);
     }
