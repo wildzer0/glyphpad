@@ -9,6 +9,8 @@ pub mod cursor;
 mod device;
 mod hid;
 pub mod native_gestures;
+pub mod overlay;
+pub mod single_instance;
 mod source;
 
 pub use hid::MaxContactsSource;
