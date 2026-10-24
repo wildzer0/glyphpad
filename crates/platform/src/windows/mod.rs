@@ -84,11 +84,11 @@ pub fn dump_descriptors() -> String {
         );
         let _ = writeln!(
             out,
-            "  opened for feature reports: {}",
+            "  device handle access: {}",
             if pad.opened_rw {
-                "yes"
+                "read/write"
             } else {
-                "no (read-only metadata)"
+                "none (zero-access handle; feature reports may still be readable)"
             }
         );
         out.push_str(&hid::describe(&pad.preparsed));

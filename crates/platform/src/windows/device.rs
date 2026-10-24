@@ -128,8 +128,8 @@ pub fn preparsed_data(device: HANDLE) -> Option<PreparsedData> {
 struct HidFile(HANDLE);
 
 impl HidFile {
-    /// Opens the device for feature reports, falling back to zero access,
-    /// which still allows reading strings and needs no special rights.
+    /// Opens the device read/write, falling back to zero access, which needs no
+    /// special rights and still allows reading strings and often feature reports.
     fn open(path: &str) -> Option<(Self, bool)> {
         let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
         let try_open = |access: u32| {
@@ -202,7 +202,9 @@ pub struct Touchpad {
     pub geometry: Geometry,
     pub max_contacts: u8,
     pub max_contacts_source: MaxContactsSource,
-    /// Whether the device could be opened with read/write access for feature reports.
+    /// Whether the device could be opened with read/write access. Without it
+    /// a zero-access handle is used, through which Windows still serves strings
+    /// and, on some devices, feature reports.
     pub opened_rw: bool,
     /// Physical size was missing from the descriptor and is a guess.
     pub size_guessed: bool,
