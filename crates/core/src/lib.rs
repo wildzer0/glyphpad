@@ -7,6 +7,7 @@ pub mod action;
 pub mod capture;
 pub mod config;
 pub mod config_edit;
+pub mod conflicts;
 pub mod dispatch;
 pub mod engine;
 pub mod infer;
