@@ -18,6 +18,18 @@ pub struct Finger {
     pub pos: Point,
 }
 
+/// The fingers' centroid in one frame of the session.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TraceSample {
+    pub t_us: u64,
+    /// Centroid in millimeters.
+    pub mm: Point,
+    /// Centroid normalized to 0..1 over the surface.
+    pub norm: Point,
+    /// Fingers touching in this frame.
+    pub count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Session {
     pub start_us: u64,
@@ -43,6 +55,8 @@ pub struct Session {
     /// Contacts counted as fingers and later flagged as palms. The session
     /// stays open until they lift.
     pub palms: BTreeSet<u32>,
+    /// Centroid of the fingers in every frame with at least one finger down.
+    pub trace: Vec<TraceSample>,
 }
 
 impl Session {
@@ -61,6 +75,7 @@ impl Session {
             peak_over: false,
             consumed: false,
             palms: BTreeSet::new(),
+            trace: Vec::new(),
         }
     }
 
@@ -154,6 +169,18 @@ impl SessionTracker {
         }
 
         let n = s.fingers.len();
+        if n > 0 {
+            let k = n as f32;
+            let sum = active.iter().fold((0.0, 0.0, 0.0, 0.0), |a, c| {
+                (a.0 + c.x_mm, a.1 + c.y_mm, a.2 + c.x_norm, a.3 + c.y_norm)
+            });
+            s.trace.push(TraceSample {
+                t_us: ts,
+                mm: (sum.0 / k, sum.1 / k),
+                norm: (sum.2 / k, sum.3 / k),
+                count: n,
+            });
+        }
         if n > s.max_fingers {
             s.max_fingers = n;
             s.peak_over = false;

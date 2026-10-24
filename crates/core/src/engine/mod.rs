@@ -13,20 +13,27 @@
 //! - taps and swipes are exclusive by their movement thresholds;
 //! - a tap waits `multi_tap_gap_ms` before confirming only if a gesture with
 //!   more taps and the same fingers is configured;
+//! - a touch that the draw mode turns into a stroke waits `stroke_gap_ms`
+//!   for further strokes, then is matched against the symbols; if no
+//!   configured symbol scores high enough and it was a single stroke, it is
+//!   judged as a tap or swipe after all;
 //! - among matching gestures the first in the file wins (priority order).
 
+mod draw;
 mod hold;
 mod session;
 mod swipe;
 mod tap;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 use crate::action::AppInfo;
 use crate::config::{Config, Direction, Gesture, GestureKind, Settings};
 use crate::model::{DeviceEvent, DeviceId, MAX_CONTACTS, TouchFrame};
+use crate::symbols::{Candidate, Sample, Stroke, SymbolRecognizer, templates};
 
+pub use draw::DrawParams;
 pub use session::{Session, SessionTracker};
 pub use swipe::quantize;
 
@@ -46,6 +53,39 @@ pub enum Observation {
         distance_mm: f32,
         speed_mm_s: f32,
     },
+    /// A drawn symbol that scored at least its gesture's confidence.
+    Symbol {
+        name: String,
+        score: f32,
+        /// The best candidates, best first (the first is this symbol).
+        candidates: Vec<Candidate>,
+        strokes: Vec<Stroke>,
+    },
+    /// A drawing that matched no configured symbol well enough; logged with
+    /// its best candidates.
+    UnrecognizedSymbol {
+        candidates: Vec<Candidate>,
+        strokes: Vec<Stroke>,
+    },
+    /// A drawing made while recording templates; not matched at all.
+    Sample {
+        strokes: Vec<Stroke>,
+    },
+}
+
+/// How many candidates observations keep.
+const TOP_CANDIDATES: usize = 3;
+
+fn format_candidates(c: &[Candidate]) -> String {
+    let list: Vec<String> = c
+        .iter()
+        .map(|c| format!("{} {:.2}", c.symbol, c.score))
+        .collect();
+    if list.is_empty() {
+        "no candidates".into()
+    } else {
+        list.join(", ")
+    }
 }
 
 impl fmt::Display for Observation {
@@ -62,6 +102,27 @@ impl fmt::Display for Observation {
                 f,
                 "swipe fingers={fingers} direction={direction} ({distance_mm:.1} mm at {speed_mm_s:.0} mm/s)"
             ),
+            Observation::Symbol {
+                name,
+                score,
+                candidates,
+                strokes,
+            } => write!(
+                f,
+                "symbol {name} score={score:.2} strokes={} (candidates: {})",
+                strokes.len(),
+                format_candidates(candidates)
+            ),
+            Observation::UnrecognizedSymbol {
+                candidates,
+                strokes,
+            } => write!(
+                f,
+                "unrecognized drawing strokes={} (best: {})",
+                strokes.len(),
+                format_candidates(candidates)
+            ),
+            Observation::Sample { strokes } => write!(f, "drawn sample strokes={}", strokes.len()),
         }
     }
 }
@@ -103,7 +164,16 @@ impl Default for Thresholds {
 pub struct Spec {
     max_taps: [u8; MAX_CONTACTS + 1],
     holds: [bool; MAX_CONTACTS + 1],
+    /// Finger counts used by swipe gestures; one finger moving is the
+    /// pointer, not a swipe, unless a gesture says otherwise.
+    swipes: [bool; MAX_CONTACTS + 1],
     eight_way: [bool; MAX_CONTACTS + 1],
+    /// Draw mode; `None` disables symbols.
+    pub draw: Option<DrawParams>,
+    /// Lowest confidence of the gestures using each symbol. `None` accepts
+    /// every symbol at `default_confidence` (diagnostics).
+    symbol_thresholds: Option<BTreeMap<String, f32>>,
+    default_confidence: f32,
 }
 
 impl Default for Spec {
@@ -111,36 +181,68 @@ impl Default for Spec {
         Self {
             max_taps: [1; MAX_CONTACTS + 1],
             holds: [false; MAX_CONTACTS + 1],
+            swipes: [false; MAX_CONTACTS + 1],
             eight_way: [false; MAX_CONTACTS + 1],
+            draw: None,
+            symbol_thresholds: Some(BTreeMap::new()),
+            default_confidence: Settings::default().default_confidence,
         }
+    }
+}
+
+fn draw_params(s: &Settings) -> DrawParams {
+    DrawParams {
+        activation: s.draw_activation,
+        stroke_gap_us: s.stroke_gap_ms * 1000,
+        min_stroke_mm: s.min_stroke_mm,
+        hold_still_mm: s.hold_max_movement_mm,
     }
 }
 
 impl Spec {
     pub fn from_config(config: &Config) -> Self {
-        let mut spec = Self::default();
+        let s = &config.settings;
+        let mut spec = Self {
+            draw: Some(draw_params(s)),
+            default_confidence: s.default_confidence,
+            ..Self::default()
+        };
+        let mut thresholds = BTreeMap::new();
         for g in config.gestures.iter().filter(|g| g.def.enabled) {
             let n = usize::from(g.fingers()).min(MAX_CONTACTS);
             match g.def.kind {
                 GestureKind::Tap => spec.max_taps[n] = spec.max_taps[n].max(g.taps()),
                 GestureKind::Hold => spec.holds[n] = true,
                 GestureKind::Swipe => {
+                    spec.swipes[n] = true;
                     spec.eight_way[n] |= g.def.direction.is_some_and(Direction::is_diagonal)
                 }
-                GestureKind::Symbol => {}
+                GestureKind::Symbol => {
+                    let conf = g.def.confidence.unwrap_or(s.default_confidence);
+                    for name in g.def.symbol.iter().flat_map(|s| s.to_vec()) {
+                        let t: &mut f32 = thresholds.entry(name).or_insert(conf);
+                        *t = t.min(conf);
+                    }
+                }
             }
         }
+        spec.symbol_thresholds = Some(thresholds);
         spec
     }
 
     /// Recognizes every variant: triple taps, holds with any number of
-    /// fingers, 8-way swipes. For diagnostics, not for normal use, because
-    /// every tap then waits for a possible second one.
+    /// fingers, 8-way swipes, every symbol with the default draw mode. For
+    /// diagnostics, not for normal use, because every tap then waits for a
+    /// possible second one.
     pub fn everything() -> Self {
         Self {
             max_taps: [3; MAX_CONTACTS + 1],
             holds: [true; MAX_CONTACTS + 1],
+            swipes: [true; MAX_CONTACTS + 1],
             eight_way: [true; MAX_CONTACTS + 1],
+            draw: Some(draw_params(&Settings::default())),
+            symbol_thresholds: None,
+            default_confidence: Settings::default().default_confidence,
         }
     }
 
@@ -152,8 +254,21 @@ impl Spec {
         fingers > 0 && self.holds[usize::from(fingers).min(MAX_CONTACTS)]
     }
 
+    pub fn has_swipe(&self, fingers: u8) -> bool {
+        fingers > 0 && self.swipes[usize::from(fingers).min(MAX_CONTACTS)]
+    }
+
     pub fn eight_way(&self, fingers: u8) -> bool {
         self.eight_way[usize::from(fingers).min(MAX_CONTACTS)]
+    }
+
+    /// Score a symbol needs to be recognized; `None` if no gesture uses it,
+    /// so drawing it can still fall back to a swipe.
+    fn symbol_threshold(&self, name: &str) -> Option<f32> {
+        match &self.symbol_thresholds {
+            Some(t) => t.get(name).copied(),
+            None => Some(self.default_confidence),
+        }
     }
 }
 
@@ -176,6 +291,7 @@ struct DeviceState {
     tap: tap::TapRecognizer,
     hold: hold::HoldRecognizer,
     swipe: swipe::SwipeRecognizer,
+    draw: draw::DrawRecognizer,
     last_frame_us: u64,
 }
 
@@ -184,37 +300,83 @@ impl DeviceState {
         self.tracker.cancel();
         self.tap.reset();
         self.hold.reset();
+        self.draw.reset();
     }
 }
 
-#[derive(Debug)]
 pub struct Engine {
     spec: Spec,
     thresholds: Thresholds,
+    symbols: SymbolRecognizer,
     devices: HashMap<DeviceId, DeviceState>,
+    /// Drawings become samples instead of being recognized (`glyphpad record`).
+    recording: bool,
 }
 
 impl Engine {
+    /// An engine with the built-in symbol templates.
     pub fn new(spec: Spec, thresholds: Thresholds) -> Self {
         Self {
             spec,
             thresholds,
+            symbols: SymbolRecognizer::new(&templates::defaults(), 0.0),
             devices: HashMap::new(),
+            recording: false,
         }
     }
 
     pub fn from_config(config: &Config) -> Self {
-        Self::new(
+        let mut engine = Self::new(
             Spec::from_config(config),
             Thresholds::from(&config.settings),
-        )
+        );
+        engine.set_templates(
+            &templates::defaults(),
+            config.settings.rotation_tolerance_deg,
+        );
+        engine
+    }
+
+    /// Replaces the symbol templates.
+    pub fn set_templates(
+        &mut self,
+        symbols: &BTreeMap<String, Vec<Sample>>,
+        rotation_tolerance_deg: f32,
+    ) {
+        self.symbols = SymbolRecognizer::new(symbols, rotation_tolerance_deg);
+    }
+
+    /// In recording mode drawings produce [`Observation::Sample`]s.
+    pub fn set_recording(&mut self, recording: bool) {
+        self.recording = recording;
+        self.reset();
     }
 
     /// Applies a new configuration, keeping nothing of touches in progress.
+    /// Templates are kept; set them again if they changed.
     pub fn reconfigure(&mut self, config: &Config) {
         self.spec = Spec::from_config(config);
         self.thresholds = Thresholds::from(&config.settings);
         self.reset();
+    }
+
+    /// Lets the next symbol be drawn with one finger, until `until_us`
+    /// (the `draw_symbol` action).
+    pub fn arm_drawing(&mut self, until_us: u64) {
+        self.devices
+            .values_mut()
+            .for_each(|st| st.draw.arm(until_us));
+    }
+
+    /// Whether some touch in progress is being drawn, e.g. to freeze the
+    /// cursor meanwhile.
+    pub fn drawing_now(&self) -> bool {
+        let Some(p) = &self.spec.draw else {
+            return false;
+        };
+        self.devices
+            .values()
+            .any(|st| st.tracker.session().is_some_and(|s| st.draw.drawing(s, p)))
     }
 
     /// Forgets every touch in progress and pending tap sequence.
@@ -234,7 +396,8 @@ impl Engine {
     }
 
     pub fn on_frame(&mut self, device: DeviceId, frame: &TouchFrame) -> Vec<Recognition> {
-        let (spec, t) = (&self.spec, &self.thresholds);
+        let (spec, t, symbols, recording) =
+            (&self.spec, &self.thresholds, &self.symbols, self.recording);
         let st = self.devices.entry(device).or_default();
         let ts = frame.timestamp_us;
         st.last_frame_us = ts;
@@ -245,13 +408,32 @@ impl Engine {
             Some(session::SessionUpdate::Ended) => {
                 if let Some(s) = st.tracker.take() {
                     st.hold.session_ended();
-                    out.extend(st.tap.session_ended(&s, spec, t));
-                    out.extend(st.swipe.session_ended(&s, spec, t));
+                    let stroke = spec
+                        .draw
+                        .as_ref()
+                        .and_then(|p| Some((st.draw.stroke_of(&s, p)?, p)));
+                    match stroke {
+                        Some((samples, p)) => {
+                            // A tap sequence cannot continue through a stroke.
+                            st.tap.reset_into(&mut out);
+                            st.draw.add(samples, s, p);
+                        }
+                        None => {
+                            // Not a stroke: a symbol in progress is complete.
+                            out.extend(Self::finish_symbol(st, spec, t, symbols, recording));
+                            out.extend(st.tap.session_ended(&s, spec, t));
+                            out.extend(st.swipe.session_ended(&s, spec, t));
+                        }
+                    }
                 }
             }
             Some(update) => {
                 if update == session::SessionUpdate::Began {
                     out.extend(st.tap.session_began(ts));
+                    if st.draw.deadline().is_some_and(|d| ts >= d) {
+                        out.extend(Self::finish_symbol(st, spec, t, symbols, recording));
+                    }
+                    st.draw.session_began();
                 }
                 if let Some(s) = st.tracker.session()
                     && let Some(hold) = st.hold.update(s, spec, t)
@@ -269,6 +451,53 @@ impl Engine {
             .collect()
     }
 
+    /// Recognizes the symbol in progress, if any; an unrecognized single
+    /// stroke is judged as a tap or swipe instead.
+    fn finish_symbol(
+        st: &mut DeviceState,
+        spec: &Spec,
+        t: &Thresholds,
+        symbols: &SymbolRecognizer,
+        recording: bool,
+    ) -> Vec<Observation> {
+        let Some(done) = st.draw.finish() else {
+            return Vec::new();
+        };
+        if recording {
+            return vec![Observation::Sample {
+                strokes: done.strokes,
+            }];
+        }
+        let xy: Vec<Vec<(f32, f32)>> = done
+            .strokes
+            .iter()
+            .map(|s| s.iter().map(|p| (p.x_mm, p.y_mm)).collect())
+            .collect();
+        let mut candidates = symbols.recognize(&xy);
+        candidates.truncate(TOP_CANDIDATES);
+        if let Some(best) = candidates.first()
+            && spec
+                .symbol_threshold(&best.symbol)
+                .is_some_and(|min| best.score >= min)
+        {
+            return vec![Observation::Symbol {
+                name: best.symbol.clone(),
+                score: best.score,
+                candidates,
+                strokes: done.strokes,
+            }];
+        }
+        let mut out = vec![Observation::UnrecognizedSymbol {
+            candidates,
+            strokes: done.strokes,
+        }];
+        if let Some(s) = done.fallback {
+            out.extend(st.tap.session_ended(&s, spec, t));
+            out.extend(st.swipe.session_ended(&s, spec, t));
+        }
+        out
+    }
+
     /// A hold fired mid-session: a tap sequence waiting for this touch is
     /// confirmed first, then the session is closed to other recognizers.
     fn consume(st: &mut DeviceState, out: &mut Vec<Observation>, hold: Observation) {
@@ -282,7 +511,8 @@ impl Engine {
     /// Advances time without new frames, for timeouts (multi-tap gap, holds,
     /// stale sessions). `now_us` is in the frame time base.
     pub fn tick(&mut self, now_us: u64) -> Vec<Recognition> {
-        let t = &self.thresholds;
+        let (spec, t, symbols, recording) =
+            (&self.spec, &self.thresholds, &self.symbols, self.recording);
         let mut all = Vec::new();
         for (&device, st) in &mut self.devices {
             let mut out = Vec::new();
@@ -292,6 +522,9 @@ impl Engine {
                 st.hold.reset();
             }
             out.extend(st.tap.tick(now_us));
+            if st.draw.deadline().is_some_and(|d| now_us >= d) {
+                out.extend(Self::finish_symbol(st, spec, t, symbols, recording));
+            }
             if st.tracker.session().is_some()
                 && let Some(hold) = st.hold.tick(now_us, t)
             {
@@ -335,6 +568,7 @@ impl Engine {
             .flat_map(|st| {
                 [
                     st.tap.deadline(),
+                    st.draw.deadline(),
                     st.hold.deadline(&self.thresholds),
                     st.tracker
                         .session()
@@ -368,6 +602,14 @@ pub fn resolve<'a>(
                     && g.fingers() == fingers
                     && d.direction == Some(direction)
             }
+            Observation::Symbol {
+                ref name, score, ..
+            } => {
+                d.kind == GestureKind::Symbol
+                    && d.symbol.as_ref().is_some_and(|s| s.to_vec().contains(name))
+                    && score >= d.confidence.unwrap_or(config.settings.default_confidence)
+            }
+            Observation::UnrecognizedSymbol { .. } | Observation::Sample { .. } => false,
         };
         matches && g.applies(&config.settings.active_profile, app)
     })

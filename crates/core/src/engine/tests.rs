@@ -2,6 +2,7 @@
 //! interval measured on the reference touchpad.
 
 use super::*;
+use crate::config::Config;
 use crate::model::Contact;
 
 const FRAME_US: u64 = 7_000;
@@ -326,8 +327,25 @@ fn pending_tap_is_confirmed_before_a_hold() {
     );
 }
 
+/// Swipes with 3 and 4 fingers in the 4 main directions.
+fn swipe_spec() -> Spec {
+    let mut toml = String::new();
+    for fingers in [3, 4] {
+        for dir in ["up", "down", "left", "right"] {
+            toml += &format!(
+                "[[gesture]]\nname = \"s{fingers}{dir}\"\ntype = \"swipe\"\nfingers = {fingers}\ndirection = \"{dir}\"\naction = {{ type = \"lock_screen\" }}\n"
+            );
+        }
+    }
+    let mut spec = spec_with(&toml);
+    spec.draw = None;
+    spec
+}
+
 fn swipe_dir(out: &[Observation]) -> Vec<(u8, Direction)> {
     out.iter()
+        // Strokes that are not symbols leave a diagnostic before falling back.
+        .filter(|o| !matches!(o, Observation::UnrecognizedSymbol { .. }))
         .map(|o| match o {
             Observation::Swipe {
                 fingers, direction, ..
@@ -345,7 +363,7 @@ fn swipes() {
     pad.stroke(4, (30.0, 80.0), (0.0, -40.0), 200);
     pad.wait_ms(300);
     pad.stroke(3, (30.0, 80.0), (30.0, -20.0), 200); // 34°
-    let out = run(&mut engine(Spec::default()), &pad.frames);
+    let out = run(&mut engine(swipe_spec()), &pad.frames);
     assert_eq!(
         swipe_dir(&out),
         vec![
@@ -390,7 +408,7 @@ fn staggered_lift_does_not_bend_a_swipe() {
     );
     pad.push(vec![c(2, 100.0, 110.0, false)], false);
     assert_eq!(
-        swipe_dir(&run(&mut engine(Spec::default()), &pad.frames)),
+        swipe_dir(&run(&mut engine(swipe_spec()), &pad.frames)),
         vec![(3, Direction::Right)]
     );
 }
@@ -439,4 +457,219 @@ action = { type = "lock_screen" }
     assert_eq!(name(None), Some("anywhere"));
     assert!(resolve(&config, &tap(2, 1), None).is_none());
     assert!(resolve(&config, &tap(3, 1), None).is_none());
+}
+
+// ---------------------------------------------------------------- draw mode
+
+impl Pad {
+    /// `fingers` fingers 15 mm apart follow `path` (mm) at 120 mm/s and lift.
+    fn draw(&mut self, fingers: u32, path: &[(f32, f32)]) {
+        let mut points = vec![path[0]];
+        for w in path.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+            // 120 mm/s at one frame every 7 ms.
+            let steps = (len / (120.0 * FRAME_US as f32 / 1e6)).ceil().max(1.0) as usize;
+            for i in 1..=steps {
+                let k = i as f32 / steps as f32;
+                points.push((a.0 + (b.0 - a.0) * k, a.1 + (b.1 - a.1) * k));
+            }
+        }
+        let at = |id: u32, (x, y): (f32, f32), tip| contact(id, x + 15.0 * id as f32, y, tip);
+        for &p in &points {
+            self.push((0..fingers).map(|id| at(id, p, true)).collect(), false);
+        }
+        let end = *points.last().unwrap();
+        self.push((0..fingers).map(|id| at(id, end, false)).collect(), false);
+    }
+
+    fn rest(&mut self, at: (f32, f32), ms: u64) {
+        for _ in 0..(ms * 1000 / FRAME_US) {
+            self.push(vec![contact(0, at.0, at.1, true)], false);
+        }
+    }
+}
+
+const L: &[(f32, f32)] = &[(40.0, 20.0), (40.0, 60.0), (90.0, 60.0)];
+
+fn symbol_config(settings: &str) -> Config {
+    crate::config::parse(&format!(
+        r#"
+[settings]
+{settings}
+
+[[gesture]]
+name = "lock"
+type = "symbol"
+symbol = "L"
+action = {{ type = "lock_screen" }}
+
+[[gesture]]
+name = "close"
+type = "symbol"
+symbol = ["q", "X"]
+action = {{ type = "close_window" }}
+
+[[gesture]]
+name = "swipe"
+type = "swipe"
+fingers = 3
+direction = "right"
+action = {{ type = "lock_screen" }}
+"#
+    ))
+    .unwrap()
+    .config
+}
+
+fn names(out: &[Observation]) -> Vec<String> {
+    out.iter()
+        .map(|o| match o {
+            Observation::Symbol { name, .. } => format!("symbol {name}"),
+            Observation::UnrecognizedSymbol { .. } => "unrecognized".into(),
+            Observation::Swipe {
+                fingers, direction, ..
+            } => format!("swipe {fingers} {direction}"),
+            Observation::Sample { strokes } => format!("sample {}", strokes.len()),
+            other => other.to_string(),
+        })
+        .collect()
+}
+
+#[test]
+fn three_finger_symbol() {
+    let config = symbol_config("");
+    let mut pad = Pad::new();
+    pad.draw(3, L);
+    let lift = pad.frames.last().unwrap().timestamp_us;
+    let out = run_at(&mut Engine::from_config(&config), &pad.frames);
+    assert_eq!(out.len(), 1);
+    // Confirmed once the stroke gap passed without another stroke.
+    assert_eq!(out[0].0, lift + 400_000);
+    match &out[0].1 {
+        Observation::Symbol {
+            name,
+            score,
+            strokes,
+            ..
+        } => {
+            assert_eq!(name, "L");
+            assert!(*score > 0.9, "{score}");
+            assert_eq!(strokes.len(), 1);
+            assert_eq!(strokes[0][0].t_us, 0);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn multistroke_symbol_within_the_gap() {
+    let config = symbol_config("");
+    let mut pad = Pad::new();
+    pad.draw(3, &[(30.0, 20.0), (70.0, 60.0)]);
+    pad.wait_ms(250);
+    pad.draw(3, &[(70.0, 20.0), (30.0, 60.0)]);
+    let out = run(&mut Engine::from_config(&config), &pad.frames);
+    assert_eq!(names(&out), ["symbol X"]);
+
+    // Too far apart: two separate drawings, neither a symbol; the first is
+    // a diagonal stroke, so its fallback is not a configured swipe.
+    let mut pad = Pad::new();
+    pad.draw(3, &[(30.0, 20.0), (70.0, 60.0)]);
+    pad.wait_ms(700);
+    pad.draw(3, &[(70.0, 20.0), (30.0, 60.0)]);
+    let out = run(&mut Engine::from_config(&config), &pad.frames);
+    assert_eq!(names(&out)[0], "unrecognized");
+    assert!(!names(&out).contains(&"symbol X".to_string()));
+}
+
+#[test]
+fn unrecognized_single_stroke_falls_back_to_swipe() {
+    let config = symbol_config("");
+    let mut pad = Pad::new();
+    pad.draw(3, &[(30.0, 50.0), (80.0, 50.0)]);
+    let out = run(&mut Engine::from_config(&config), &pad.frames);
+    assert_eq!(names(&out), ["unrecognized", "swipe 3 right"]);
+}
+
+#[test]
+fn other_finger_counts_are_not_strokes() {
+    let config = symbol_config("");
+    let mut pad = Pad::new();
+    pad.draw(2, L);
+    pad.wait_ms(500);
+    pad.draw(1, L);
+    assert_eq!(run(&mut Engine::from_config(&config), &pad.frames), vec![]);
+}
+
+#[test]
+fn edge_mode() {
+    let config = symbol_config(r#"draw_activation = { mode = "edge", zone_percent = 15 }"#);
+    // Starts at x = 10 mm on a 155.8 mm pad: inside the 15 % left zone.
+    let from_edge: Vec<(f32, f32)> = L.iter().map(|&(x, y)| (x - 30.0, y)).collect();
+    let mut pad = Pad::new();
+    pad.draw(1, &from_edge);
+    pad.wait_ms(500);
+    pad.draw(1, L); // starts at 40 mm: plain pointer movement
+    let out = run(&mut Engine::from_config(&config), &pad.frames);
+    assert_eq!(names(&out), ["symbol L"]);
+}
+
+#[test]
+fn hold_to_draw_mode() {
+    let config = symbol_config(r#"draw_activation = { mode = "hold", ms = 300 }"#);
+    let mut pad = Pad::new();
+    pad.rest(L[0], 350);
+    pad.draw(1, L);
+    pad.wait_ms(500);
+    pad.draw(1, L); // no rest first: pointer movement
+    let out = run(&mut Engine::from_config(&config), &pad.frames);
+    assert_eq!(names(&out), ["symbol L"]);
+}
+
+#[test]
+fn toggle_mode_needs_arming() {
+    let config = symbol_config(r#"draw_activation = { mode = "toggle" }"#);
+    let mut engine = Engine::from_config(&config);
+    let mut pad = Pad::new();
+    pad.draw(1, L);
+    assert!(run(&mut engine, &pad.frames).is_empty());
+
+    let mut pad = Pad::new();
+    pad.t += 5_000_000;
+    engine.arm_drawing(pad.t + 1_000_000);
+    pad.draw(1, L);
+    assert_eq!(names(&run(&mut engine, &pad.frames)), ["symbol L"]);
+    // The arming is spent.
+    let mut pad = Pad::new();
+    pad.t += 7_000_000;
+    pad.draw(1, L);
+    assert!(run(&mut engine, &pad.frames).is_empty());
+}
+
+#[test]
+fn drawing_now_tracks_strokes_in_progress() {
+    let config = symbol_config(r#"draw_activation = { mode = "edge" }"#);
+    let mut engine = Engine::from_config(&config);
+    let mut pad = Pad::new();
+    pad.draw(1, &[(5.0, 30.0), (5.0, 70.0)]);
+    let (last, frames) = pad.frames.split_last().unwrap();
+    for f in frames {
+        engine.on_frame(DeviceId(1), f);
+    }
+    assert!(engine.drawing_now());
+    engine.on_frame(DeviceId(1), last);
+    assert!(!engine.drawing_now());
+}
+
+#[test]
+fn recording_produces_samples() {
+    let config = symbol_config("");
+    let mut engine = Engine::from_config(&config);
+    engine.set_recording(true);
+    let mut pad = Pad::new();
+    pad.draw(3, &[(30.0, 20.0), (70.0, 60.0)]);
+    pad.wait_ms(200);
+    pad.draw(3, &[(70.0, 20.0), (30.0, 60.0)]);
+    assert_eq!(names(&run(&mut engine, &pad.frames)), ["sample 2"]);
 }

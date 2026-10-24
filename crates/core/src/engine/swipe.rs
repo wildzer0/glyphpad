@@ -52,6 +52,9 @@ impl SwipeRecognizer {
             return None;
         }
         let fingers = s.max_fingers.min(u8::MAX as usize) as u8;
+        if !spec.has_swipe(fingers) {
+            return None;
+        }
         Some(Observation::Swipe {
             fingers,
             direction: quantize(b.0 - a.0, b.1 - a.1, spec.eight_way(fingers)),
