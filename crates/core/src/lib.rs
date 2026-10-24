@@ -2,3 +2,11 @@
 //! engine, symbol recognizer and configuration.
 //!
 //! This crate must not depend on any OS API (SPEC §3).
+
+pub mod capture;
+pub mod model;
+pub mod replay;
+pub mod source;
+
+pub use model::{Contact, DeviceEvent, DeviceId, DeviceInfo, MAX_CONTACTS, TouchFrame};
+pub use source::{SourceError, TouchSource};
