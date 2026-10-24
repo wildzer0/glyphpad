@@ -7,6 +7,7 @@
 pub mod console;
 pub mod cursor;
 mod device;
+pub mod foreground;
 mod hid;
 pub mod native_gestures;
 pub mod overlay;
