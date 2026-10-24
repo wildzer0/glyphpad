@@ -559,6 +559,19 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
         ("swipe_min_distance_mm", s.swipe_min_distance_mm > 0.0),
         ("swipe_min_speed_mm_s", s.swipe_min_speed_mm_s >= 0.0),
         ("stroke_gap_ms", (1..=5_000).contains(&s.stroke_gap_ms)),
+        ("history_size", (1..=1_000).contains(&s.history_size)),
+        (
+            "overlay → duration_ms",
+            (100..=30_000).contains(&s.overlay.duration_ms),
+        ),
+        (
+            "overlay → opacity",
+            (0.05..=1.0).contains(&s.overlay.opacity),
+        ),
+        (
+            "overlay → width_px",
+            (80..=2_000).contains(&s.overlay.width_px),
+        ),
         ("min_stroke_mm", s.min_stroke_mm > 0.0),
         (
             "rotation_tolerance_deg",

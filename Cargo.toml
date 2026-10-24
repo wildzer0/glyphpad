@@ -23,6 +23,8 @@ anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 # Channels with select! across several receivers, used by the engine for gesture timeouts.
 crossbeam-channel = "0.5.17"
+# GUI (SPEC §10.1): glow backend, lighter than wgpu.
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
 # Standard per-OS config directory when not running in portable mode (SPEC §2).
 directories = "6.0.0"
 # Window-title conditions (`when.title`) are regular expressions (SPEC §9).
@@ -30,7 +32,9 @@ regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
-toml = "1.1.8"
+toml = { version = "1.1.8", features = ["preserve_order"] }
+# System tray icon and menu (SPEC §10.1).
+tray-icon = "0.26.1"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 windows = "0.62.2"
