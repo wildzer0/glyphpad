@@ -19,6 +19,23 @@ hold_max_movement_mm = 4.0
 swipe_min_distance_mm = 18.0
 swipe_min_speed_mm_s = 60.0
 
+# Drawn symbols. Windows keeps moving the pointer while you touch the
+# touchpad, so symbols are drawn in a way it ignores:
+#   { mode = "fingers", count = 3 }        three fingers (turn off Windows'
+#                                          own three-finger gestures)
+#   { mode = "edge", edge = "left", zone_percent = 10 }   one finger starting
+#                                          at the left edge
+#   { mode = "hold", ms = 400 }            rest one finger, then draw
+#   { mode = "toggle" }                    one finger, after a gesture with
+#                                          the `draw_symbol` action
+# One-finger modes accept `freeze_cursor = true` (experimental) to pin the
+# pointer while drawing.
+draw_activation = { mode = "fingers", count = 3 }
+stroke_gap_ms = 400          # pause that ends a symbol (an X has two strokes)
+min_stroke_mm = 10.0
+default_confidence = 0.80    # below this score nothing happens
+rotation_tolerance_deg = 0.0 # 0: a rotated L is not an L
+
 [update]
 mode = "notify"          # off | notify | auto
 channel = "stable"       # stable | prerelease
@@ -28,6 +45,22 @@ check_interval_h = 24
 #
 # Windows has its own 3- and 4-finger gestures (Settings → Bluetooth & devices
 # → Touchpad). Turn off the ones you replace here, or both will run.
+
+# Built-in symbols: L, q, X, C, V, Z, O, arrow-up, arrow-down. Record your
+# own examples with `glyphpad record <name>` for better recognition.
+
+[[gesture]]
+name = "lock"
+type = "symbol"
+symbol = "L"
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "close-app"
+type = "symbol"
+symbol = ["q", "X"]
+confidence = 0.85
+action = { type = "close_window", force = false }
 
 [[gesture]]
 name = "show-desktop"

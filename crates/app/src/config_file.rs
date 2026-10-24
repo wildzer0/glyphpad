@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use glyphpad_core::config::{self, EXAMPLE_CONFIG, Loaded};
+use glyphpad_core::symbols::TemplateFile;
 
 pub const FILE_NAME: &str = "glyphpad.toml";
 
@@ -86,4 +87,43 @@ pub fn log_warnings(loaded: &Loaded) {
     for w in &loaded.warnings {
         tracing::warn!("config: {w}");
     }
+}
+
+pub const TEMPLATES_FILE_NAME: &str = "templates.json";
+
+/// `templates.json` sits next to the configuration it belongs to.
+pub fn templates_path(location: &Location) -> PathBuf {
+    location.path().parent().map_or_else(
+        || PathBuf::from(TEMPLATES_FILE_NAME),
+        |d| d.join(TEMPLATES_FILE_NAME),
+    )
+}
+
+/// The user's templates; a missing file means none yet. A damaged file is
+/// reported and ignored rather than stopping the program (SPEC §9).
+pub fn load_templates(location: &Location) -> TemplateFile {
+    let path = templates_path(location);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => TemplateFile::parse(&text).unwrap_or_else(|e| {
+            tracing::error!("ignoring {}: {e}", path.display());
+            TemplateFile::default()
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => TemplateFile::default(),
+        Err(e) => {
+            tracing::error!("cannot read {}: {e}", path.display());
+            TemplateFile::default()
+        }
+    }
+}
+
+/// Writes atomically: a temporary file next to the target, then a rename,
+/// so a crash never leaves a half-written file.
+pub fn write_atomically(path: &Path, contents: &str) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, contents).with_context(|| format!("cannot write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("cannot replace {}", path.display()))?;
+    Ok(())
 }

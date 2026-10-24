@@ -18,6 +18,7 @@ use glyphpad_core::capture::{Capture, CaptureWriter};
 use glyphpad_core::config::Config;
 use glyphpad_core::engine::resolve;
 use glyphpad_core::stats::SessionStats;
+use glyphpad_core::symbols::TemplateFile;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -75,6 +76,17 @@ enum Cmd {
         #[arg(long)]
         frames: bool,
     },
+    /// Record examples of a drawn symbol and save them as its templates.
+    Record {
+        /// Symbol name, as used in `symbol = "..."` (case-sensitive).
+        name: String,
+        /// How many examples to draw.
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=20))]
+        samples: u8,
+        /// Replace the symbol's existing templates instead of adding to them.
+        #[arg(long)]
+        replace: bool,
+    },
     /// Validate a configuration file and print its errors and warnings.
     CheckConfig {
         /// Defaults to the configuration GlyphPad would use.
@@ -105,9 +117,9 @@ fn run(cli: Cli) -> Result<()> {
     let config_arg = cli.config.as_deref();
     match cli.command.unwrap_or(Cmd::Run) {
         Cmd::Run => {
-            let config = load_config(config_arg)?;
+            let (config, templates) = load_config(config_arg)?;
             let rx = live::start(toplevel_window)?;
-            engine_loop::run(rx, config, engine_loop::Mode::Run)
+            engine_loop::run(rx, config, &templates.effective(), engine_loop::Mode::Run)
         }
         Cmd::Capture {
             file,
@@ -116,34 +128,130 @@ fn run(cli: Cli) -> Result<()> {
             verbose,
         } => capture(&file, seconds, force, verbose, toplevel_window),
         Cmd::Replay { file, all, frames } => {
-            let config = match config_arg {
+            let (config, templates) = match config_arg {
                 Some(_) => load_config(config_arg)?,
-                None if all => Config::default(),
+                None if all => (Config::default(), TemplateFile::default()),
                 None => load_config(None)?,
             };
-            replay(&file, &config, all, frames)
+            replay(&file, &config, &templates.effective(), all, frames)
         }
         Cmd::DumpDescriptor => {
             print!("{}", live::dump_descriptors()?);
             Ok(())
         }
         Cmd::Debug { frames } => {
-            let config = load_config(config_arg)?;
+            let (config, templates) = load_config(config_arg)?;
             let rx = live::start(toplevel_window)?;
             eprintln!("Showing recognized gestures (not executed). Stop with Ctrl+C.");
-            engine_loop::run(rx, config, engine_loop::Mode::Debug { frames })
+            engine_loop::run(
+                rx,
+                config,
+                &templates.effective(),
+                engine_loop::Mode::Debug { frames },
+            )
         }
+        Cmd::Record {
+            name,
+            samples,
+            replace,
+        } => record(config_arg, toplevel_window, &name, samples.into(), replace),
         Cmd::CheckConfig { file } => check_config(file.as_deref().or(config_arg)),
     }
 }
 
-fn load_config(explicit: Option<&Path>) -> Result<Config> {
+/// The configuration and the user's symbol templates next to it.
+fn load_config(explicit: Option<&Path>) -> Result<(Config, TemplateFile)> {
     let location = config_file::locate(explicit)?;
     tracing::info!("configuration: {}", location.describe());
     let loaded = config_file::load(&location, true)?;
     config_file::log_warnings(&loaded);
-    tracing::info!("{} gesture(s) loaded", loaded.config.gestures.len());
-    Ok(loaded.config)
+    let templates = config_file::load_templates(&location);
+    let effective = templates.effective();
+    tracing::info!(
+        "{} gesture(s), templates for {} symbol(s) ({} recorded)",
+        loaded.config.gestures.len(),
+        effective.len(),
+        templates.symbols.len()
+    );
+    for g in &loaded.config.gestures {
+        for s in g.def.symbol.iter().flat_map(|s| s.to_vec()) {
+            if !effective.contains_key(&s) {
+                tracing::warn!(
+                    "gesture \"{}\" uses symbol \"{s}\", which has no templates; record it with `glyphpad record {s}`",
+                    g.def.name
+                );
+            }
+        }
+    }
+    Ok((loaded.config, templates))
+}
+
+fn record(
+    explicit: Option<&Path>,
+    toplevel_window: bool,
+    name: &str,
+    count: usize,
+    replace: bool,
+) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        bail!("the symbol name must not be empty");
+    }
+    let location = config_file::locate(explicit)?;
+    let (config, mut templates) = load_config(explicit)?;
+    let rx = live::start(toplevel_window)?;
+    eprintln!(
+        "Recording {count} example(s) of \"{name}\" with draw mode {:?}. Gestures are suspended.",
+        config.settings.draw_activation
+    );
+    let samples = engine_loop::record(rx, &config, count)?;
+
+    let assessment = glyphpad_core::symbols::assess(name, &samples, &templates.effective());
+    println!("\nQuality check:");
+    let mean = assessment.consistency.iter().sum::<f32>() / assessment.consistency.len() as f32;
+    for (i, (c, near)) in assessment
+        .consistency
+        .iter()
+        .zip(&assessment.nearest_other)
+        .enumerate()
+    {
+        let near = near.as_ref().map_or(String::new(), |n| {
+            format!(", most similar other symbol: {} {:.2}", n.symbol, n.score)
+        });
+        // An example well below the others was probably drawn differently.
+        let odd = if count > 2 && *c < mean - 0.1 {
+            "  ← unlike the others; consider recording again"
+        } else {
+            ""
+        };
+        println!("  sample {}: consistency {c:.2}{near}{odd}", i + 1);
+    }
+    if let Some(n) = assessment
+        .nearest_other
+        .iter()
+        .flatten()
+        .filter(|n| n.score >= config.settings.default_confidence)
+        .max_by(|a, b| a.score.total_cmp(&b.score))
+    {
+        println!(
+            "  warning: \"{name}\" may be confused with \"{}\" (score {:.2} ≥ confidence {:.2})",
+            n.symbol, n.score, config.settings.default_confidence
+        );
+    }
+
+    let entry = templates.symbols.entry(name.to_string()).or_default();
+    if replace {
+        entry.clear();
+    }
+    entry.extend(samples);
+    let total = entry.len();
+    let path = config_file::templates_path(&location);
+    config_file::write_atomically(&path, &templates.to_json())?;
+    println!(
+        "\nSaved {count} example(s) of \"{name}\" ({total} in total) to {}",
+        path.display()
+    );
+    Ok(())
 }
 
 fn check_config(explicit: Option<&Path>) -> Result<()> {
@@ -226,7 +334,13 @@ fn capture(
     Ok(())
 }
 
-fn replay(path: &Path, config: &Config, all: bool, frames: bool) -> Result<()> {
+fn replay(
+    path: &Path,
+    config: &Config,
+    templates: &std::collections::BTreeMap<String, Vec<glyphpad_core::symbols::Sample>>,
+    all: bool,
+    frames: bool,
+) -> Result<()> {
     let file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let capture = Capture::read(BufReader::new(file))
         .with_context(|| format!("invalid capture {}", path.display()))?;
@@ -238,7 +352,7 @@ fn replay(path: &Path, config: &Config, all: bool, frames: bool) -> Result<()> {
     if frames {
         capture.events.iter().for_each(print::event);
     }
-    let recognitions = engine_loop::evaluate(&capture.events, config, all);
+    let recognitions = engine_loop::evaluate(&capture.events, config, templates, all);
     println!("\nRecognized ({}):", recognitions.len());
     for r in &recognitions {
         println!(
