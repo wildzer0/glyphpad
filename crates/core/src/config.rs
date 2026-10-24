@@ -36,8 +36,10 @@ pub struct Settings {
     /// How long fingers must rest before a hold fires.
     pub hold_duration_ms: u64,
     pub hold_max_movement_mm: f32,
-    /// Shortest travel of the fingers' centroid for a swipe, about 1/6 of a
-    /// typical touchpad's width.
+    /// Shortest travel of the fingers' centroid for a swipe. Deliberate
+    /// swipes recorded on the reference touchpad travelled 23–45 mm while
+    /// taps drift under 1 mm, so 18 mm keeps short swipes without catching
+    /// fingers that merely settle.
     pub swipe_min_distance_mm: f32,
     /// Slowest average speed for a swipe; slower travel is a drag.
     pub swipe_min_speed_mm_s: f32,
@@ -63,7 +65,7 @@ impl Default for Settings {
             multi_tap_gap_ms: 300,
             hold_duration_ms: 600,
             hold_max_movement_mm: 4.0,
-            swipe_min_distance_mm: 25.0,
+            swipe_min_distance_mm: 18.0,
             swipe_min_speed_mm_s: 60.0,
             stroke_gap_ms: 400,
             default_confidence: 0.80,
