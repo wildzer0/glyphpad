@@ -1,0 +1,146 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Verify tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - name: Tag must match the workspace version
+        run: cargo xtask check-tag "$GITHUB_REF_NAME"
+
+      - id: version
+        name: Extract version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # SemVer pre-release suffix (-alpha, -beta, -rc, …) means a GitHub pre-release.
+          if [[ "$version" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            exe: glyphpad.exe
+          # Oldest available Ubuntu LTS runner, to maximize glibc compatibility.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            exe: glyphpad
+    runs-on: ${{ matrix.os }}
+    env:
+      PACKAGE: glyphpad-${{ needs.verify.outputs.version }}-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+
+      - name: Build
+        run: cargo build --release --locked --package glyphpad --target ${{ matrix.target }}
+
+      # Authenticode signing step goes here (sign target/<target>/release/glyphpad.exe
+      # before packaging); nothing else in the pipeline needs to change.
+
+      - name: Stage package contents
+        shell: bash
+        run: |
+          mkdir -p staging dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" staging/
+          cp glyphpad.example.toml README.md LICENSE staging/
+
+      - name: Package (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path staging/* -DestinationPath "dist/$env:PACKAGE.zip"
+
+      - name: Package (tar.gz)
+        if: runner.os == 'Linux'
+        run: tar -czf "dist/$PACKAGE.tar.gz" -C staging .
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.PACKAGE }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      # minisign signature of SHA256SUMS (SHA256SUMS.minisig) goes here in M6.
+
+      - name: Release notes from CHANGELOG.md
+        run: cargo xtask changelog "${{ needs.verify.outputs.version }}" > release-notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=()
+          if [[ "${{ needs.verify.outputs.prerelease }}" == "true" ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "GlyphPad $GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            "${flags[@]}"
