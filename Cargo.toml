@@ -35,12 +35,19 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 windows = "0.62.2"
 jiff = "0.2.38"
+# Property-based tests of the recognizer (SPEC §8).
+proptest = "1.12.0"
 semver = "1.0.28"
 toml_edit = "0.25.17"
 
 [workspace.lints.rust]
 # SPEC §2: no `unsafe` outside platform FFI modules, which opt in with `#[allow(unsafe_code)]`.
 unsafe_code = "deny"
+
+# The recognizer is ~20x slower unoptimized; optimize the core even in dev
+# and test builds so tests stay fast and debug builds stay usable on hardware.
+[profile.dev.package.glyphpad-core]
+opt-level = 2
 
 [profile.release]
 lto = "fat"

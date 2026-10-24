@@ -12,6 +12,7 @@ pub mod model;
 pub mod replay;
 pub mod source;
 pub mod stats;
+pub mod symbols;
 
 pub use model::{Contact, DeviceEvent, DeviceId, DeviceInfo, MAX_CONTACTS, TouchFrame};
 pub use source::{SourceError, TouchSource};
