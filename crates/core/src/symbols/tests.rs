@@ -77,6 +77,26 @@ fn degenerate_traces_have_no_candidates() {
     );
 }
 
+#[test]
+fn assessment_flags_odd_samples_and_lookalikes() {
+    let d = defaults();
+    // Four L's and one V recorded as "L".
+    let mut samples: Vec<Sample> = d["L"][..4].to_vec();
+    samples.push(d["V"][0].clone());
+    let a = assess("L", &samples, &d);
+    let worst = a
+        .consistency
+        .iter()
+        .enumerate()
+        .min_by(|x, y| x.1.total_cmp(y.1))
+        .unwrap()
+        .0;
+    assert_eq!(worst, 4);
+    // The V sample's nearest other symbol is V itself.
+    assert_eq!(a.nearest_other[4].as_ref().unwrap().symbol, "V");
+    assert_ne!(a.nearest_other[0].as_ref().unwrap().symbol, "L");
+}
+
 fn arb_strokes() -> impl Strategy<Value = Vec<Vec<(f32, f32)>>> {
     prop::collection::vec(
         prop::collection::vec((0.0f32..50.0, 0.0f32..50.0), 2..20),

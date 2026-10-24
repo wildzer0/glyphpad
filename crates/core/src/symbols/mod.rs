@@ -105,5 +105,53 @@ impl SymbolRecognizer {
     }
 }
 
+/// Quality of freshly recorded samples of a symbol (SPEC §10.3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Assessment {
+    /// For each sample, its score against the other new samples: a low one
+    /// marks a sample unlike the rest.
+    pub consistency: Vec<f32>,
+    /// For each sample, the most similar *other* existing symbol.
+    pub nearest_other: Vec<Option<Candidate>>,
+}
+
+pub fn assess(
+    name: &str,
+    samples: &[Sample],
+    existing: &BTreeMap<String, Vec<Sample>>,
+) -> Assessment {
+    let consistency = (0..samples.len())
+        .map(|i| {
+            let rest: Vec<Sample> = samples
+                .iter()
+                .enumerate()
+                .filter(|&(j, _)| j != i)
+                .map(|(_, s)| s.clone())
+                .collect();
+            if rest.is_empty() {
+                return 1.0;
+            }
+            let r = SymbolRecognizer::new(&BTreeMap::from([(name.to_string(), rest)]), 0.0);
+            r.recognize(&samples[i].xy_strokes())
+                .first()
+                .map_or(0.0, |c| c.score)
+        })
+        .collect();
+    let others: BTreeMap<String, Vec<Sample>> = existing
+        .iter()
+        .filter(|(n, _)| n.as_str() != name)
+        .map(|(n, s)| (n.clone(), s.clone()))
+        .collect();
+    let r = SymbolRecognizer::new(&others, 0.0);
+    let nearest_other = samples
+        .iter()
+        .map(|s| r.recognize(&s.xy_strokes()).into_iter().next())
+        .collect();
+    Assessment {
+        consistency,
+        nearest_other,
+    }
+}
+
 #[cfg(test)]
 mod tests;
