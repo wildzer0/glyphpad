@@ -53,5 +53,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Feedback overlay showing the stroke and the recognized gesture; `notify` messages appear
   there. Test mode recognizes without running actions.
 - `glyphpad debug` opens the live debug tab in test mode.
+- New gesture types: pinch, rotate, edge swipe, click (and click-and-drag), chords (a tap
+  or swipe while other fingers rest, `modifier_fingers`) and sequences (`steps` performed
+  within `within_ms`). An edge swipe matches edge-swipe gestures before plain swipes.
+- Configuration editor in the window: gesture list with search, filters, quick enabling,
+  drag and drop priority, duplicate and delete; a form for every type; action editor
+  with shortcut capture, program picker, chains and "Run now"; per-app conditions picked
+  from open windows; profiles; undo/redo; validation as you type; saving that keeps the
+  file's comments and formatting.
+- Hot reload of `glyphpad.toml` and `templates.json`; an invalid file keeps the last valid
+  configuration. Edits from the window are refused, with a choice to reload, overwrite or
+  see the differences, when the file changed on disk meanwhile.
+- Backups of the last `backup_count` configurations in `backups/`, restorable from Settings.
+- Conflict detection: gestures set off by the same movement, lookalike symbols, holds that
+  would pre-empt chords.
+- Automatic pause while a listed or full-screen application is in front; the tray icon
+  shows it. Optional start with Windows (`autostart`).
+
+### Fixed
+- Symbols shown as boxes in the window (system fonts are now used on Windows).
+- Template thumbnails stuck in a corner or cut off; the history panel growing during replay.
+- The drawing preview showed the first finger before the others landed.
+- `repeat_last` repeated into another window of the same application.
+- "Show window" only flashed the taskbar button when the window was behind others.
+- The wizard's quality check was recomputed every frame, slowing the window down.
 
 [Unreleased]: https://github.com/wildzer0/glyphpad/commits/main

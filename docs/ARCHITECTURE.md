@@ -101,6 +101,35 @@ file wins.
   Because of this wait, gestures made with the drawing finger count (e.g.
   three-finger swipes) fire `stroke_gap_ms` later than others.
 
+## From recognitions to gestures
+
+`core::trigger` turns a gesture's fields into a validated `Trigger` (also
+used for each step of a sequence) and scores how specifically it matches an
+observation. `core::dispatch::Dispatcher` sits between the engine and the
+actions: plain recognitions resolve to the most specific matching gesture
+(priority order breaks ties); a recognition that starts a sequence is held
+for `within_ms`, and either the sequence completes and fires instead, or the
+held gestures fire in order. `dispatch::run_all` does the same for replays
+and the regression tests.
+
+Recognizers added in M5: `MotionRecognizer` (swipe, edge swipe, pinch and
+rotation are measured together on the peak phase; the one exceeding its
+threshold by the largest factor wins), `ClickRecognizer` (sessions with the
+button pressed) and `ChordRecognizer` (fingers resting ≥ 250 ms act as
+modifiers while others tap or swipe; the session's own gesture is then void).
+
+## Configuration editing
+
+The window keeps one draft (`gui::editor`) for gestures and settings, with
+undo/redo. Saving renders the draft with `core::config_edit::write_gestures`
+and `settings_edits` onto the text it started from, so comments and the
+formatting of untouched values survive reordering, edits and deletions, and
+sends it with that text's revision. The engine thread validates, backs up
+the current file into `backups/`, writes atomically and reloads; if the file
+changed meanwhile it refuses, and the window offers reload, overwrite or a
+diff. Changes made outside are picked up by a `notify` watcher on the
+configuration folder.
+
 ## Threads (glyphpad run)
 
 ```
@@ -143,6 +172,13 @@ single-instance (message-only window)
 - **Binary size.** With the window and tray the release binary is about
   11.5 MB.
 - **Linux tray.** Not built yet (M7); on Linux the window runs without it.
+- **Per-gesture thresholds.** Distances, durations and speeds are global
+  (Settings → Advanced); gestures only set their own symbol confidence.
+- **Clicks.** A click gesture cannot stop the click from reaching Windows.
+- **Shortcut capture.** The Windows key and system shortcuts are taken by
+  Windows before the window sees them; they have to be typed.
+- **Full-screen detection** compares the foreground window with its monitor;
+  borderless "windowed full screen" games count as full screen.
 
 - **Maximum contacts.** Read from the Contact Count Maximum feature report when
   the device can be opened for it; otherwise derived from descriptor logical

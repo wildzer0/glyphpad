@@ -50,6 +50,12 @@ repeat_same_app_only = true  # never into another application
 # `notify` actions are shown here too.
 overlay = { enabled = true, position = "bottom_right", duration_ms = 1500, opacity = 0.85, width_px = 240 }
 
+# Pause gestures while one of these apps, or any full-screen app, is in front.
+pause_in_apps = []
+pause_when_fullscreen = true
+autostart = false            # start with Windows
+backup_count = 10            # earlier versions kept in backups/
+
 [update]
 mode = "notify"          # off | notify | auto
 channel = "stable"       # stable | prerelease
@@ -101,7 +107,37 @@ fingers = 3
 taps = 2
 action = { type = "repeat_last" }
 
-# More examples:
+# More examples (any of them can also be made in the window):
+#
+# [[gesture]]
+# name = "zoom-in"
+# type = "pinch"
+# fingers = 2
+# zoom = "out"                  # fingers spreading apart
+# action = { type = "keys", combo = "Ctrl+Plus" }
+#
+# [[gesture]]
+# name = "next-desktop"
+# type = "edge_swipe"
+# fingers = 1
+# edge = "right"
+# direction = "left"
+# action = { type = "keys", combo = "Ctrl+Win+Right" }
+#
+# [[gesture]]
+# name = "undo"                 # two fingers swipe left while one rests
+# type = "swipe"
+# fingers = 2
+# modifier_fingers = 1
+# direction = "left"
+# action = { type = "keys", combo = "Ctrl+Z" }
+#
+# [[gesture]]
+# name = "tap-then-up"          # a sequence of two gestures
+# type = "sequence"
+# steps = [{ type = "tap", fingers = 3 }, { type = "swipe", fingers = 3, direction = "up" }]
+# within_ms = 800
+# action = { type = "maximize" }
 #
 # [[gesture]]
 # name = "terminal"

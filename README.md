@@ -13,9 +13,11 @@ a terminal.
 - No telemetry: the only network access is the optional update check against
   this repository's GitHub Releases.
 
-> **Status: pre-alpha.** The project skeleton is in place; the gesture engine is not
-> implemented yet. See [`docs/SPEC.md`](docs/SPEC.md) for the full specification and
-> the milestones.
+> **Status: alpha, Windows only for now.** Taps, holds, swipes, pinches, rotations,
+> edge swipes, clicks, chords, sequences and drawn symbols are recognized; gestures are
+> configured from the window or in `glyphpad.toml`. Automatic updates and Linux support
+> are still to come. See [`docs/SPEC.md`](docs/SPEC.md) for the specification and
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design and known limitations.
 
 ## Download
 
@@ -27,6 +29,16 @@ Pre-built packages are published on the
 **Windows SmartScreen:** the executable is not code-signed yet, so on first launch
 Windows may show a "Windows protected your PC" warning. Choose *More info* → *Run
 anyway* if you trust the download (verify it against `SHA256SUMS` first).
+
+## Using it
+
+Start `glyphpad.exe`: it lives in the tray and opens its window from there.
+Create gestures with **Record a new gesture** (draw a symbol or show a tap, swipe…)
+or edit them directly. `glyphpad --help` lists the command-line tools
+(`check-config`, `record`, `capture`, `replay`, `dump-descriptor`, `debug`).
+
+Symbols are drawn with three fingers by default: turn off Windows' own three-finger
+gestures in Settings → Bluetooth & devices → Touchpad.
 
 ## Building from source
 
