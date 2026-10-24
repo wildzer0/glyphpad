@@ -246,7 +246,12 @@ impl eframe::App for App {
             }
         }
 
-        let enabled = self.shared.lock().map(|s| s.enabled).unwrap_or(true);
+        // The tray icon turns gray when paused, by hand or automatically.
+        let enabled = self
+            .shared
+            .lock()
+            .map(|s| s.enabled && s.auto_paused.is_none())
+            .unwrap_or(true);
         if self.tray_enabled != Some(enabled) {
             if let Some(t) = self.tray.as_mut() {
                 t.set_enabled(enabled);

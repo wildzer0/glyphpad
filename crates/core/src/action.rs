@@ -170,10 +170,17 @@ pub struct AppInfo {
     pub pid: u32,
     /// Identifier of the top-level window (0 if unknown).
     pub window: u64,
+    /// The window covers its whole monitor (games, presentations, videos).
+    pub fullscreen: bool,
 }
 
 pub trait ForegroundInfo {
     fn foreground_app(&self) -> Option<AppInfo>;
+
+    /// Applications with a visible window, for picking per-app conditions.
+    fn windows(&self) -> Vec<AppInfo> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]

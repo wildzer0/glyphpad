@@ -11,7 +11,10 @@ use glyphpad_core::action::{
     Action, ActionError, ActionExecutor, AppInfo, ForegroundInfo, MediaKey,
 };
 use glyphpad_core::keys::{Key, KeyCombo};
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+};
 use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
@@ -19,9 +22,10 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GA_ROOTOWNER, GetAncestor, GetClassNameW, GetForegroundWindow, GetWindowTextW,
-    GetWindowThreadProcessId, IsZoomed, PostMessageW, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
-    ShowWindowAsync, WM_CLOSE,
+    EnumWindows, GA_ROOTOWNER, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetForegroundWindow,
+    GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    IsZoomed, PostMessageW, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, ShowWindowAsync, WINDOW_EX_STYLE,
+    WM_CLOSE, WS_EX_TOOLWINDOW,
 };
 use windows::core::PWSTR;
 
@@ -312,6 +316,82 @@ impl ForegroundInfo for WindowsForeground {
             title,
             pid,
             window: window.0 as usize as u64,
+            fullscreen: is_fullscreen(window),
         })
     }
+
+    fn windows(&self) -> Vec<AppInfo> {
+        let mut handles: Vec<HWND> = Vec::new();
+        // SAFETY: the callback only pushes into the Vec passed through
+        // `lparam`, which outlives the EnumWindows call.
+        unsafe {
+            let _ = EnumWindows(Some(collect_window), LPARAM(&raw mut handles as isize));
+        }
+        let mut out: Vec<AppInfo> = handles
+            .into_iter()
+            .filter_map(|hwnd| {
+                let mut buf = [0u16; 512];
+                // SAFETY: `buf` is writable for its length.
+                let n = unsafe { GetWindowTextW(hwnd, &mut buf) };
+                let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
+                let pid = window_pid(hwnd);
+                let exe = process_exe(pid)?;
+                (!title.trim().is_empty()).then_some(AppInfo {
+                    exe,
+                    title,
+                    pid,
+                    window: hwnd.0 as usize as u64,
+                    fullscreen: false,
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a.exe
+                .to_lowercase()
+                .cmp(&b.exe.to_lowercase())
+                .then(a.title.cmp(&b.title))
+        });
+        out
+    }
+}
+
+/// Visible, unowned, non-tool windows: what the taskbar would show.
+unsafe extern "system" fn collect_window(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
+    // SAFETY: `lparam` is the `&mut Vec<HWND>` passed by `windows()`.
+    unsafe {
+        let ex = WINDOW_EX_STYLE(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32);
+        let owner = GetAncestor(hwnd, GA_ROOTOWNER);
+        if IsWindowVisible(hwnd).as_bool()
+            && (ex.0 & WS_EX_TOOLWINDOW.0) == 0
+            && (owner.0.is_null() || owner == hwnd)
+        {
+            let list = &mut *(lparam.0 as *mut Vec<HWND>);
+            list.push(hwnd);
+        }
+    }
+    true.into()
+}
+
+/// The window covers its whole monitor and is not the desktop.
+fn is_fullscreen(hwnd: HWND) -> bool {
+    if SHELL_CLASSES.contains(&window_class(hwnd).as_str()) {
+        return false;
+    }
+    let mut rect = RECT::default();
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: valid out pointers; `hwnd` is a window handle.
+    unsafe {
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return false;
+        }
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return false;
+        }
+    }
+    let m = info.rcMonitor;
+    rect.left <= m.left && rect.top <= m.top && rect.right >= m.right && rect.bottom >= m.bottom
 }

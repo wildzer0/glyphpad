@@ -125,6 +125,8 @@ pub struct Shared {
     /// Candidates of the last drawing.
     pub last_candidates: Vec<Candidate>,
     pub enabled: bool,
+    /// Why gestures are paused automatically right now, if they are.
+    pub auto_paused: Option<String>,
     pub mode: EngineMode,
     /// Newest last.
     pub history: VecDeque<HistoryEntry>,

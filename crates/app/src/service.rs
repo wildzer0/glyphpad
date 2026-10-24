@@ -127,6 +127,7 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
         shared,
         ui,
         last_preview: Instant::now(),
+        last_auto_pause_check: Instant::now() - AUTO_PAUSE_POLL,
     };
     service.rebuild_engine();
     std::thread::Builder::new()
@@ -156,12 +157,16 @@ struct Service {
     shared: Arc<Mutex<Shared>>,
     ui: Arc<UiLink>,
     last_preview: Instant,
+    last_auto_pause_check: Instant,
 }
 
 /// Live feedback (overlay trail, debug view) is refreshed at most this often.
 const LIVE_INTERVAL: Duration = Duration::from_millis(16);
 /// Without timeouts pending, the loop still wakes up this rarely.
 const IDLE_WAIT: Duration = Duration::from_secs(3600);
+/// How often the foreground application is checked for automatic pausing,
+/// so the tray icon follows it; a cheap query once a second.
+const AUTO_PAUSE_POLL: Duration = Duration::from_secs(1);
 
 impl Service {
     fn now_us(&self) -> u64 {
@@ -176,13 +181,20 @@ impl Service {
 
     fn run(mut self, events: Receiver<DeviceEvent>, commands: Receiver<Command>) {
         warn_about_native_gestures(&self.config);
+        self.sync_autostart();
         loop {
+            self.watch_auto_pause();
             let deadline = [self.engine.next_deadline(), self.dispatcher.deadline()]
                 .into_iter()
                 .flatten()
                 .min();
-            let wait = deadline.map_or(IDLE_WAIT, |d| {
-                Duration::from_micros(d.saturating_sub(self.now_us()))
+            let idle = if self.auto_pause_configured() {
+                AUTO_PAUSE_POLL
+            } else {
+                IDLE_WAIT
+            };
+            let wait = deadline.map_or(idle, |d| {
+                Duration::from_micros(d.saturating_sub(self.now_us())).min(idle)
             });
             let recognitions = select! {
                 recv(events) -> event => match event {
@@ -445,6 +457,10 @@ impl Service {
             tracing::debug!("paused: ignoring gesture \"{}\"", g.def.name);
             return false;
         }
+        if let Some(reason) = self.auto_pause_reason(app.as_ref()) {
+            tracing::info!("gesture \"{}\" not run: {reason}", g.def.name);
+            return false;
+        }
         tracing::info!(
             "gesture \"{}\" in {} → {}",
             g.def.name,
@@ -500,6 +516,73 @@ impl Service {
                 let _ = self.actions.send(other.clone());
                 self.repeater.record(g, app, Instant::now());
                 true
+            }
+        }
+    }
+
+    fn auto_pause_configured(&self) -> bool {
+        let s = &self.config.settings;
+        s.pause_when_fullscreen || !s.pause_in_apps.is_empty()
+    }
+
+    /// Why gestures are paused for this foreground application (SPEC §13).
+    fn auto_pause_reason(&self, app: Option<&AppInfo>) -> Option<String> {
+        let app = app?;
+        let s = &self.config.settings;
+        if s.pause_in_apps
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case(&app.exe))
+        {
+            return Some(format!("paused while {} is in front", app.exe));
+        }
+        if s.pause_when_fullscreen && app.fullscreen {
+            return Some(format!("paused while {} is full screen", app.exe));
+        }
+        None
+    }
+
+    fn watch_auto_pause(&mut self) {
+        if self.last_auto_pause_check.elapsed() < AUTO_PAUSE_POLL {
+            return;
+        }
+        self.last_auto_pause_check = Instant::now();
+        let reason = if self.auto_pause_configured() {
+            self.auto_pause_reason(self.foreground.foreground_app().as_ref())
+        } else {
+            None
+        };
+        let changed = self.shared.lock().is_ok_and(|s| s.auto_paused != reason);
+        if changed {
+            if let Some(r) = &reason {
+                tracing::info!("gestures {r}");
+            }
+            self.update_shared(|s| s.auto_paused = reason);
+            self.ui.wake();
+        }
+    }
+
+    /// Makes the sign-in registration match `autostart` (SPEC §10.4).
+    fn sync_autostart(&self) {
+        #[cfg(windows)]
+        {
+            use glyphpad_platform::windows::autostart;
+            let wanted = self.config.settings.autostart.then(|| {
+                let exe = std::env::current_exe().unwrap_or_default();
+                match &self.location {
+                    Location::Explicit(p) => {
+                        format!("\"{}\" run --config \"{}\"", exe.display(), p.display())
+                    }
+                    _ => format!("\"{}\" run", exe.display()),
+                }
+            });
+            if autostart::current() != wanted {
+                match autostart::set(wanted.as_deref()) {
+                    Ok(()) => tracing::info!(
+                        "start with Windows: {}",
+                        if wanted.is_some() { "on" } else { "off" }
+                    ),
+                    Err(e) => tracing::warn!("cannot change start with Windows: {e}"),
+                }
             }
         }
     }
@@ -571,6 +654,7 @@ impl Service {
                 let warnings = loaded.warnings.iter().map(ToString::to_string).collect();
                 self.config = Arc::new(loaded.config);
                 self.update_shared(|s| s.warnings = warnings);
+                self.sync_autostart();
                 self.templates = config_file::load_templates(&self.location);
                 self.rebuild_engine();
                 self.set_status("configuration reloaded");

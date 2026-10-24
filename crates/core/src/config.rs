@@ -84,6 +84,18 @@ pub struct Settings {
 
     /// Feedback overlay (SPEC §13).
     pub overlay: OverlaySettings,
+
+    /// Start GlyphPad at sign-in (SPEC §10.4).
+    pub autostart: bool,
+    /// Gestures pause while one of these applications is in front (SPEC §13).
+    pub pause_in_apps: Vec<String>,
+    /// Gestures pause while a full-screen application (game, presentation)
+    /// is in front.
+    pub pause_when_fullscreen: bool,
+    /// Profiles defined in the editor, besides those named by gestures.
+    pub profiles: Vec<String>,
+    /// Earlier versions of the configuration kept in `backups/`.
+    pub backup_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -147,6 +159,11 @@ impl Default for Settings {
             history_size: 20,
             save_history: false,
             overlay: OverlaySettings::default(),
+            autostart: false,
+            pause_in_apps: Vec::new(),
+            pause_when_fullscreen: true,
+            profiles: Vec::new(),
+            backup_count: 10,
         }
     }
 }
@@ -653,6 +670,7 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
             (1.0..=30.0).contains(&s.edge_zone_percent),
         ),
         ("history_size", (1..=1_000).contains(&s.history_size)),
+        ("backup_count", s.backup_count <= 100),
         (
             "overlay → duration_ms",
             (100..=30_000).contains(&s.overlay.duration_ms),
@@ -1116,6 +1134,7 @@ action = { type = "lock_screen" }
             title: title.into(),
             pid: 1,
             window: 0,
+            fullscreen: false,
         };
         assert!(g.applies(
             "work",

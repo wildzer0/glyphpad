@@ -144,6 +144,7 @@ action = { type = "lock_screen" }
             title: String::new(),
             pid,
             window: 0,
+            fullscreen: false,
         }
     }
 

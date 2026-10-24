@@ -4,6 +4,7 @@
 //! (SPEC §2). Every `unsafe` block states why it is sound.
 #![allow(unsafe_code)]
 
+pub mod autostart;
 pub mod console;
 pub mod cursor;
 mod device;
