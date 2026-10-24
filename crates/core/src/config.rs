@@ -434,7 +434,12 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
         let label = format!("gesture \"{}\"", def.name);
         let before = errors.len();
         let mut field_err = |field: &str, message: String| {
-            err(&mut errors, Some(line), format!("{label} → {field}"), message);
+            err(
+                &mut errors,
+                Some(line),
+                format!("{label} → {field}"),
+                message,
+            );
         };
 
         if def.name.trim().is_empty() {

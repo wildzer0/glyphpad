@@ -6,6 +6,7 @@
 pub mod action;
 pub mod capture;
 pub mod config;
+pub mod engine;
 pub mod keys;
 pub mod model;
 pub mod replay;
