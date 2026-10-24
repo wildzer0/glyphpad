@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/*"]
+
+[workspace.package]
+# Single source of truth for the version (SPEC §11.1); bumped by `cargo xtask release`.
+version = "0.0.1-alpha.1"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+repository = "https://github.com/wildzer0/glyphpad"
+publish = false
+
+[workspace.dependencies]
+glyphpad-core = { path = "crates/core" }
+glyphpad-platform = { path = "crates/platform" }
+glyphpad-actions = { path = "crates/actions" }
+glyphpad-gui = { path = "crates/gui" }
+glyphpad-updater = { path = "crates/updater" }
+
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+
+[workspace.lints.rust]
+# SPEC §2: no `unsafe` outside platform FFI modules, which opt in with `#[allow(unsafe_code)]`.
+unsafe_code = "deny"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+# Kept as unwind so a panicking backend thread can be caught and restarted (SPEC §2, robustness).
+panic = "unwind"

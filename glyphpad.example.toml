@@ -1,0 +1,12 @@
+# GlyphPad example configuration.
+#
+# Copy this file next to the executable as `glyphpad.toml` to run in portable
+# mode, or into the OS config directory. Gestures and settings will be added
+# here as the corresponding features land.
+
+config_version = 1
+
+[update]
+mode = "notify"          # off | notify | auto
+channel = "stable"       # stable | prerelease
+check_interval_h = 24

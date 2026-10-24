@@ -1,0 +1,6 @@
+[alias]
+xtask = "run --package xtask --"
+
+# SPEC §2: statically link the CRT so the portable exe needs no VC++ redistributable.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
