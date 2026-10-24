@@ -2,7 +2,7 @@
 //! recording wizard. The full editor comes in M5 (SPEC §10.2).
 
 use eframe::egui;
-use glyphpad_core::config::{Gesture, GestureKind};
+use glyphpad_core::config::Gesture;
 use glyphpad_core::service::{Command, EngineMode};
 
 use crate::Ctx;
@@ -14,25 +14,12 @@ pub struct State {
 }
 
 pub fn trigger(g: &Gesture) -> String {
-    let d = &g.def;
-    match d.kind {
-        GestureKind::Tap => match g.taps() {
-            1 => format!("tap, {} finger(s)", g.fingers()),
-            n => format!("{n}× tap, {} finger(s)", g.fingers()),
-        },
-        GestureKind::Hold => format!("hold, {} finger(s)", g.fingers()),
-        GestureKind::Swipe => format!(
-            "swipe {}, {} finger(s)",
-            d.direction.map(|d| d.to_string()).unwrap_or_default(),
-            g.fingers()
-        ),
-        GestureKind::Symbol => format!(
-            "symbol {}",
-            d.symbol
-                .as_ref()
-                .map(|s| s.to_vec().join(" / "))
-                .unwrap_or_default()
-        ),
+    match &g.trigger {
+        Some(t) => t.describe(),
+        None => {
+            let steps: Vec<String> = g.steps.iter().map(|t| t.describe()).collect();
+            format!("sequence: {}", steps.join(", then "))
+        }
     }
 }
 

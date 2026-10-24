@@ -140,9 +140,15 @@ action = { type = "lock_screen" }
             kind: GestureKind::Swipe,
             fingers: Some(4),
             taps: None,
+            modifier_fingers: None,
             direction: Some(crate::config::Direction::Down),
+            edge: None,
+            zoom: None,
+            rotation: None,
             symbol: None,
             confidence: None,
+            steps: None,
+            within_ms: None,
             action: Action::Chain {
                 actions: vec![
                     Action::Keys {

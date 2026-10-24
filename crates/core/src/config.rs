@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use toml::Spanned;
 
 use crate::action::{Action, AppInfo};
+pub use crate::trigger::{Trigger, TriggerDef, Turn, Zoom};
 
 /// Version of the configuration format written by this build.
 pub const CONFIG_VERSION: u32 = 1;
@@ -43,6 +44,14 @@ pub struct Settings {
     pub swipe_min_distance_mm: f32,
     /// Slowest average speed for a swipe; slower travel is a drag.
     pub swipe_min_speed_mm_s: f32,
+    /// Change of the fingers' mean distance from their centroid for a pinch.
+    /// Two fingers 40 mm apart pinched to 20 mm change it by 10 mm.
+    pub pinch_min_mm: f32,
+    /// Turn of the fingers around their centroid for a rotation.
+    pub rotate_min_deg: f32,
+    /// Depth of the edge zone where an edge swipe starts, in percent of the
+    /// touchpad's size: 6 % is about 9 mm on a 155 mm touchpad.
+    pub edge_zone_percent: f32,
 
     // Symbols and draw mode (SPEC §5, §6.2).
     /// How a touch becomes a stroke of a drawn symbol.
@@ -123,6 +132,9 @@ impl Default for Settings {
             hold_max_movement_mm: 4.0,
             swipe_min_distance_mm: 18.0,
             swipe_min_speed_mm_s: 60.0,
+            pinch_min_mm: 8.0,
+            rotate_min_deg: 25.0,
+            edge_zone_percent: 6.0,
             draw_activation: DrawActivation::default(),
             stroke_gap_ms: 400,
             min_stroke_mm: 10.0,
@@ -221,7 +233,7 @@ fn default_toggle_timeout_ms() -> u64 {
     5_000
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Edge {
     #[default]
@@ -273,7 +285,13 @@ pub enum GestureKind {
     Tap,
     Hold,
     Swipe,
+    EdgeSwipe,
+    Pinch,
+    Rotate,
+    Click,
     Symbol,
+    /// Gestures performed one after the other.
+    Sequence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -356,12 +374,27 @@ pub struct GestureDef {
     pub fingers: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub taps: Option<u8>,
+    /// Resting fingers that make a tap or swipe a chord.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modifier_fingers: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direction: Option<Direction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<Edge>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zoom: Option<Zoom>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<Turn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<OneOrMany>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
+    /// The gestures of a sequence, in order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<TriggerDef>>,
+    /// Longest pause between the steps of a sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within_ms: Option<u64>,
     pub action: Action,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub enabled: bool,
@@ -400,18 +433,71 @@ pub struct Gesture {
     pub def: GestureDef,
     /// Line of the gesture's table in the file (1-based).
     pub line: usize,
+    /// What sets it off; `None` for a sequence.
+    pub trigger: Option<Trigger>,
+    /// The steps of a sequence.
+    pub steps: Vec<Trigger>,
+    pub within_ms: u64,
     title_regex: Option<Regex>,
     apps: Vec<String>,
 }
 
+/// Default pause allowed between the steps of a sequence.
+pub const DEFAULT_SEQUENCE_WITHIN_MS: u64 = 800;
+
+impl GestureDef {
+    /// The trigger fields, as checked by [`TriggerDef::build`].
+    pub fn trigger_def(&self) -> TriggerDef {
+        TriggerDef {
+            kind: Some(self.kind),
+            fingers: self.fingers,
+            taps: self.taps,
+            direction: self.direction,
+            edge: self.edge,
+            zoom: self.zoom,
+            rotation: self.rotation,
+            modifier_fingers: self.modifier_fingers,
+            symbol: self.symbol.clone(),
+            confidence: self.confidence,
+        }
+    }
+
+    /// A gesture definition with only a name, a trigger and an action.
+    pub fn new(name: impl Into<String>, trigger: TriggerDef, action: Action) -> Self {
+        Self {
+            name: name.into(),
+            kind: trigger.kind.unwrap_or(GestureKind::Tap),
+            fingers: trigger.fingers,
+            taps: trigger.taps,
+            modifier_fingers: trigger.modifier_fingers,
+            direction: trigger.direction,
+            edge: trigger.edge,
+            zoom: trigger.zoom,
+            rotation: trigger.rotation,
+            symbol: trigger.symbol,
+            confidence: trigger.confidence,
+            steps: None,
+            within_ms: None,
+            action,
+            enabled: true,
+            profile: None,
+            when: None,
+            repeatable: None,
+        }
+    }
+}
+
 impl Gesture {
-    /// Fingers of a tap, hold or swipe.
+    /// Fingers of the trigger (0 for symbols and sequences).
     pub fn fingers(&self) -> u8 {
-        self.def.fingers.unwrap_or(0)
+        self.trigger.as_ref().map_or(0, Trigger::fingers)
     }
 
     pub fn taps(&self) -> u8 {
-        self.def.taps.unwrap_or(1)
+        match self.trigger {
+            Some(Trigger::Tap { taps, .. }) => taps,
+            _ => 1,
+        }
     }
 
     /// Whether the gesture may fire with this profile and foreground app.
@@ -560,6 +646,9 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
         ("swipe_min_distance_mm", s.swipe_min_distance_mm > 0.0),
         ("swipe_min_speed_mm_s", s.swipe_min_speed_mm_s >= 0.0),
         ("stroke_gap_ms", (1..=5_000).contains(&s.stroke_gap_ms)),
+        ("pinch_min_mm", s.pinch_min_mm > 0.0),
+        ("rotate_min_deg", (1.0..=180.0).contains(&s.rotate_min_deg)),
+        ("edge_zone_percent", (1.0..=30.0).contains(&s.edge_zone_percent)),
         ("history_size", (1..=1_000).contains(&s.history_size)),
         (
             "overlay → duration_ms",
@@ -648,58 +737,51 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
             field_err("name", "another gesture has the same name".into());
         }
 
-        let needs_fingers = matches!(
-            def.kind,
-            GestureKind::Tap | GestureKind::Hold | GestureKind::Swipe
-        );
-        match (needs_fingers, def.fingers) {
-            (true, None) => field_err(
-                "fingers",
-                format!("required for a {:?} gesture", def.kind).to_lowercase(),
-            ),
-            (true, Some(n)) if !(1..=crate::MAX_CONTACTS as u8).contains(&n) => field_err(
-                "fingers",
-                format!("must be between 1 and {}", crate::MAX_CONTACTS),
-            ),
-            (false, Some(_)) => field_err(
-                "fingers",
-                "only taps, holds and swipes take `fingers`".into(),
-            ),
-            _ => {}
-        }
-        match (def.kind, def.taps) {
-            (GestureKind::Tap, Some(t)) if !(1..=3).contains(&t) => {
-                field_err("taps", "must be 1, 2 or 3".into())
+        let mut trigger = None;
+        let mut steps = Vec::new();
+        let within_ms = def.within_ms.unwrap_or(DEFAULT_SEQUENCE_WITHIN_MS);
+        if def.kind == GestureKind::Sequence {
+            let mut stray = def.trigger_def();
+            stray.kind = None;
+            if stray != TriggerDef::default() {
+                field_err("type", "a sequence only takes `steps` and `within_ms`".into());
             }
-            (GestureKind::Tap, _) | (_, None) => {}
-            (_, Some(_)) => field_err("taps", "only taps take `taps`".into()),
-        }
-        match (def.kind, def.direction) {
-            (GestureKind::Swipe, None) => field_err("direction", "required for a swipe".into()),
-            (GestureKind::Swipe, _) | (_, None) => {}
-            (_, Some(_)) => field_err("direction", "only swipes take `direction`".into()),
-        }
-        match (def.kind, &def.symbol) {
-            (GestureKind::Symbol, None) => {
-                field_err("symbol", "required for a symbol gesture".into())
+            match &def.steps {
+                None => field_err("steps", "required for a sequence".into()),
+                Some(list) if !(2..=4).contains(&list.len()) => {
+                    field_err("steps", "a sequence has 2 to 4 steps".into())
+                }
+                Some(list) => {
+                    for (i, step) in list.iter().enumerate() {
+                        match step.build() {
+                            Ok(t) => steps.push(t),
+                            Err(es) => {
+                                for (field, message) in es {
+                                    field_err(&format!("steps[{}] → {field}", i + 1), message);
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            (GestureKind::Symbol, Some(s))
-                if s.to_vec().iter().any(|n| n.trim().is_empty()) || s.to_vec().is_empty() =>
-            {
-                field_err("symbol", "symbol names must not be empty".into())
+            if !(100..=5_000).contains(&within_ms) {
+                field_err("within_ms", "must be between 100 and 5000".into());
             }
-            (GestureKind::Symbol, _) | (_, None) => {}
-            (_, Some(_)) => field_err("symbol", "only symbol gestures take `symbol`".into()),
-        }
-        match (def.kind, def.confidence) {
-            (GestureKind::Symbol, Some(c)) if !(0.0..=1.0).contains(&c) => {
-                field_err("confidence", "must be between 0 and 1".into())
+        } else {
+            if def.steps.is_some() {
+                field_err("steps", "only sequences take `steps`".into());
             }
-            (GestureKind::Symbol, _) | (_, None) => {}
-            (_, Some(_)) => field_err(
-                "confidence",
-                "only symbol gestures take `confidence`".into(),
-            ),
+            if def.within_ms.is_some() {
+                field_err("within_ms", "only sequences take `within_ms`".into());
+            }
+            match def.trigger_def().build() {
+                Ok(t) => trigger = Some(t),
+                Err(es) => {
+                    for (field, message) in es {
+                        field_err(field, message);
+                    }
+                }
+            }
         }
         if let Err(e) = def.action.validate() {
             field_err("action", e);
@@ -738,6 +820,9 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
             gestures.push(Gesture {
                 def,
                 line,
+                trigger,
+                steps,
+                within_ms,
                 title_regex,
                 apps,
             });
@@ -858,8 +943,8 @@ action = { type = "keys" }
             vec![
                 "line 2: gesture \"a\" → fingers: must be between 1 and 10",
                 "line 8: gesture \"a\" → name: another gesture has the same name",
-                "line 8: gesture \"a\" → taps: only taps take `taps`",
-                "line 8: gesture \"a\" → direction: required for a swipe",
+                "line 8: gesture \"a\" → direction: required for a swipe gesture",
+                "line 8: gesture \"a\" → taps: a swipe gesture does not take `taps`",
                 "line 8: gesture \"a\" → action: `keys` needs a `combo` or a `sequence`",
             ]
         );
@@ -889,6 +974,94 @@ action = { type = "keys" }
         assert!(mode(r#"{ mode = "toggle", timeout_ms = 10 }"#).is_err());
         assert!(mode(r#"{ mode = "fingers", count = 3, freeze_cursor = true }"#).is_err());
         assert!(mode(r#"{ mode = "telepathy" }"#).is_err());
+    }
+
+    #[test]
+    fn new_gesture_kinds() {
+        let text = r#"
+[[gesture]]
+name = "zoom"
+type = "pinch"
+fingers = 2
+zoom = "out"
+action = { type = "keys", combo = "Ctrl+Plus" }
+
+[[gesture]]
+name = "turn"
+type = "rotate"
+fingers = 2
+rotation = "clockwise"
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "edge"
+type = "edge_swipe"
+fingers = 1
+edge = "right"
+direction = "left"
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "chord"
+type = "swipe"
+fingers = 2
+modifier_fingers = 1
+direction = "up"
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "drag"
+type = "click"
+fingers = 2
+direction = "down"
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "combo"
+type = "sequence"
+steps = [{ type = "tap", fingers = 3 }, { type = "swipe", fingers = 3, direction = "up" }]
+within_ms = 600
+action = { type = "lock_screen" }
+"#;
+        let g = parse(text).unwrap().config.gestures;
+        assert_eq!(g.len(), 6);
+        assert_eq!(g[0].trigger, Some(Trigger::Pinch { fingers: 2, zoom: Zoom::Out }));
+        assert_eq!(
+            g[3].trigger,
+            Some(Trigger::Swipe {
+                fingers: 2,
+                direction: Direction::Up,
+                modifiers: 1
+            })
+        );
+        assert!(g[5].trigger.is_none());
+        assert_eq!(g[5].steps.len(), 2);
+        assert_eq!(g[5].within_ms, 600);
+        assert_eq!(g[2].trigger.as_ref().unwrap().describe(), "swipe left from the right edge with 1 finger");
+    }
+
+    #[test]
+    fn new_gesture_kinds_are_validated() {
+        let e = errors(
+            r#"
+[[gesture]]
+name = "a"
+type = "pinch"
+fingers = 1
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "b"
+type = "sequence"
+fingers = 2
+steps = [{ type = "tap" }]
+action = { type = "lock_screen" }
+"#,
+        );
+        assert!(e.iter().any(|e| e.contains("\"a\" → fingers: must be between 2 and 10")), "{e:?}");
+        assert!(e.iter().any(|e| e.contains("\"a\" → zoom: required")), "{e:?}");
+        assert!(e.iter().any(|e| e.contains("\"b\" → type: a sequence only takes")), "{e:?}");
+        assert!(e.iter().any(|e| e.contains("\"b\" → steps: a sequence has 2 to 4 steps")), "{e:?}");
     }
 
     #[test]

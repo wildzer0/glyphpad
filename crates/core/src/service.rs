@@ -44,7 +44,7 @@ pub enum Command {
     Reload,
     /// Write a new gesture and, for a symbol, its samples, in one go.
     SaveGesture {
-        def: GestureDef,
+        def: Box<GestureDef>,
         symbol_samples: Option<(String, Vec<Sample>)>,
     },
     /// Add a sample to a symbol's templates (e.g. from the history).

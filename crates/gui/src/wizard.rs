@@ -412,20 +412,9 @@ impl Wizard {
             app: Some(OneOrMany::Many(apps)),
             title: None,
         });
-        let mut def = GestureDef {
-            name,
-            kind: GestureKind::Symbol,
-            fingers: None,
-            taps: None,
-            direction: None,
-            symbol: None,
-            confidence: None,
-            action,
-            enabled: true,
-            profile: None,
-            when,
-            repeatable: None,
-        };
+        let mut def = GestureDef::new(name, Default::default(), action);
+        def.kind = GestureKind::Symbol;
+        def.when = when;
         match self.kind {
             Kind::Symbol => {
                 def.symbol = Some(OneOrMany::One(self.symbol.clone()));
@@ -499,7 +488,7 @@ impl Wizard {
                 && let Ok(def) = built
             {
                 cx.send(Command::SaveGesture {
-                    def,
+                    def: Box::new(def),
                     symbol_samples: (self.kind == Kind::Symbol)
                         .then(|| (self.symbol.clone(), self.samples.clone())),
                 });
@@ -554,7 +543,7 @@ fn describe(g: &Inferred) -> String {
             g.direction.map(|d| d.to_string()).unwrap_or_default(),
             g.fingers
         ),
-        GestureKind::Symbol => "symbol".into(),
+        other => other.label().into(),
     }
 }
 

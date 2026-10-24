@@ -30,7 +30,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::action::AppInfo;
-use crate::config::{Config, Direction, Gesture, GestureKind, Settings};
+use crate::config::{Config, Direction, Edge, Gesture, Settings};
+use crate::trigger::{Trigger, Turn, Zoom};
 use crate::model::{DeviceEvent, DeviceId, MAX_CONTACTS, TouchFrame};
 use crate::symbols::{Candidate, Sample, Stroke, SymbolRecognizer, templates};
 
@@ -53,6 +54,34 @@ pub enum Observation {
         direction: Direction,
         distance_mm: f32,
         speed_mm_s: f32,
+    },
+    /// A swipe that started at an edge of the touchpad.
+    EdgeSwipe {
+        edge: Edge,
+        fingers: u8,
+        direction: Direction,
+        distance_mm: f32,
+    },
+    Pinch {
+        fingers: u8,
+        zoom: Zoom,
+        /// Change of the fingers' mean distance from their centroid.
+        change_mm: f32,
+    },
+    Rotate {
+        fingers: u8,
+        turn: Turn,
+        degrees: f32,
+    },
+    /// A physical click, or a click and drag in `direction`.
+    Click {
+        fingers: u8,
+        direction: Option<Direction>,
+    },
+    /// A tap or swipe made while `modifiers` other fingers rest.
+    Chord {
+        modifiers: u8,
+        gesture: Box<Observation>,
     },
     /// A drawn symbol that scored at least its gesture's confidence.
     Symbol {
@@ -124,6 +153,36 @@ impl fmt::Display for Observation {
                 format_candidates(candidates)
             ),
             Observation::Sample { strokes } => write!(f, "drawn sample strokes={}", strokes.len()),
+            Observation::EdgeSwipe {
+                edge,
+                fingers,
+                direction,
+                distance_mm,
+            } => write!(
+                f,
+                "edge swipe from {edge:?} fingers={fingers} direction={direction} ({distance_mm:.1} mm)"
+            ),
+            Observation::Pinch {
+                fingers,
+                zoom,
+                change_mm,
+            } => write!(f, "pinch {zoom:?} fingers={fingers} ({change_mm:+.1} mm)"),
+            Observation::Rotate {
+                fingers,
+                turn,
+                degrees,
+            } => write!(f, "rotate {turn:?} fingers={fingers} ({degrees:+.0}°)"),
+            Observation::Click {
+                fingers,
+                direction: None,
+            } => write!(f, "click fingers={fingers}"),
+            Observation::Click {
+                fingers,
+                direction: Some(d),
+            } => write!(f, "click and drag {d} fingers={fingers}"),
+            Observation::Chord { modifiers, gesture } => {
+                write!(f, "chord ({modifiers} resting) + {gesture}")
+            }
         }
     }
 }
@@ -138,6 +197,9 @@ pub struct Thresholds {
     pub hold_max_movement_mm: f32,
     pub swipe_min_distance_mm: f32,
     pub swipe_min_speed_mm_s: f32,
+    pub pinch_min_mm: f32,
+    pub rotate_min_deg: f32,
+    pub edge_zone: f32,
 }
 
 impl From<&Settings> for Thresholds {
@@ -150,6 +212,9 @@ impl From<&Settings> for Thresholds {
             hold_max_movement_mm: s.hold_max_movement_mm,
             swipe_min_distance_mm: s.swipe_min_distance_mm,
             swipe_min_speed_mm_s: s.swipe_min_speed_mm_s,
+            pinch_min_mm: s.pinch_min_mm,
+            rotate_min_deg: s.rotate_min_deg,
+            edge_zone: s.edge_zone_percent / 100.0,
         }
     }
 }
@@ -161,14 +226,20 @@ impl Default for Thresholds {
 }
 
 /// Which variants the configured gestures need, indexed by finger count.
+/// Recognizers only report what some gesture can use, so ordinary pointer
+/// movement and clicks produce nothing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Spec {
     max_taps: [u8; MAX_CONTACTS + 1],
     holds: [bool; MAX_CONTACTS + 1],
-    /// Finger counts used by swipe gestures; one finger moving is the
-    /// pointer, not a swipe, unless a gesture says otherwise.
     swipes: [bool; MAX_CONTACTS + 1],
     eight_way: [bool; MAX_CONTACTS + 1],
+    edge_swipes: [bool; MAX_CONTACTS + 1],
+    pinches: [bool; MAX_CONTACTS + 1],
+    rotations: [bool; MAX_CONTACTS + 1],
+    clicks: [bool; MAX_CONTACTS + 1],
+    /// Some gesture is a chord (a resting finger as a modifier).
+    pub chords: bool,
     /// Draw mode; `None` disables symbols.
     pub draw: Option<DrawParams>,
     /// Lowest confidence of the gestures using each symbol. `None` accepts
@@ -184,6 +255,11 @@ impl Default for Spec {
             holds: [false; MAX_CONTACTS + 1],
             swipes: [false; MAX_CONTACTS + 1],
             eight_way: [false; MAX_CONTACTS + 1],
+            edge_swipes: [false; MAX_CONTACTS + 1],
+            pinches: [false; MAX_CONTACTS + 1],
+            rotations: [false; MAX_CONTACTS + 1],
+            clicks: [false; MAX_CONTACTS + 1],
+            chords: false,
             draw: None,
             symbol_thresholds: Some(BTreeMap::new()),
             default_confidence: Settings::default().default_confidence,
@@ -209,19 +285,39 @@ impl Spec {
             ..Self::default()
         };
         let mut thresholds = BTreeMap::new();
-        for g in config.gestures.iter().filter(|g| g.def.enabled) {
-            let n = usize::from(g.fingers()).min(MAX_CONTACTS);
-            match g.def.kind {
-                GestureKind::Tap => spec.max_taps[n] = spec.max_taps[n].max(g.taps()),
-                GestureKind::Hold => spec.holds[n] = true,
-                GestureKind::Swipe => {
-                    spec.swipes[n] = true;
-                    spec.eight_way[n] |= g.def.direction.is_some_and(Direction::is_diagonal)
+        // Steps of sequences need recognizing like gestures of their own.
+        let triggers = config
+            .gestures
+            .iter()
+            .filter(|g| g.def.enabled)
+            .flat_map(|g| g.trigger.iter().chain(&g.steps));
+        for t in triggers {
+            let n = usize::from(t.fingers()).min(MAX_CONTACTS);
+            match t {
+                Trigger::Tap { taps, modifiers, .. } => {
+                    spec.max_taps[n] = spec.max_taps[n].max(*taps);
+                    spec.chords |= *modifiers > 0;
                 }
-                GestureKind::Symbol => {
-                    let conf = g.def.confidence.unwrap_or(s.default_confidence);
-                    for name in g.def.symbol.iter().flat_map(|s| s.to_vec()) {
-                        let t: &mut f32 = thresholds.entry(name).or_insert(conf);
+                Trigger::Hold { .. } => spec.holds[n] = true,
+                Trigger::Swipe { direction, modifiers, .. } => {
+                    spec.swipes[n] = true;
+                    spec.eight_way[n] |= direction.is_diagonal();
+                    spec.chords |= *modifiers > 0;
+                }
+                Trigger::EdgeSwipe { direction, .. } => {
+                    spec.edge_swipes[n] = true;
+                    spec.eight_way[n] |= direction.is_diagonal();
+                }
+                Trigger::Pinch { .. } => spec.pinches[n] = true,
+                Trigger::Rotate { .. } => spec.rotations[n] = true,
+                Trigger::Click { direction, .. } => {
+                    spec.clicks[n] = true;
+                    spec.eight_way[n] |= direction.is_some_and(Direction::is_diagonal);
+                }
+                Trigger::Symbol { names, confidence } => {
+                    let conf = confidence.unwrap_or(s.default_confidence);
+                    for name in names {
+                        let t: &mut f32 = thresholds.entry(name.clone()).or_insert(conf);
                         *t = t.min(conf);
                     }
                 }
@@ -232,19 +328,44 @@ impl Spec {
     }
 
     /// Recognizes every variant: triple taps, holds with any number of
-    /// fingers, 8-way swipes, every symbol with the default draw mode. For
-    /// diagnostics, not for normal use, because every tap then waits for a
-    /// possible second one.
+    /// fingers, 8-way swipes, pinches, rotations, clicks, every symbol with
+    /// the default draw mode. For diagnostics, not for normal use, because
+    /// every tap then waits for a possible second one.
     pub fn everything() -> Self {
         Self {
             max_taps: [3; MAX_CONTACTS + 1],
             holds: [true; MAX_CONTACTS + 1],
             swipes: [true; MAX_CONTACTS + 1],
             eight_way: [true; MAX_CONTACTS + 1],
+            edge_swipes: [true; MAX_CONTACTS + 1],
+            pinches: [true; MAX_CONTACTS + 1],
+            rotations: [true; MAX_CONTACTS + 1],
+            clicks: [true; MAX_CONTACTS + 1],
+            chords: true,
             draw: Some(draw_params(&Settings::default())),
             symbol_thresholds: None,
             default_confidence: Settings::default().default_confidence,
         }
+    }
+
+    fn at(table: &[bool; MAX_CONTACTS + 1], fingers: u8) -> bool {
+        fingers > 0 && table[usize::from(fingers).min(MAX_CONTACTS)]
+    }
+
+    pub fn has_edge_swipe(&self, fingers: u8) -> bool {
+        Self::at(&self.edge_swipes, fingers)
+    }
+
+    pub fn has_pinch(&self, fingers: u8) -> bool {
+        Self::at(&self.pinches, fingers)
+    }
+
+    pub fn has_rotation(&self, fingers: u8) -> bool {
+        Self::at(&self.rotations, fingers)
+    }
+
+    pub fn has_click(&self, fingers: u8) -> bool {
+        Self::at(&self.clicks, fingers)
     }
 
     pub fn max_taps(&self, fingers: u8) -> u8 {
@@ -698,39 +819,25 @@ impl Engine {
     }
 }
 
-/// The configured gesture an observation triggers: the first one, in
-/// priority order, that matches and applies to the active profile and the
-/// foreground app.
+/// The configured gesture an observation triggers: among the gestures that
+/// match and apply to the active profile and the foreground app, the most
+/// specific one, then the first in priority order. Sequences are matched by
+/// the [`Dispatcher`](crate::dispatch::Dispatcher), not here.
 pub fn resolve<'a>(
     config: &'a Config,
     observation: &Observation,
     app: Option<&AppInfo>,
 ) -> Option<&'a Gesture> {
-    config.gestures.iter().find(|g| {
-        let d = &g.def;
-        let matches = match *observation {
-            Observation::Tap { fingers, taps } => {
-                d.kind == GestureKind::Tap && g.fingers() == fingers && g.taps() == taps
-            }
-            Observation::Hold { fingers } => d.kind == GestureKind::Hold && g.fingers() == fingers,
-            Observation::Swipe {
-                fingers, direction, ..
-            } => {
-                d.kind == GestureKind::Swipe
-                    && g.fingers() == fingers
-                    && d.direction == Some(direction)
-            }
-            Observation::Symbol {
-                ref name, score, ..
-            } => {
-                d.kind == GestureKind::Symbol
-                    && d.symbol.as_ref().is_some_and(|s| s.to_vec().contains(name))
-                    && score >= d.confidence.unwrap_or(config.settings.default_confidence)
-            }
-            Observation::UnrecognizedSymbol { .. } | Observation::Sample { .. } => false,
-        };
-        matches && g.applies(&config.settings.active_profile, app)
-    })
+    let conf = config.settings.default_confidence;
+    let mut best: Option<(&Gesture, u8)> = None;
+    for g in &config.gestures {
+        let Some(t) = &g.trigger else { continue };
+        let s = t.specificity(observation, conf);
+        if s > best.map_or(0, |b| b.1) && g.applies(&config.settings.active_profile, app) {
+            best = Some((g, s));
+        }
+    }
+    best.map(|b| b.0)
 }
 
 #[cfg(test)]
