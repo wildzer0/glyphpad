@@ -80,6 +80,11 @@ impl Draft {
                 out.push(p.clone());
             }
         }
+        for rule in &self.settings.profile_rules {
+            if !out.contains(&rule.profile) {
+                out.push(rule.profile.clone());
+            }
+        }
         if !out.contains(&self.settings.active_profile) {
             out.insert(0, self.settings.active_profile.clone());
         }

@@ -5,7 +5,8 @@
 
 use eframe::egui::{self, Align, Layout};
 use glyphpad_core::config::{
-    Corner, DrawActivation, Edge, Settings, ThemeChoice, UpdateChannel, UpdateMode,
+    Corner, DrawActivation, Edge, Language, OneOrMany, ProfileRule, Settings, ThemeChoice,
+    UpdateChannel, UpdateMode,
 };
 use glyphpad_core::service::Command;
 
@@ -135,14 +136,17 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) {
         |_| {},
     );
     let d = Settings::default();
+    let profiles = ed.draft.profiles();
     let draft = &mut ed.draft;
     let (s, u) = (&mut draft.settings, &mut draft.update);
     w::scroll_page(ui, "settings", |ui| {
         w::centered_column(ui, theme::PAGE_MAX_WIDTH, |ui| {
             appearance_and_window(ui, s);
             drawing(ui, s, &d);
+            profile_section(ui, cx, s, &profiles);
             repeat_and_pause(ui, cx, s);
             overlay(ui, s);
+            cheat_sheet(ui, s);
             updates(ui, cx, u);
             backups(ui, cx, s, st);
             advanced(ui, s, &d, st);
@@ -187,6 +191,17 @@ fn appearance_and_window(ui: &mut egui::Ui, s: &mut Settings) {
                 ],
             );
         });
+        w::row(ui, "Language", "“System” follows Windows.", |ui| {
+            w::segmented_with_icons(
+                ui,
+                &mut s.language,
+                &[
+                    (Language::System, icons::TRANSLATE, "System"),
+                    (Language::English, "", "English"),
+                    (Language::Italian, "", "Italiano"),
+                ],
+            );
+        });
     });
     w::section(ui, "Window and tray", "", |ui| {
         w::switch_row(
@@ -205,6 +220,12 @@ fn appearance_and_window(ui: &mut egui::Ui, s: &mut Settings) {
             "Also save the history to a file",
             "history.jsonl, next to the configuration.",
             &mut s.save_history,
+        );
+        w::switch_row(
+            ui,
+            "Count how often gestures are used",
+            "Kept in stats.json on this computer only; see Review → Statistics.",
+            &mut s.statistics,
         );
     });
 }
@@ -348,6 +369,86 @@ fn drawing(ui: &mut egui::Ui, s: &mut Settings, d: &Settings) {
     );
 }
 
+fn profile_section(ui: &mut egui::Ui, cx: &Ctx, s: &mut Settings, profiles: &[String]) {
+    w::section(
+        ui,
+        "Profiles",
+        "Sets of gestures: a gesture with a profile only works while that profile is in use.",
+        |ui| {
+            w::row(
+                ui,
+                "Active profile",
+                "Also in the tray menu and the sidebar.",
+                |ui| {
+                    let options: Vec<(String, String)> =
+                        profiles.iter().map(|p| (p.clone(), p.clone())).collect();
+                    w::dropdown(
+                        ui,
+                        "settings-profile",
+                        &mut s.active_profile,
+                        &options,
+                        200.0,
+                    );
+                },
+            );
+            w::row(
+                ui,
+                "Switch by itself",
+                "While one of these programs is in front its profile is used; the first rule that fits wins.",
+                |ui| {
+                    let mut remove = None;
+                    for (i, rule) in s.profile_rules.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.set_max_width(ui.available_width() - 190.0);
+                                let mut apps = rule.app.to_vec();
+                                forms::app_list(
+                                    ui,
+                                    cx,
+                                    egui::Id::unique(("rule-apps", i)),
+                                    &mut apps,
+                                );
+                                rule.app = match apps.len() {
+                                    1 => OneOrMany::One(apps.remove(0)),
+                                    _ => OneOrMany::Many(apps),
+                                };
+                            });
+                            let options: Vec<(String, String)> =
+                                profiles.iter().map(|p| (p.clone(), p.clone())).collect();
+                            ui.label(w::dim(ui, "uses"));
+                            w::dropdown(
+                                ui,
+                                ("rule-profile", i),
+                                &mut rule.profile,
+                                &options,
+                                110.0,
+                            );
+                            if w::icon_button_tone(ui, icons::TRASH, "Remove the rule", Tone::Bad)
+                                .clicked()
+                            {
+                                remove = Some(i);
+                            }
+                        });
+                        ui.add_space(space::S);
+                    }
+                    if let Some(i) = remove {
+                        s.profile_rules.remove(i);
+                    }
+                    if w::button(ui, icons::PLUS, "Add a rule").clicked() {
+                        s.profile_rules.push(ProfileRule {
+                            app: OneOrMany::Many(Vec::new()),
+                            profile: profiles
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| "default".into()),
+                        });
+                    }
+                },
+            );
+        },
+    );
+}
+
 fn freeze(ui: &mut egui::Ui, v: &mut bool) {
     w::switch_row(
         ui,
@@ -397,6 +498,23 @@ fn repeat_and_pause(ui: &mut egui::Ui, cx: &Ctx, s: &mut Settings) {
                 if let Some(r) = &cx.shared.auto_paused {
                     w::badge(ui, &format!("Paused now: {r}"), Tone::Warn);
                 }
+            });
+        },
+    );
+}
+
+fn cheat_sheet(ui: &mut egui::Ui, s: &mut Settings) {
+    w::section(
+        ui,
+        "Cheat sheet",
+        "A list of the gestures that work now, with a picture each. Give a gesture the “Show the list of gestures” action, for example a hold with five fingers.",
+        |ui| {
+            w::row(ui, "Stays on screen", "", |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut s.cheat_sheet_s)
+                        .range(1..=120)
+                        .suffix(" seconds"),
+                );
             });
         },
     );

@@ -14,6 +14,7 @@ mod forms;
 mod gestures;
 mod icon;
 mod icons;
+mod packs;
 mod review;
 mod settings;
 mod theme;
@@ -31,7 +32,7 @@ pub use eframe::egui;
 pub use icon::icon_rgba;
 
 /// What the tray menu asks for (SPEC §10.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayAction {
     Open,
     ToggleEnabled,
@@ -39,6 +40,7 @@ pub enum TrayAction {
     OpenConfigFolder,
     CheckUpdates,
     Quit,
+    SwitchProfile(String),
 }
 
 /// The system tray icon, implemented by the application.
@@ -47,6 +49,8 @@ pub trait Tray {
     fn poll(&mut self) -> Vec<TrayAction>;
     /// Shows whether gestures are enabled or paused.
     fn set_enabled(&mut self, enabled: bool);
+    /// The profiles to choose from and the one in use.
+    fn set_profiles(&mut self, names: &[String], active: &str);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -248,6 +252,9 @@ impl eframe::App for App {
                     let _ = self.commands.send(Command::CheckUpdates { manual: true });
                     self.show_window(ctx);
                 }
+                TrayAction::SwitchProfile(name) => {
+                    let _ = self.commands.send(Command::SwitchProfile(Some(name)));
+                }
                 TrayAction::Quit => {
                     self.quitting = true;
                     ctx.send_viewport_cmd(ViewportCommand::Close);
@@ -282,6 +289,11 @@ impl eframe::App for App {
             .lock()
             .map(|s| s.enabled && s.auto_paused.is_none())
             .unwrap_or(true);
+        if let Some(t) = self.tray.as_mut()
+            && let Ok(s) = self.shared.lock()
+        {
+            t.set_profiles(&s.config.profile_names(), &s.profile);
+        }
         if self.tray_enabled != Some(enabled) {
             if let Some(t) = self.tray.as_mut() {
                 t.set_enabled(enabled);
@@ -498,6 +510,21 @@ impl App {
                         }
                     });
                 });
+                let names = cx.shared.config.profile_names();
+                if names.len() > 1 {
+                    ui.add_space(theme::space::XS);
+                    ui.horizontal(|ui| {
+                        ui.label(widgets::dim(ui, "Profile"));
+                        let mut chosen = s.profile.clone();
+                        let options: Vec<(String, String)> =
+                            names.iter().map(|p| (p.clone(), p.clone())).collect();
+                        if widgets::dropdown(ui, "sidebar-profile", &mut chosen, &options, 110.0)
+                            .changed()
+                        {
+                            cx.send(Command::SwitchProfile(Some(chosen)));
+                        }
+                    });
+                }
                 ui.add_space(theme::space::XS);
                 let mut enabled = s.enabled;
                 ui.horizontal(|ui| {

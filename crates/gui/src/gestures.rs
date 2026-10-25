@@ -37,6 +37,7 @@ pub struct State {
     rename: Option<(String, String)>,
     /// The row being dragged to a new priority.
     dragging: Option<u64>,
+    packs: crate::packs::State,
 }
 
 /// Short description of a gesture's trigger.
@@ -81,6 +82,7 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
             if w::primary_button(ui, icons::RECORD, "Record a gesture").clicked() {
                 start = Some(Start::New);
             }
+            st.packs.menu(ui, ed);
             if w::button(ui, icons::PLUS, "Add manually").clicked() {
                 let def = GestureDef::new(
                     ed.unique_name("new-gesture"),
@@ -151,6 +153,7 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
 
     delete_dialog(ui.ctx(), ed, st);
     profiles_dialog(ui.ctx(), ed, st);
+    st.packs.dialogs(ui.ctx(), ed, cx);
     start
 }
 

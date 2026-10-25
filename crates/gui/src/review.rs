@@ -18,6 +18,7 @@ enum View {
     #[default]
     Templates,
     History,
+    Statistics,
 }
 
 #[derive(Default)]
@@ -30,6 +31,7 @@ pub struct State {
     assign_to: String,
     builtin_counts: Option<BTreeMap<String, usize>>,
     confirm_delete: Option<(String, usize)>,
+    confirm_reset: bool,
 }
 
 /// Returns a symbol to record more templates for, when asked.
@@ -50,6 +52,7 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String> {
                         icons::CLOCK_COUNTER_CLOCKWISE,
                         &history_label,
                     ),
+                    (View::Statistics, icons::CHART_BAR, "Statistics"),
                 ],
             );
         },
@@ -59,6 +62,136 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String> {
         View::History => {
             history_view(ui, cx, st);
             None
+        }
+        View::Statistics => {
+            statistics_view(ui, cx, st);
+            None
+        }
+    }
+}
+
+fn statistics_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) {
+    let p = pal(ui);
+    let usage = &cx.shared.usage;
+    w::scroll_page(ui, "statistics", |ui| {
+        w::centered_column(ui, crate::theme::PAGE_MAX_WIDTH, |ui| {
+            if !cx.shared.config.settings.statistics {
+                w::banner(
+                    ui,
+                    Tone::Neutral,
+                    "Statistics are off",
+                    "Turn them on in Settings → Window and tray. The numbers stay on this computer.",
+                    |_| {},
+                );
+            }
+            w::section(
+                ui,
+                "Overview",
+                "Counted on this computer only, in stats.json next to the configuration.",
+                |ui| {
+                    w::row(ui, "Gestures run", "", |ui| {
+                        ui.label(w::strong(usage.total_runs().to_string()));
+                    });
+                    w::row(
+                        ui,
+                        "Drawings not recognized",
+                        "They matched no symbol well enough: record more examples, or lower the minimum score.",
+                        |ui| {
+                            ui.label(w::strong(usage.unrecognized.to_string()));
+                        },
+                    );
+                    w::row(
+                        ui,
+                        "Symbols with no gesture",
+                        "Recognized, but nothing is set up for them in the active profile.",
+                        |ui| {
+                            ui.label(w::strong(usage.unmapped.to_string()));
+                        },
+                    );
+                    if let Some(since) = &usage.since {
+                        w::row(ui, "Counting since", "", |ui| {
+                            ui.label(since);
+                        });
+                    }
+                },
+            );
+            w::section(ui, "By gesture", "", |ui| {
+                let max = usage.gestures.values().copied().max().unwrap_or(1).max(1);
+                let mut rows: Vec<(String, u64)> = cx
+                    .shared
+                    .config
+                    .gestures
+                    .iter()
+                    .map(|g| {
+                        (
+                            g.def.name.clone(),
+                            usage.gestures.get(&g.def.name).copied().unwrap_or(0),
+                        )
+                    })
+                    .collect();
+                rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                if rows.is_empty() {
+                    ui.label(w::dim(ui, "No gestures yet."));
+                }
+                for (name, count) in rows {
+                    ui.horizontal(|ui| {
+                        ui.add_sized([180.0, 24.0], egui::Label::new(w::strong(name)).truncate());
+                        let (bar, _) = ui.allocate_exact_size(
+                            Vec2::new((ui.available_width() - 70.0).max(40.0), 8.0),
+                            Sense::hover(),
+                        );
+                        ui.painter()
+                            .rect_filled(bar, CornerRadius::same(4), p.raised);
+                        let mut fill = bar;
+                        fill.set_width(bar.width() * count as f32 / max as f32);
+                        ui.painter()
+                            .rect_filled(fill, CornerRadius::same(4), p.accent);
+                        ui.label(
+                            egui::RichText::new(if count == 0 {
+                                "never".into()
+                            } else {
+                                count.to_string()
+                            })
+                            .font(fonts::mono(12.5))
+                            .color(if count == 0 {
+                                p.text_faint
+                            } else {
+                                p.text
+                            }),
+                        );
+                    });
+                }
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if w::danger_button(ui, icons::TRASH, "Reset the counts").clicked() {
+                    st.confirm_reset = true;
+                }
+            });
+        });
+    });
+    if st.confirm_reset {
+        let mut close = false;
+        w::dialog(
+            ui.ctx(),
+            "reset-usage",
+            "Reset the statistics?",
+            360.0,
+            |ui| {
+                ui.label("All counts go back to zero.");
+                ui.add_space(space::M);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if w::danger_button(ui, icons::TRASH, "Reset").clicked() {
+                        cx.send(Command::ResetUsage);
+                        close = true;
+                    }
+                    if w::button(ui, "", "Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            },
+        );
+        if close {
+            st.confirm_reset = false;
         }
     }
 }
