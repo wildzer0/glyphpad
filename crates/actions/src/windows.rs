@@ -14,14 +14,18 @@ use glyphpad_core::action::{
     ScreenshotMode, WindowOp,
 };
 use glyphpad_core::keys::{Key, KeyCombo};
-use windows::Win32::Foundation::{CloseHandle, HGLOBAL, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{
+    CloseHandle, GlobalFree, HANDLE, HGLOBAL, HWND, LPARAM, RECT, WPARAM,
+};
 use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO,
     MonitorFromWindow,
 };
-use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
-use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
+};
+use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::System::Threading::{
@@ -108,6 +112,17 @@ impl ActionExecutor for WindowsExecutor {
                 *wait,
                 *timeout_ms,
             ),
+            Action::Copy { text } => set_clipboard_text(text),
+            Action::PasteText { text } => {
+                set_clipboard_text(text)?;
+                // Give the clipboard owner a moment to take the data: some
+                // applications read it on the next message they process.
+                std::thread::sleep(Duration::from_millis(30));
+                send_combo(&KeyCombo {
+                    modifiers: vec![Key::Ctrl],
+                    key: Key::Letter('V'),
+                })
+            }
             Action::Media { key } => send_combo(&KeyCombo {
                 modifiers: Vec::new(),
                 key: match key {
@@ -602,6 +617,40 @@ fn quote_for_cmd(arg: &str) -> String {
         format!("\"{}\"", arg.replace('"', "\"\""))
     } else {
         arg.to_string()
+    }
+}
+
+/// Puts `text` on the clipboard, replacing what was there.
+fn set_clipboard_text(text: &str) -> Result<(), ActionError> {
+    // UTF-16 with its terminator: what `CF_UNICODETEXT` is.
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let bytes = wide.len() * std::mem::size_of::<u16>();
+    // SAFETY: the clipboard is opened and closed within this call. The block
+    // allocated by `GlobalAlloc` is either handed to the clipboard, which owns
+    // it from then on, or freed here on every error path.
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return Err("another program is holding the clipboard".into());
+        }
+        let result = (|| -> Result<(), ActionError> {
+            EmptyClipboard().map_err(|e| format!("cannot empty the clipboard: {e}"))?;
+            let memory = GlobalAlloc(GMEM_MOVEABLE, bytes)
+                .map_err(|e| format!("cannot allocate for the clipboard: {e}"))?;
+            let ptr = GlobalLock(memory);
+            if ptr.is_null() {
+                let _ = GlobalFree(Some(memory));
+                return Err("cannot lock the clipboard memory".into());
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr as *mut u16, wide.len());
+            let _ = GlobalUnlock(memory);
+            if let Err(e) = SetClipboardData(u32::from(CF_UNICODETEXT.0), Some(HANDLE(memory.0))) {
+                let _ = GlobalFree(Some(memory));
+                return Err(format!("cannot put the text on the clipboard: {e}").into());
+            }
+            Ok(())
+        })();
+        let _ = CloseClipboard();
+        result
     }
 }
 

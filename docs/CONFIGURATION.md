@@ -283,6 +283,8 @@ marked *app*.
 | `notify` | **`message`**, `title` | Shown in GlyphPad's overlay |
 | `open` | **`target`** | A file, folder or web address, opened with its default program |
 | `type_text` | **`text`** (1–2000 characters) | Types the text; `\n` presses Enter |
+| `copy` | **`text`** | Puts the text on the clipboard, replacing what was there |
+| `paste_text` | **`text`** | Puts the text on the clipboard and sends `Ctrl+V` |
 | `window` | **`op`** | `snap_left`, `snap_right`, `next_monitor`, `toggle_always_on_top` |
 | `virtual_desktop` | **`op`** | `previous`, `next`, `new` |
 | `screenshot` | `mode` (default `region`) | `region` (snipping overlay) or `screen` (whole screen to Pictures\Screenshots) |

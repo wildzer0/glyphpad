@@ -81,6 +81,15 @@ pub enum Action {
     TypeText {
         text: String,
     },
+    /// Puts a text on the clipboard.
+    Copy {
+        text: String,
+    },
+    /// Puts a text on the clipboard and pastes it into the focused window
+    /// (`Ctrl+V`), which is faster and more faithful than typing it.
+    PasteText {
+        text: String,
+    },
     /// Arranges the foreground window.
     Window {
         op: WindowOp,
@@ -169,6 +178,8 @@ impl Action {
             Action::DrawSymbol => "draw_symbol",
             Action::Open { .. } => "open",
             Action::TypeText { .. } => "type_text",
+            Action::Copy { .. } => "copy",
+            Action::PasteText { .. } => "paste_text",
             Action::Window { .. } => "window",
             Action::VirtualDesktop { .. } => "virtual_desktop",
             Action::Screenshot { .. } => "screenshot",
@@ -196,6 +207,8 @@ impl Action {
             "draw_symbol" => "Draw symbol",
             "open" => "Open",
             "type_text" => "Type text",
+            "copy" => "Copy to clipboard",
+            "paste_text" => "Paste the text",
             "window" => "Arrange window",
             "virtual_desktop" => "Virtual desktop",
             "screenshot" => "Screenshot",
@@ -247,6 +260,15 @@ impl Action {
                     }
                     a.validate()
                         .map_err(|e| format!("`chain` item {}: {e}", i + 1))?;
+                }
+                Ok(())
+            }
+            Action::Copy { text } | Action::PasteText { text } => {
+                if text.is_empty() {
+                    return Err("`copy` and `paste_text` need a non-empty `text`".into());
+                }
+                if text.chars().count() > 100_000 {
+                    return Err("`copy` and `paste_text` take at most 100000 characters".into());
                 }
                 Ok(())
             }
@@ -388,6 +410,12 @@ impl ActionContext {
             Action::TypeText { text } => Action::TypeText {
                 text: self.expand(text),
             },
+            Action::Copy { text } => Action::Copy {
+                text: self.expand(text),
+            },
+            Action::PasteText { text } => Action::PasteText {
+                text: self.expand(text),
+            },
             Action::Chain { actions } => Action::Chain {
                 actions: actions.iter().map(|a| self.resolve(a)).collect(),
             },
@@ -458,6 +486,40 @@ mod tests {
             action: Action,
         }
         toml::from_str::<W>(s).map(|w| w.action)
+    }
+
+    #[test]
+    fn copy_and_paste_need_a_text() {
+        let copy = parse(r#"action = { type = "copy", text = "hello" }"#).unwrap();
+        assert_eq!(copy.kind(), "copy");
+        assert!(copy.validate().is_ok());
+        let paste = parse(r#"action = { type = "paste_text", text = "hello" }"#).unwrap();
+        assert!(paste.validate().is_ok());
+        assert!(
+            parse(r#"action = { type = "copy", text = "" }"#)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        // Both take placeholders too.
+        let ctx = ActionContext {
+            app: "chrome.exe".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            ctx.resolve(&paste),
+            Action::PasteText {
+                text: "hello".into()
+            }
+        );
+        assert_eq!(
+            ctx.resolve(&Action::Copy {
+                text: "{{app}}".into()
+            }),
+            Action::Copy {
+                text: "chrome.exe".into()
+            }
+        );
     }
 
     #[test]

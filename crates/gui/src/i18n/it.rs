@@ -329,6 +329,23 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("Type a text", "Digita un testo"),
     (
+        "Copy a text to the clipboard",
+        "Copia un testo negli appunti",
+    ),
+    ("Paste a text", "Incolla un testo"),
+    ("Copy to clipboard", "Copia negli appunti"),
+    ("Paste the text", "Incolla il testo"),
+    ("The text to copy", "Il testo da copiare"),
+    ("The text to paste", "Il testo da incollare"),
+    (
+        "Replaces what is on the clipboard.",
+        "Sostituisce il contenuto degli appunti.",
+    ),
+    (
+        "Goes on the clipboard, then Ctrl+V: faster and more faithful than typing.",
+        "Va negli appunti, poi Ctrl+V: più veloce e fedele della digitazione.",
+    ),
+    (
         "Arrange the window in front",
         "Disponi la finestra in primo piano",
     ),

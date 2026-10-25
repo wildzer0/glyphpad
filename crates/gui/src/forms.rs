@@ -476,6 +476,8 @@ const ACTIONS: &[(&str, &str, &str)] = &[
         "Open a file, folder or address",
     ),
     ("type_text", icons::TEXT_AA, "Type a text"),
+    ("copy", icons::COPY, "Copy a text to the clipboard"),
+    ("paste_text", icons::TEXT_AA, "Paste a text"),
     ("window", icons::SQUARES_FOUR, "Arrange the window in front"),
     ("virtual_desktop", icons::MONITOR, "Switch virtual desktop"),
     ("screenshot", icons::CAMERA, "Take a screenshot"),
@@ -560,6 +562,12 @@ fn default_action(kind: &str) -> Action {
             target: String::new(),
         },
         "type_text" => Action::TypeText {
+            text: String::new(),
+        },
+        "copy" => Action::Copy {
+            text: String::new(),
+        },
+        "paste_text" => Action::PasteText {
             text: String::new(),
         },
         "window" => Action::Window {
@@ -982,6 +990,27 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
             w::hint(
                 ui,
                 "Typed into the window that has the focus; a new line presses Enter.",
+            );
+        }
+        Action::Copy { text } => {
+            ui.add(
+                egui::TextEdit::multiline(text)
+                    .hint_text(crate::i18n::tr("The text to copy"))
+                    .desired_rows(3)
+                    .desired_width(ui.available_width()),
+            );
+            w::hint(ui, "Replaces what is on the clipboard.");
+        }
+        Action::PasteText { text } => {
+            ui.add(
+                egui::TextEdit::multiline(text)
+                    .hint_text(crate::i18n::tr("The text to paste"))
+                    .desired_rows(3)
+                    .desired_width(ui.available_width()),
+            );
+            w::hint(
+                ui,
+                "Goes on the clipboard, then Ctrl+V: faster and more faithful than typing.",
             );
         }
         Action::Window { op } => {
