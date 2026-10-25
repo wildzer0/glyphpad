@@ -2,8 +2,8 @@
 //! extracting the executable (SPEC §12.2).
 //!
 //! `SHA256SUMS` protects against corrupt downloads, not against a
-//! compromised GitHub account: releases are not signed yet (SPEC §12.3
-//! plans minisign for that).
+//! compromised GitHub account: `SHA256SUMS.minisig` is checked first when the
+//! build has a minisign key (SPEC §12.3, [`crate::signature`]).
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::signature;
 use crate::source::{MAX_DOWNLOAD, UpdateSource};
-use crate::{CHECKSUMS, Error, Release, exe_name, package_name};
+use crate::{CHECKSUMS, CHECKSUMS_SIG, Error, Release, exe_name, package_name};
 
 /// `<hash>  <name>` per line (also `<hash> *<name>`, as `sha256sum -b` writes).
 pub fn parse_checksums(text: &str) -> HashMap<String, String> {
@@ -126,7 +127,25 @@ pub fn download(
 
     let mut sums = Vec::new();
     source.fetch(sums_asset, &mut sums)?;
-    let sums = parse_checksums(&String::from_utf8_lossy(&sums));
+    let sums_text = String::from_utf8_lossy(&sums).to_string();
+    // The signature is checked before the package is even downloaded: a
+    // release replaced through the GitHub account cannot hand out a binary
+    // (SPEC §12.3).
+    if signature::is_configured() {
+        let sig_asset = release
+            .assets
+            .iter()
+            .find(|a| a.name == CHECKSUMS_SIG)
+            .ok_or_else(|| Error::MissingSignature(release.tag.clone()))?;
+        let mut sig = Vec::new();
+        source.fetch(sig_asset, &mut sig)?;
+        signature::verify(&sums_text, &String::from_utf8_lossy(&sig))?;
+    } else {
+        tracing::warn!(
+            "this build has no minisign key, so the release's signature cannot be checked"
+        );
+    }
+    let sums = parse_checksums(&sums_text);
     let expected = sums
         .get(&name)
         .ok_or_else(|| Error::NotListed(name.clone()))?;

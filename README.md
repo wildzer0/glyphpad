@@ -46,6 +46,12 @@ Windows SmartScreen may say "Windows protected your PC" the first time, because 
 is not code-signed yet: choose *More info* → *Run anyway*. You can check the download against
 the `SHA256SUMS` file of the release.
 
+When the project's minisign key is configured, `SHA256SUMS` is signed
+(`SHA256SUMS.minisig`) and GlyphPad refuses an update whose signature does not verify: the
+public key is compiled into the executable and cannot be changed from the configuration. Until
+those keys exist the releases are unsigned, and the log of such a build says it cannot check
+them.
+
 **Portable mode:** if a file named `glyphpad.toml` sits next to `glyphpad.exe`, GlyphPad uses
 it, and keeps its other files there too. Otherwise it uses `%APPDATA%\GlyphPad\config\`.
 To uninstall, delete the folder (and turn off *Start with Windows* first if you used it).

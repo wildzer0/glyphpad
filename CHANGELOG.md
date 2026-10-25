@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Releases can be signed with minisign: the workflow signs `SHA256SUMS`
+  (`SHA256SUMS.minisig`), the public key is compiled into the executable, and an update whose
+  signature does not verify is refused and logged. A build without a key says so.
 - Mouse actions: `scroll` (wheel notches), `mouse_click` (left, right, middle, once or twice) and
   `drag` (press, move by a few pixels, release).
 - A new gesture kind, `zone`: a tap inside a rectangle of the touchpad, in millimetres

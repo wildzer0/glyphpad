@@ -54,6 +54,7 @@ semver = "1.0.28"
 ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
 # SHA256SUMS verification of downloaded packages (SPEC §12.3).
 sha2 = "0.11.1"
+minisign-verify = "0.3.0"
 # Package extraction: .zip on Windows, .tar.gz on Linux (SPEC §11.3).
 zip = { version = "9.1.0", default-features = false, features = ["deflate"] }
 flate2 = "1.1.10"

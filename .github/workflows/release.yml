@@ -9,6 +9,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Embedded in the executable, so an update can only be signed with the
+  # project's key (SPEC §12.3). Set the repository variable to its contents;
+  # empty means the build cannot check signatures.
+  GLYPHPAD_MINISIGN_PUBKEY: ${{ vars.MINISIGN_PUBKEY }}
 
 jobs:
   verify:
@@ -126,7 +130,28 @@ jobs:
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
 
-      # minisign signature of SHA256SUMS (SHA256SUMS.minisig) goes here in M6.
+      # The SHA-256 protects against a corrupt download; the signature
+      # against a release replaced through the GitHub account (SPEC §12.3).
+      # Without the secret the release is published unsigned and the log of
+      # every build without a key says it cannot check it.
+      - name: Sign the checksums
+        working-directory: dist
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::warning::MINISIGN_SECRET_KEY is not set: publishing an unsigned release"
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"
+          # The password comes in on stdin, so it never appears in the log.
+          printf '%s\n' "$MINISIGN_PASSWORD" \
+            | minisign -S -s "$RUNNER_TEMP/minisign.key" -m SHA256SUMS
+          rm -f "$RUNNER_TEMP/minisign.key"
+          cat SHA256SUMS.minisig
 
       - name: Release notes from CHANGELOG.md
         run: cargo xtask changelog "${{ needs.verify.outputs.version }}" > release-notes.md

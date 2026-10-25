@@ -157,6 +157,32 @@ choice and what applies when no rule matches.
 
 ## `[update]`
 
+### Signed releases
+
+`SHA256SUMS` protects against a corrupt download, not against a release replaced by whoever got
+into the GitHub account. For that the sums are signed with [minisign](https://jedisct1.github.io/minisign/),
+and the executable carries the public key, so an update cannot be pointed at another key.
+
+Making the keys (once, on a machine of your own — never in the repository):
+
+```sh
+minisign -G -p glyphpad.pub -s glyphpad.key
+```
+
+Then, on the GitHub repository:
+
+| Kind | Name | Value |
+|---|---|---|
+| Variable | `MINISIGN_PUBKEY` | the contents of `glyphpad.pub` (the `RW…` line) |
+| Secret | `MINISIGN_SECRET_KEY` | the contents of `glyphpad.key` |
+| Secret | `MINISIGN_PASSWORD` | the password chosen when the key was made |
+
+The build compiles `MINISIGN_PUBKEY` in (`GLYPHPAD_MINISIGN_PUBKEY`), and the release workflow
+signs the sums in `dist/` with the secret. Without `MINISIGN_SECRET_KEY` the release is published
+unsigned, with a warning in the workflow, and builds made without a key say in the log that they
+cannot check signatures.
+
+
 | Key | Default | Meaning |
 |---|---|---|
 | `mode` | `"notify"` | `off` (only when you ask), `notify` (a banner offers it), `auto` (installs and restarts) |

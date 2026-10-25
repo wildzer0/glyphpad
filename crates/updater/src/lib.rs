@@ -8,6 +8,7 @@
 
 pub mod install;
 pub mod package;
+pub mod signature;
 pub mod source;
 pub mod state;
 
@@ -38,6 +39,10 @@ pub enum Error {
     MissingChecksums(String),
     #[error("SHA256SUMS does not list {0}")]
     NotListed(String),
+    #[error("release {0} has no signature for SHA256SUMS, so it cannot be trusted")]
+    MissingSignature(String),
+    #[error("the release's signature is not valid: {0}")]
+    InvalidSignature(String),
     #[error(
         "the download is corrupt or was tampered with (expected SHA-256 {expected}, got {actual})"
     )]
@@ -134,6 +139,9 @@ pub fn exe_name() -> &'static str {
 
 /// Name of the file listing the SHA-256 of every asset of a release.
 pub const CHECKSUMS: &str = "SHA256SUMS";
+
+/// Name of the minisign signature of [`CHECKSUMS`] (SPEC §12.3).
+pub const CHECKSUMS_SIG: &str = "SHA256SUMS.minisig";
 
 #[cfg(test)]
 mod tests {
