@@ -161,7 +161,10 @@ pub struct TouchpadLayout {
     has_confidence: bool,
     contact_count_max_feature: Option<HIDP_VALUE_CAPS>,
     contact_count_logical_max: Option<i32>,
-    max_usages: u32,
+    /// Scratch space for `HidP_GetUsages`: the touch path runs a hundred
+    /// times a second and must not allocate a vector per call.
+    usages: Vec<u16>,
+    flags: Vec<u16>,
 }
 
 impl TouchpadLayout {
@@ -218,6 +221,7 @@ impl TouchpadLayout {
         // SAFETY: `pd` is valid preparsed data.
         let max_usages = unsafe { HidP_MaxUsageListLength(HidP_Input, None, pd.handle()) };
 
+        let max_usages = max_usages.max(16);
         Ok(Self {
             caps,
             x: axis_caps(x),
@@ -230,7 +234,8 @@ impl TouchpadLayout {
             has_confidence,
             contact_count_max_feature,
             contact_count_logical_max: contact_count.map(|c| c.LogicalMax),
-            max_usages: max_usages.max(16),
+            usages: vec![0; max_usages as usize],
+            flags: vec![0; max_usages as usize],
         })
     }
 
@@ -286,10 +291,25 @@ impl TouchpadLayout {
     /// Parses one input report. Returns `None` for reports of other report
     /// ids (e.g. vendor data) that carry no touch data.
     pub fn parse(
-        &self,
+        &mut self,
         pd: &PreparsedData,
         report: &mut [u8],
     ) -> Result<Option<RawReport>, HidError> {
+        // Destructured so the scratch buffers can be borrowed while the
+        // layout's other fields are read.
+        let Self {
+            fingers,
+            x,
+            y,
+            x_bits,
+            y_bits,
+            has_confidence,
+            has_contact_count,
+            has_scan_time,
+            usages,
+            flags,
+            ..
+        } = self;
         let value = |page: u16,
                      link: Option<u16>,
                      u: u16,
@@ -314,68 +334,40 @@ impl TouchpadLayout {
             }
         };
 
-        let mut usages = vec![0u16; self.max_usages as usize];
-        let mut pressed =
-            |page: u16, link: Option<u16>, report: &mut [u8]| -> Result<Vec<u16>, HidError> {
-                let mut len = usages.len() as u32;
-                // SAFETY: `usages` has room for `len` entries; `report` is a complete report.
-                let status = unsafe {
-                    HidP_GetUsages(
-                        HidP_Input,
-                        page,
-                        link,
-                        usages.as_mut_ptr(),
-                        &mut len,
-                        pd.handle(),
-                        report,
-                    )
-                };
-                match status {
-                    s if s == HIDP_STATUS_SUCCESS => Ok(usages[..len as usize].to_vec()),
-                    s if s == HIDP_STATUS_USAGE_NOT_FOUND
-                        || s == HIDP_STATUS_INCOMPATIBLE_REPORT_ID =>
-                    {
-                        Ok(Vec::new())
-                    }
-                    s => Err(HidError::Status {
-                        call: "HidP_GetUsages",
-                        status: s.0,
-                    }),
-                }
-            };
-
         // The first finger's X tells whether this report carries touch data at all.
-        let first = self.fingers[0];
+        let first = fingers[0];
         if value(usage::PAGE_GENERIC_DESKTOP, Some(first), usage::X, report)?.is_none() {
             return Ok(None);
         }
 
-        let contact_count = if self.has_contact_count {
+        let contact_count = if *has_contact_count {
             Some(value(usage::PAGE_DIGITIZER, None, usage::CONTACT_COUNT, report)?.unwrap_or(0))
         } else {
             None
         };
-        let scan_time = if self.has_scan_time {
+        let scan_time = if *has_scan_time {
             value(usage::PAGE_DIGITIZER, None, usage::SCAN_TIME, report)?.map(|v| v as u16)
         } else {
             None
         };
-        let button = pressed(usage::PAGE_BUTTON, None, report)?.contains(&usage::BUTTON_1);
+        let pressed = pressed_usages(pd, usage::PAGE_BUTTON, None, report, usages)?;
+        let button = usages[..pressed].contains(&usage::BUTTON_1);
 
-        let mut contacts = Vec::with_capacity(self.fingers.len());
-        for &link in &self.fingers {
-            let flags = pressed(usage::PAGE_DIGITIZER, Some(link), report)?;
+        let mut contacts = Vec::with_capacity(fingers.len());
+        for &link in fingers.iter() {
+            let pressed = pressed_usages(pd, usage::PAGE_DIGITIZER, Some(link), report, flags)?;
+            let down = &flags[..pressed];
             let id =
                 value(usage::PAGE_DIGITIZER, Some(link), usage::CONTACT_ID, report)?.unwrap_or(0);
-            let x = value(usage::PAGE_GENERIC_DESKTOP, Some(link), usage::X, report)?.unwrap_or(0);
-            let y = value(usage::PAGE_GENERIC_DESKTOP, Some(link), usage::Y, report)?.unwrap_or(0);
+            let vx = value(usage::PAGE_GENERIC_DESKTOP, Some(link), usage::X, report)?.unwrap_or(0);
+            let vy = value(usage::PAGE_GENERIC_DESKTOP, Some(link), usage::Y, report)?.unwrap_or(0);
             contacts.push(RawContact {
                 id,
-                x: self.x.decode(x, self.x_bits),
-                y: self.y.decode(y, self.y_bits),
-                tip: flags.contains(&usage::TIP_SWITCH),
+                x: x.decode(vx, *x_bits),
+                y: y.decode(vy, *y_bits),
+                tip: down.contains(&usage::TIP_SWITCH),
                 // Devices without the Confidence usage never flag palms.
-                confident: !self.has_confidence || flags.contains(&usage::CONFIDENCE),
+                confident: !*has_confidence || down.contains(&usage::CONFIDENCE),
             });
         }
 
@@ -385,6 +377,39 @@ impl TouchpadLayout {
             button,
             contacts,
         }))
+    }
+}
+
+/// Reads the usages of `page` (in `link`, when given) that are on in
+/// `report` into `out`, and returns how many. Does not allocate: `out` is a
+/// scratch buffer of `max_usages` entries.
+fn pressed_usages(
+    pd: &PreparsedData,
+    page: u16,
+    link: Option<u16>,
+    report: &mut [u8],
+    out: &mut [u16],
+) -> Result<usize, HidError> {
+    let mut len = out.len() as u32;
+    // SAFETY: `out` has room for `len` entries; `report` is a complete report.
+    let status = unsafe {
+        HidP_GetUsages(
+            HidP_Input,
+            page,
+            link,
+            out.as_mut_ptr(),
+            &mut len,
+            pd.handle(),
+            report,
+        )
+    };
+    match status {
+        s if s == HIDP_STATUS_SUCCESS => Ok(len as usize),
+        s if s == HIDP_STATUS_USAGE_NOT_FOUND || s == HIDP_STATUS_INCOMPATIBLE_REPORT_ID => Ok(0),
+        s => Err(HidError::Status {
+            call: "HidP_GetUsages",
+            status: s.0,
+        }),
     }
 }
 
