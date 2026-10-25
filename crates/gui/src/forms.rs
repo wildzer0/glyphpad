@@ -897,6 +897,10 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                     "Waiting stops after the time above; a chain of actions goes on either way.",
                 );
             }
+            w::hint(
+                ui,
+                "Placeholders: {{app}}, {{title}}, {{profile}}, {{date}}, {{time}}, {{clipboard}}.",
+            );
             let variables = env
                 .iter()
                 .map(|(k, v)| format!("{k}={v}"))

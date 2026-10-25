@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Placeholders in the texts of `run`, `open`, `notify` and `type_text`: `{{app}}`, `{{title}}`,
+  `{{profile}}`, `{{date}}`, `{{time}}` and `{{clipboard}}` (`{{clipboard}}` through
+  `GlyphPad`'s own clipboard read, so nothing is stored or sent anywhere).
 - `run` can go through the command interpreter (`shell = true`, so pipes, `>`, `&&` and
   variables work), take environment variables (`env`), and wait for the program to finish
   (`wait = true`, up to `timeout_ms`).

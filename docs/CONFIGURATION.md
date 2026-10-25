@@ -313,6 +313,28 @@ action = { type = "run", command = "powershell", args = ["-NoProfile", "-File", 
 A program that exits with an error is logged and the next action of a `chain` runs anyway: the
 action set has no condition on an exit code.
 
+### Placeholders
+
+In the texts of `run` (command, arguments, working folder, environment values), `open`, `notify`
+and `type_text`, these are replaced when the action runs:
+
+| Placeholder | Value |
+|---|---|
+| `{{app}}` | Executable name of the window in front, e.g. `chrome.exe` |
+| `{{title}}` | Its window title |
+| `{{profile}}` | The active profile |
+| `{{date}}` | Local date, `YYYY-MM-DD` |
+| `{{time}}` | Local time, `HH:MM` |
+| `{{clipboard}}` | The clipboard's text (read only when the action asks for it) |
+
+Anything else between braces is left alone. The clipboard is read when the gesture runs, so an
+action that copies and one that pastes cannot be chained to the same text; `copy` and `paste_text`
+do that.
+
+```toml
+action = { type = "run", command = "code", args = ["C:/notes/{{date}}.md"], shell = false }
+```
+
 ## Conditions
 
 ```toml

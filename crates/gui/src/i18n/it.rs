@@ -423,6 +423,10 @@ pub const TABLE: &[(&str, &str)] = &[
         "environment variables, KEY=value per line (optional)",
         "variabili d'ambiente, KEY=valore per riga (facoltativo)",
     ),
+    (
+        "Placeholders: {{app}}, {{title}}, {{profile}}, {{date}}, {{time}}, {{clipboard}}.",
+        "Segnaposto: {{app}}, {{title}}, {{profile}}, {{date}}, {{time}}, {{clipboard}}.",
+    ),
     ("Play / pause", "Riproduci / pausa"),
     ("Next track", "Traccia successiva"),
     ("Previous track", "Traccia precedente"),

@@ -302,6 +302,129 @@ pub trait ActionExecutor {
     fn execute(&self, action: &Action) -> Result<(), ActionError>;
 }
 
+/// The values a placeholder in an action's text can stand for, gathered when
+/// the action runs. `date`, `time` and `clipboard` are filled by the caller,
+/// which is the side that knows how to read them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActionContext {
+    /// Executable name of the foreground application.
+    pub app: String,
+    /// Title of the foreground window.
+    pub title: String,
+    pub profile: String,
+    /// Local date, `YYYY-MM-DD`.
+    pub date: String,
+    /// Local time, `HH:MM`.
+    pub time: String,
+    /// The clipboard's text, read only when the action asks for it.
+    pub clipboard: Option<String>,
+}
+
+impl ActionContext {
+    /// Replaces `{{app}}`, `{{title}}`, `{{profile}}`, `{{date}}`, `{{time}}`
+    /// and `{{clipboard}}`. Anything else between braces is left as it is, so
+    /// a literal `{{` is harmless.
+    pub fn expand(&self, text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(start) = rest.find("{{") {
+            out.push_str(&rest[..start]);
+            let after = &rest[start + 2..];
+            let Some(end) = after.find("}}") else {
+                out.push_str(&rest[start..]);
+                return out;
+            };
+            match after[..end].trim() {
+                "app" => out.push_str(&self.app),
+                "title" => out.push_str(&self.title),
+                "profile" => out.push_str(&self.profile),
+                "date" => out.push_str(&self.date),
+                "time" => out.push_str(&self.time),
+                "clipboard" => out.push_str(self.clipboard.as_deref().unwrap_or_default()),
+                _ => {
+                    out.push_str("{{");
+                    out.push_str(&after[..end]);
+                    out.push_str("}}");
+                }
+            }
+            rest = &after[end + 2..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// A copy of `action` with every placeholder in its texts filled in.
+    pub fn resolve(&self, action: &Action) -> Action {
+        match action {
+            Action::Run {
+                command,
+                args,
+                hidden,
+                cwd,
+                shell,
+                env,
+                wait,
+                timeout_ms,
+            } => Action::Run {
+                command: self.expand(command),
+                args: args.iter().map(|a| self.expand(a)).collect(),
+                hidden: *hidden,
+                cwd: cwd.as_ref().map(|c| self.expand(c)),
+                shell: *shell,
+                env: env
+                    .iter()
+                    .map(|(k, v)| (k.clone(), self.expand(v)))
+                    .collect(),
+                wait: *wait,
+                timeout_ms: *timeout_ms,
+            },
+            Action::Open { target } => Action::Open {
+                target: self.expand(target),
+            },
+            Action::Notify { title, message } => Action::Notify {
+                title: title.as_ref().map(|t| self.expand(t)),
+                message: self.expand(message),
+            },
+            Action::TypeText { text } => Action::TypeText {
+                text: self.expand(text),
+            },
+            Action::Chain { actions } => Action::Chain {
+                actions: actions.iter().map(|a| self.resolve(a)).collect(),
+            },
+            other => other.clone(),
+        }
+    }
+
+    /// Whether the action asks for `{{clipboard}}`, so the caller reads the
+    /// clipboard only when it is needed.
+    pub fn mentions_clipboard(action: &Action) -> bool {
+        fn mentions(text: &str) -> bool {
+            text.contains("{{clipboard}}")
+        }
+        match action {
+            Action::Run {
+                command,
+                args,
+                cwd,
+                env,
+                ..
+            } => {
+                mentions(command)
+                    || args.iter().any(|a| mentions(a))
+                    || cwd.as_deref().is_some_and(mentions)
+                    || env.values().any(|v| mentions(v))
+            }
+            Action::Open { target } => mentions(target),
+            Action::Notify { title, message } => {
+                mentions(message) || title.as_deref().is_some_and(mentions)
+            }
+            Action::TypeText { text } => mentions(text),
+            Action::Chain { actions } => actions.iter().any(Self::mentions_clipboard),
+            _ => false,
+        }
+    }
+}
+
 /// The application in the foreground, for per-app conditions and for
 /// actions that target the foreground window.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -335,6 +458,99 @@ mod tests {
             action: Action,
         }
         toml::from_str::<W>(s).map(|w| w.action)
+    }
+
+    #[test]
+    fn placeholders_are_filled_in() {
+        let ctx = ActionContext {
+            app: "chrome.exe".into(),
+            title: "Inbox — Chrome".into(),
+            profile: "work".into(),
+            date: "2026-10-25".into(),
+            time: "09:30".into(),
+            clipboard: Some("pasted".into()),
+        };
+        assert_eq!(
+            ctx.expand("{{app}} | {{title}} | {{profile}} | {{date}} {{time}} | {{clipboard}}"),
+            "chrome.exe | Inbox — Chrome | work | 2026-10-25 09:30 | pasted"
+        );
+        // Unknown names and a lone brace stay as they are: a literal `{{` in
+        // a command is harmless.
+        assert_eq!(
+            ctx.expand("{{nope}} {{ app }} {{"),
+            "{{nope}} chrome.exe {{"
+        );
+        // Without a clipboard the placeholder is empty, not literal.
+        let empty = ActionContext {
+            clipboard: None,
+            ..ctx.clone()
+        };
+        assert_eq!(empty.expand("[{{clipboard}}]"), "[]");
+
+        let run = Action::Run {
+            command: "git commit -m {{title}}".into(),
+            args: vec!["--author".into(), "{{app}}".into()],
+            hidden: false,
+            cwd: Some("C:/{{profile}}".into()),
+            shell: true,
+            env: [("WHO".to_string(), "{{app}}".to_string())].into(),
+            wait: false,
+            timeout_ms: 30_000,
+        };
+        let Action::Run {
+            command,
+            args,
+            cwd,
+            env,
+            ..
+        } = ctx.resolve(&run)
+        else {
+            panic!("still a run");
+        };
+        assert_eq!(command, "git commit -m Inbox — Chrome");
+        assert_eq!(args, ["--author", "chrome.exe"]);
+        assert_eq!(cwd.as_deref(), Some("C:/work"));
+        assert_eq!(env.get("WHO").map(String::as_str), Some("chrome.exe"));
+        // A chain is resolved item by item.
+        let chain = ctx.resolve(&Action::Chain {
+            actions: vec![
+                Action::Notify {
+                    title: None,
+                    message: "{{app}}".into(),
+                },
+                run.clone(),
+            ],
+        });
+        let Action::Chain { actions } = chain else {
+            panic!("still a chain");
+        };
+        assert_eq!(
+            actions[0],
+            Action::Notify {
+                title: None,
+                message: "chrome.exe".into()
+            }
+        );
+    }
+
+    #[test]
+    fn the_clipboard_is_only_read_when_asked_for() {
+        let plain = Action::Run {
+            command: "notepad".into(),
+            args: Vec::new(),
+            hidden: false,
+            cwd: None,
+            shell: false,
+            env: Default::default(),
+            wait: false,
+            timeout_ms: 30_000,
+        };
+        assert!(!ActionContext::mentions_clipboard(&plain));
+        assert!(ActionContext::mentions_clipboard(&Action::Chain {
+            actions: vec![Action::TypeText {
+                text: "{{clipboard}}".into()
+            }],
+        }));
     }
 
     #[test]

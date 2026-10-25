@@ -18,6 +18,19 @@ pub fn executor() -> Box<dyn ActionExecutor + Send> {
     }
 }
 
+/// The clipboard's text, for the `{{clipboard}}` placeholder. `None` when the
+/// platform cannot read it, so the action runs with an empty text.
+pub fn clipboard_text() -> Option<String> {
+    #[cfg(windows)]
+    {
+        windows::clipboard_text()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 /// The foreground-window information source of this platform.
 pub fn foreground() -> Box<dyn ForegroundInfo + Send> {
     #[cfg(windows)]

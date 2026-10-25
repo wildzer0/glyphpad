@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender, select};
-use glyphpad_core::action::{Action, ActionExecutor, AppInfo, ForegroundInfo};
+use glyphpad_core::action::{Action, ActionContext, ActionExecutor, AppInfo, ForegroundInfo};
 use glyphpad_core::config::{Config, Gesture};
 use glyphpad_core::dispatch::{Dispatched, Dispatcher};
 use glyphpad_core::engine::{Engine, Observation, Recognition, Spec};
@@ -672,7 +672,8 @@ impl Service {
                 {
                     Decision::Repeat(last) => {
                         tracing::info!("repeating \"{}\" → {}", last.gesture, last.action.kind());
-                        let _ = self.actions.send(last.action);
+                        let action = self.with_placeholders(&last.action, app.as_ref());
+                        let _ = self.actions.send(action);
                         true
                     }
                     Decision::Nothing => {
@@ -722,11 +723,36 @@ impl Service {
                 true
             }
             other => {
-                let _ = self.actions.send(other.clone());
+                let action = self.with_placeholders(other, app.as_ref());
+                let _ = self.actions.send(action);
                 self.repeater.record(g, app, Instant::now());
                 true
             }
         }
+    }
+
+    /// The values a placeholder in an action's text stands for (SPEC §9):
+    /// the window in front, the active profile, the date and the time.
+    fn action_context(&self, app: Option<&AppInfo>) -> ActionContext {
+        let now = jiff::Zoned::now();
+        ActionContext {
+            app: app.map(|a| a.exe.clone()).unwrap_or_default(),
+            title: app.map(|a| a.title.clone()).unwrap_or_default(),
+            profile: self.config.settings.active_profile.clone(),
+            date: now.strftime("%Y-%m-%d").to_string(),
+            time: now.strftime("%H:%M").to_string(),
+            clipboard: None,
+        }
+    }
+
+    /// `action` with its placeholders filled in. The clipboard is read only
+    /// when the action asks for it, since reading it can fail or block.
+    fn with_placeholders(&self, action: &Action, app: Option<&AppInfo>) -> Action {
+        let mut ctx = self.action_context(app);
+        if ActionContext::mentions_clipboard(action) {
+            ctx.clipboard = glyphpad_actions::clipboard_text();
+        }
+        ctx.resolve(action)
     }
 
     fn auto_pause_configured(&self) -> bool {

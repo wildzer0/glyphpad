@@ -14,12 +14,15 @@ use glyphpad_core::action::{
     ScreenshotMode, WindowOp,
 };
 use glyphpad_core::keys::{Key, KeyCombo};
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, HGLOBAL, HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO,
     MonitorFromWindow,
 };
+use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
@@ -600,6 +603,42 @@ fn quote_for_cmd(arg: &str) -> String {
     } else {
         arg.to_string()
     }
+}
+
+/// The clipboard's text, for the `{{clipboard}}` placeholder. `None` when the
+/// clipboard is empty, holds no text, or another program is holding it: an
+/// action with the placeholder must still run.
+pub fn clipboard_text() -> Option<String> {
+    // SAFETY: the clipboard is opened and closed within this call; the handle
+    // `GetClipboardData` returns belongs to the clipboard, not to us, so it is
+    // only locked for reading and never freed.
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return None;
+        }
+        let text = read_text_from_clipboard();
+        let _ = CloseClipboard();
+        text
+    }
+}
+
+/// Reads `CF_UNICODETEXT` while the clipboard is open.
+///
+/// SAFETY: called with the clipboard open on this thread; `GlobalLock`'s
+/// pointer is valid until the matching `GlobalUnlock`.
+unsafe fn read_text_from_clipboard() -> Option<String> {
+    let handle = unsafe { GetClipboardData(u32::from(CF_UNICODETEXT.0)) }.ok()?;
+    if handle.is_invalid() {
+        return None;
+    }
+    let memory = HGLOBAL(handle.0);
+    let ptr = unsafe { GlobalLock(memory) };
+    if ptr.is_null() {
+        return None;
+    }
+    let text = unsafe { PWSTR(ptr as *mut u16).to_string() }.ok();
+    let _ = unsafe { GlobalUnlock(memory) };
+    text
 }
 
 fn close_foreground(force: bool) -> Result<(), ActionError> {
