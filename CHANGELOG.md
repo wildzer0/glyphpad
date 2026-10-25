@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Mouse actions: `scroll` (wheel notches), `mouse_click` (left, right, middle, once or twice) and
+  `drag` (press, move by a few pixels, release).
 - A new gesture kind, `zone`: a tap inside a rectangle of the touchpad, in millimetres
   (`region = { x = [0, 25], y = [0, 20] }`). The corners become buttons you can hit without
   looking.

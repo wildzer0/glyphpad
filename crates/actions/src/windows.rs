@@ -10,7 +10,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use glyphpad_core::action::{
-    Action, ActionError, ActionExecutor, AppInfo, DesktopOp, ForegroundInfo, MediaKey,
+    Action, ActionError, ActionExecutor, AppInfo, DesktopOp, ForegroundInfo, MediaKey, MouseButton,
     ScreenshotMode, WindowOp,
 };
 use glyphpad_core::keys::{Key, KeyCombo};
@@ -40,8 +40,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
     HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, IsWindowVisible, IsZoomed, PostMessageW, SW_MAXIMIZE,
     SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, ShowWindowAsync, WINDOW_EX_STYLE,
-    WM_CLOSE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, ShowWindowAsync, WHEEL_DELTA,
+    WINDOW_EX_STYLE, WM_CLOSE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 use windows::core::{HSTRING, PWSTR, w};
 
@@ -126,6 +126,9 @@ impl ActionExecutor for WindowsExecutor {
                     key: Key::Letter('V'),
                 })
             }
+            Action::Scroll { amount } => scroll(*amount),
+            Action::MouseClick { button, double } => mouse_click(*button, *double),
+            Action::Drag { dx, dy } => drag(*dx, *dy),
             Action::Media { key } => send_combo(&KeyCombo {
                 modifiers: Vec::new(),
                 key: match key {
@@ -485,6 +488,76 @@ fn key_input(key: Key, up: bool) -> INPUT {
             },
         },
     }
+}
+
+/// Turns the wheel by `amount` notches, positive downwards: Windows counts a
+/// positive wheel as away from the user, so the sign flips here.
+fn scroll(amount: i32) -> Result<(), ActionError> {
+    let delta = -amount * WHEEL_DELTA as i32;
+    send_mouse(&[mouse_input(MOUSEEVENTF_WHEEL, 0, 0, delta)])
+}
+
+/// Clicks a button where the pointer is, once or twice.
+fn mouse_click(button: MouseButton, double: bool) -> Result<(), ActionError> {
+    let (down, up) = match button {
+        MouseButton::Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+        MouseButton::Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+        MouseButton::Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+    };
+    let mut inputs = vec![mouse_input(down, 0, 0, 0), mouse_input(up, 0, 0, 0)];
+    if double {
+        inputs.push(mouse_input(down, 0, 0, 0));
+        inputs.push(mouse_input(up, 0, 0, 0));
+    }
+    send_mouse(&inputs)
+}
+
+/// Presses the left button, moves the pointer by `dx`/`dy` pixels in a few
+/// steps and releases it: a selection, a drag and drop, a slider.
+fn drag(dx: i32, dy: i32) -> Result<(), ActionError> {
+    // Relative moves, so each step is the difference from the last: sending
+    // the whole offset twice would move twice as far.
+    const STEPS: i32 = 8;
+    let mut inputs = vec![mouse_input(MOUSEEVENTF_LEFTDOWN, 0, 0, 0)];
+    let mut sent = (0, 0);
+    for i in 1..=STEPS {
+        let target = (dx * i / STEPS, dy * i / STEPS);
+        let step = (target.0 - sent.0, target.1 - sent.1);
+        sent = target;
+        if step != (0, 0) {
+            inputs.push(mouse_input(MOUSEEVENTF_MOVE, step.0, step.1, 0));
+        }
+    }
+    inputs.push(mouse_input(MOUSEEVENTF_LEFTUP, 0, 0, 0));
+    send_mouse(&inputs)
+}
+
+/// One mouse event; `data` is the wheel delta, ignored by the other flags.
+fn mouse_input(flags: MOUSE_EVENT_FLAGS, dx: i32, dy: i32, data: i32) -> INPUT {
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: data as u32,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+/// Sends every event in one `SendInput` call, so no real input lands between
+/// a press and its release.
+fn send_mouse(inputs: &[INPUT]) -> Result<(), ActionError> {
+    // SAFETY: `inputs` is a valid slice of mouse INPUTs with the matching size.
+    let sent = unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        return Err("the system did not accept the mouse input".into());
+    }
+    Ok(())
 }
 
 /// Presses the modifiers, taps the key and releases the modifiers in

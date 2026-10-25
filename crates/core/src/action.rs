@@ -61,6 +61,24 @@ pub enum Action {
     Media {
         key: MediaKey,
     },
+    /// Turns the mouse wheel: positive scrolls down, one step per notch.
+    Scroll {
+        amount: i32,
+    },
+    /// Clicks a mouse button where the pointer is.
+    MouseClick {
+        #[serde(default)]
+        button: MouseButton,
+        /// Two clicks in quick succession (opens, renames a file, selects a word).
+        #[serde(default)]
+        double: bool,
+    },
+    /// Presses the left button, moves the pointer by `dx`/`dy` pixels and
+    /// releases it: a selection, a drag and drop, a slider.
+    Drag {
+        dx: i32,
+        dy: i32,
+    },
     /// Runs actions in order; use `wait` items for delays.
     Chain {
         actions: Vec<Action>,
@@ -150,6 +168,15 @@ pub enum ScreenshotMode {
     Screen,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseButton {
+    #[default]
+    Left,
+    Right,
+    Middle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaKey {
@@ -179,6 +206,9 @@ impl Action {
             Action::Run { .. } => "run",
             Action::FocusOrLaunch { .. } => "focus_or_launch",
             Action::Media { .. } => "media",
+            Action::Scroll { .. } => "scroll",
+            Action::MouseClick { .. } => "mouse_click",
+            Action::Drag { .. } => "drag",
             Action::Chain { .. } => "chain",
             Action::Wait { .. } => "wait",
             Action::Notify { .. } => "notify",
@@ -210,6 +240,9 @@ impl Action {
             "run" => "Run program",
             "focus_or_launch" => "Open or focus a program",
             "media" => "Media key",
+            "scroll" => "Scroll",
+            "mouse_click" => "Mouse click",
+            "drag" => "Drag",
             "chain" => "Several actions",
             "notify" => "Message",
             "toggle_enabled" => "Pause / resume",
@@ -289,6 +322,24 @@ impl Action {
                 }
                 if text.chars().count() > 100_000 {
                     return Err("`copy` and `paste_text` take at most 100000 characters".into());
+                }
+                Ok(())
+            }
+            Action::Scroll { amount } => {
+                if *amount == 0 {
+                    return Err("`scroll` needs a non-zero `amount`".into());
+                }
+                if amount.abs() > 100 {
+                    return Err("`scroll` turns at most 100 notches at a time".into());
+                }
+                Ok(())
+            }
+            Action::Drag { dx, dy } => {
+                if *dx == 0 && *dy == 0 {
+                    return Err("`drag` needs a `dx` or a `dy`".into());
+                }
+                if dx.abs() > 4000 || dy.abs() > 4000 {
+                    return Err("`drag` moves at most 4000 pixels at a time".into());
                 }
                 Ok(())
             }
@@ -511,6 +562,59 @@ mod tests {
             action: Action,
         }
         toml::from_str::<W>(s).map(|w| w.action)
+    }
+
+    #[test]
+    fn mouse_actions_are_validated() {
+        assert!(
+            parse(r#"action = { type = "scroll", amount = 3 }"#)
+                .unwrap()
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            parse(r#"action = { type = "scroll", amount = 0 }"#)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        assert!(
+            parse(r#"action = { type = "scroll", amount = 500 }"#)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        let click = parse(r#"action = { type = "mouse_click", button = "middle", double = true }"#)
+            .unwrap();
+        assert_eq!(click.kind(), "mouse_click");
+        assert!(click.validate().is_ok());
+        // The default button is the left one.
+        assert!(matches!(
+            parse(r#"action = { type = "mouse_click" }"#).unwrap(),
+            Action::MouseClick {
+                button: MouseButton::Left,
+                double: false
+            }
+        ));
+        assert!(
+            parse(r#"action = { type = "drag", dx = 0, dy = 0 }"#)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        assert!(
+            parse(r#"action = { type = "drag", dx = 10, dy = -200 }"#)
+                .unwrap()
+                .validate()
+                .is_ok()
+        );
+        // A chain may use them.
+        let chain = parse(
+            r#"action = { type = "chain", actions = [
+                { type = "scroll", amount = 3 }, { type = "mouse_click" } ] }"#,
+        )
+        .unwrap();
+        assert!(chain.validate().is_ok());
     }
 
     #[test]

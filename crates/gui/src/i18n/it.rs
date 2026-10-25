@@ -334,6 +334,23 @@ pub const TABLE: &[(&str, &str)] = &[
         "The part of the touchpad, in millimetres from its top-left corner.",
         "La parte del touchpad, in millimetri dall'angolo in alto a sinistra.",
     ),
+    ("Turn the mouse wheel", "Gira la rotella del mouse"),
+    ("Click a mouse button", "Clicca un pulsante del mouse"),
+    ("Drag the pointer", "Trascina il puntatore"),
+    ("Scroll", "Scorri"),
+    ("Mouse click", "Clic del mouse"),
+    ("Notches", "Tacche"),
+    (
+        "Positive scrolls down; negative up.",
+        "Positivo scorre in basso, negativo in alto.",
+    ),
+    ("Button", "Pulsante"),
+    ("Twice, quickly", "Due volte, di fila"),
+    ("Move the pointer", "Sposta il puntatore"),
+    (
+        "Pixels; negative goes left and up.",
+        "Pixel; negativo va a sinistra e in alto.",
+    ),
     ("Minimum distance", "Distanza minima"),
     (
         "How far the fingers must travel for this gesture.",

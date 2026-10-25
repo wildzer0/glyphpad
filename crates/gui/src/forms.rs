@@ -636,6 +636,9 @@ const ACTIONS: &[(&str, &str, &str)] = &[
         "Open a program, or focus it if it is open",
     ),
     ("media", icons::PLAY_PAUSE, "Media key"),
+    ("scroll", icons::ARROW_DOWN, "Turn the mouse wheel"),
+    ("mouse_click", icons::CURSOR_CLICK, "Click a mouse button"),
+    ("drag", icons::HAND_SWIPE_RIGHT, "Drag the pointer"),
     ("chain", icons::STACK, "Several actions in a row"),
     ("notify", icons::BELL, "Show a message"),
     ("toggle_enabled", icons::POWER, "Pause / resume gestures"),
@@ -725,6 +728,12 @@ fn default_action(kind: &str) -> Action {
         "media" => Action::Media {
             key: MediaKey::PlayPause,
         },
+        "scroll" => Action::Scroll { amount: 3 },
+        "mouse_click" => Action::MouseClick {
+            button: glyphpad_core::action::MouseButton::Right,
+            double: false,
+        },
+        "drag" => Action::Drag { dx: 0, dy: -300 },
         "chain" => Action::Chain {
             actions: vec![Action::Keys {
                 combo: Some("Ctrl+C".parse().expect("valid")),
@@ -1136,6 +1145,49 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
             w::hint(
                 ui,
                 "If a window of that program is open it is brought to the front, otherwise the command runs.",
+            );
+        }
+        Action::Scroll { amount } => {
+            w::row(ui, "Notches", "Positive scrolls down; negative up.", |ui| {
+                ui.add(egui::DragValue::new(amount).range(-100..=100));
+            });
+        }
+        Action::MouseClick { button, double } => {
+            let mut b = *button;
+            w::row(ui, "Button", "", |ui| {
+                w::dropdown(
+                    ui,
+                    id.with("mouse-button"),
+                    &mut b,
+                    &[
+                        (glyphpad_core::action::MouseButton::Left, "Left".into()),
+                        (glyphpad_core::action::MouseButton::Right, "Right".into()),
+                        (glyphpad_core::action::MouseButton::Middle, "Middle".into()),
+                    ],
+                    160.0,
+                );
+                *button = b;
+            });
+            w::row(ui, "", "", |ui| {
+                ui.horizontal(|ui| {
+                    w::switch(ui, double);
+                    ui.label(crate::i18n::tr("Twice, quickly"));
+                });
+            });
+        }
+        Action::Drag { dx, dy } => {
+            w::row(
+                ui,
+                "Move the pointer",
+                "Pixels; negative goes left and up.",
+                |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(w::dim(ui, "x"));
+                        ui.add(egui::DragValue::new(dx).range(-4000..=4000));
+                        ui.label(w::dim(ui, "y"));
+                        ui.add(egui::DragValue::new(dy).range(-4000..=4000));
+                    });
+                },
             );
         }
         Action::Media { key } => {
