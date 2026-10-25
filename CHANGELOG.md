@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A sequence that starts with a `hold` no longer fails when the fingers rest on after the hold
+  fires: its `within_ms` counts from the lift, when the step's touch ends, instead of from the
+  moment the hold was recognized.
+
 ### Added
 - A sequence that does not complete now says why in the log ("no next step began within its
   `within_ms`", or "the next gesture was not its next step") and names the sequence, instead of

@@ -24,14 +24,33 @@ pub struct Dispatched {
 
 #[derive(Debug)]
 struct Pending {
-    /// Sequences still possible, by gesture index, each with the latest start
-    /// of its next step (its own `within_ms`, not the longest one).
+    /// Sequences still possible, by gesture index, each with its own
+    /// `within_ms` in microseconds.
     candidates: Vec<(usize, u64)>,
     /// Index of the step each candidate expects next.
     next_step: usize,
-    /// Latest start of the next step over all candidates, for the timeout.
-    step_deadline_us: u64,
+    /// End of the step that started the sequence: the lift of its own touch,
+    /// which for a hold comes well after it fired.
+    step_end_us: u64,
     held: Vec<(Recognition, Option<AppInfo>)>,
+}
+
+impl Pending {
+    /// Latest start of the next step, given one candidate's window.
+    fn deadline_of(&self, within_us: u64) -> u64 {
+        self.step_end_us + within_us
+    }
+
+    /// Latest start of the next step over all candidates, for the timeout.
+    fn latest(&self) -> u64 {
+        self.step_end_us
+            + self
+                .candidates
+                .iter()
+                .map(|&(_, within_us)| within_us)
+                .max()
+                .unwrap_or(0)
+    }
 }
 
 /// A touch that began in time is waited for at most this long: a gesture is
@@ -59,21 +78,11 @@ fn is_diagnostic(o: &Observation) -> bool {
     )
 }
 
-/// Latest start of the next step of gesture `index` after the previous one
-/// ended at `ended_us`. The pause between the steps is what `within_ms`
-/// limits, not the time the next step itself takes.
-fn step_deadline(config: &Config, index: usize, ended_us: u64) -> u64 {
-    ended_us + config.gestures[index].within_ms * 1000
-}
-
-/// The same deadline, with the gesture index, for one candidate.
-fn candidate_deadline(config: &Config, index: usize, ended_us: u64) -> (usize, u64) {
-    (index, step_deadline(config, index, ended_us))
-}
-
-/// Latest start over every candidate, for the overall timeout.
-fn longest(candidates: &[(usize, u64)]) -> u64 {
-    candidates.iter().map(|&(_, d)| d).max().unwrap_or(0)
+/// The pause a sequence allows between one step ending and the next
+/// starting: what `within_ms` limits, not the time the next step itself
+/// takes.
+fn within_us(config: &Config, index: usize) -> u64 {
+    config.gestures[index].within_ms * 1000
 }
 
 /// The candidates' names, quoted, for a log line.
@@ -125,20 +134,32 @@ impl Dispatcher {
         self.busy_since = None;
     }
 
-    /// Tells where the engine is: `busy_since` is the start of the touch or
-    /// drawing in progress. A step that began in time is waited for until it
-    /// has been recognized, however long that takes (a swipe drawn as a
-    /// stroke only after the stroke gap). Call after every engine step.
-    pub fn observe(&mut self, busy_since: Option<u64>) {
+    /// Tells where the engine is at `now_us`: `busy_since` is the start of
+    /// the touch or drawing in progress. A step that began in time is waited
+    /// for until it has been recognized, however long that takes (a swipe
+    /// drawn as a stroke only after the stroke gap). Call after every engine
+    /// step.
+    ///
+    /// The step's own touch may still be down after the step was recognized:
+    /// a hold fires at `hold_duration_ms` while the fingers rest, and stays
+    /// the same touch until they lift. A step is over when its touch is, so
+    /// its window starts at the lift, however long the fingers rested.
+    pub fn observe(&mut self, busy_since: Option<u64>, now_us: u64) {
         self.busy_since = busy_since;
+        if let Some(p) = &mut self.pending
+            && busy_since.is_some_and(|b| b <= p.step_end_us)
+        {
+            p.step_end_us = p.step_end_us.max(now_us);
+        }
     }
 
     /// When the held gestures fire after all.
     pub fn deadline(&self) -> Option<u64> {
         let p = self.pending.as_ref()?;
+        let latest = p.latest();
         Some(match self.busy_since {
-            Some(b) if b <= p.step_deadline_us => p.step_deadline_us.max(b + ENGAGED_MAX_US),
-            _ => p.step_deadline_us,
+            Some(b) if b <= latest => latest.max(b + ENGAGED_MAX_US),
+            _ => latest,
         })
     }
 
@@ -209,7 +230,9 @@ impl Dispatcher {
                 .candidates
                 .iter()
                 .copied()
-                .filter(|&(i, deadline)| matches_step(i, p.next_step) && r.started_us <= deadline)
+                .filter(|&(i, within_us)| {
+                    matches_step(i, p.next_step) && r.started_us <= p.deadline_of(within_us)
+                })
                 .collect();
             if !advanced.is_empty() {
                 // Candidates are in priority order, so the first complete one wins.
@@ -231,18 +254,15 @@ impl Dispatcher {
                     return out;
                 }
                 p.next_step += 1;
+                p.candidates = advanced;
+                p.step_end_us = r.ended_us;
                 tracing::debug!(
                     "sequence {}: step {} done, waiting for step {} within {} ms",
-                    names(config, &advanced),
+                    names(config, &p.candidates),
                     p.next_step,
                     p.next_step + 1,
-                    longest(&advanced).saturating_sub(r.ended_us) / 1000
+                    p.latest().saturating_sub(r.ended_us) / 1000
                 );
-                p.candidates = advanced
-                    .iter()
-                    .map(|&(i, _)| candidate_deadline(config, i, r.ended_us))
-                    .collect();
-                p.step_deadline_us = longest(&p.candidates);
                 p.held.push((r, app));
                 return out;
             }
@@ -260,7 +280,7 @@ impl Dispatcher {
                     && !g.steps.is_empty()
                     && matches_step(*i, 0)
             })
-            .map(|(i, _)| candidate_deadline(config, i, r.ended_us))
+            .map(|(i, _)| (i, within_us(config, i)))
             .collect();
         if starts.is_empty() {
             let gesture = index_of(config, &r.observation, app.as_ref());
@@ -279,17 +299,18 @@ impl Dispatcher {
                 app,
             });
         } else {
-            tracing::debug!(
-                "sequence {}: step 1 done, waiting for step 2 within {} ms",
-                names(config, &starts),
-                longest(&starts).saturating_sub(r.ended_us) / 1000
-            );
-            self.pending = Some(Pending {
-                step_deadline_us: longest(&starts),
+            let pending = Pending {
                 candidates: starts,
                 next_step: 1,
+                step_end_us: r.ended_us,
                 held: vec![(r, app)],
-            });
+            };
+            tracing::debug!(
+                "sequence {}: step 1 done, waiting for step 2 within {} ms",
+                names(config, &pending.candidates),
+                pending.latest().saturating_sub(pending.step_end_us) / 1000
+            );
+            self.pending = Some(pending);
         }
         out
     }
@@ -315,23 +336,27 @@ pub fn run_all<'a>(
             .flatten()
             .min()
     };
+    // The latest frame time: what the dispatcher needs to know the step's own
+    // touch is still down after a hold fired.
+    let mut now_us = 0;
     for event in events {
         if let DeviceEvent::Frame { frame, .. } = event {
-            while let Some(t) = next(engine, &dispatcher).filter(|&t| t <= frame.timestamp_us) {
+            now_us = frame.timestamp_us;
+            while let Some(t) = next(engine, &dispatcher).filter(|&t| t <= now_us) {
                 let rs = engine.tick(t);
                 feed(rs, &mut dispatcher, &mut out);
-                dispatcher.observe(engine.busy_since());
+                dispatcher.observe(engine.busy_since(), t);
                 out.extend(dispatcher.tick(config, t));
             }
         }
         let rs = engine.on_event(event);
         feed(rs, &mut dispatcher, &mut out);
-        dispatcher.observe(engine.busy_since());
+        dispatcher.observe(engine.busy_since(), now_us);
     }
     while let Some(t) = next(engine, &dispatcher) {
         let rs = engine.tick(t);
         feed(rs, &mut dispatcher, &mut out);
-        dispatcher.observe(engine.busy_since());
+        dispatcher.observe(engine.busy_since(), t);
         out.extend(dispatcher.tick(config, t));
     }
     out
@@ -443,14 +468,14 @@ action = { type = "minimize" }
         d.on_recognition(&c, rec(tap(), 100), None);
         // The fingers touched down in time: nothing fires while it lasts,
         // not even when the pause is over.
-        d.observe(Some(500_000));
+        d.observe(Some(500_000), 500_000);
         assert!(d.tick(&c, 700_000).is_empty());
         assert!(d.tick(&c, 3_000_000).is_empty());
         let out = d.on_recognition(&c, span(up(), 500, 1_300), None);
         assert_eq!(names(&c, &out), ["tap-then-up"]);
         // A touch left resting is not waited for forever.
         d.on_recognition(&c, rec(tap(), 2_000), None);
-        d.observe(Some(2_200_000));
+        d.observe(Some(2_200_000), 2_200_000);
         assert!(d.tick(&c, 6_000_000).is_empty());
         assert_eq!(names(&c, &d.tick(&c, 7_200_000)), ["tap3"]);
     }
@@ -460,7 +485,7 @@ action = { type = "minimize" }
         let c = config();
         let mut d = Dispatcher::default();
         d.on_recognition(&c, rec(tap(), 100), None);
-        d.observe(Some(800_000));
+        d.observe(Some(800_000), 800_000);
         assert_eq!(names(&c, &d.tick(&c, 600_000)), ["tap3"]);
     }
 
@@ -500,6 +525,44 @@ action = { type = "minimize" }
         assert!(hint.contains("swipe up with 3 fingers"), "{hint}");
         // A finger count the configuration never uses has nothing to suggest.
         assert_eq!(near_miss(&c, &Observation::Hold { fingers: 5 }), None);
+    }
+
+    #[test]
+    fn a_hold_leaves_its_window_running_until_its_fingers_lift() {
+        let c = parse(
+            r#"
+[[gesture]]
+name = "hold-then-up"
+type = "sequence"
+steps = [{ type = "hold", fingers = 3 }, { type = "swipe", fingers = 3, direction = "up" }]
+within_ms = 500
+action = { type = "minimize" }
+"#,
+        )
+        .unwrap()
+        .config;
+        let mut d = Dispatcher::default();
+        // A hold fires 600 ms after touch-down; the fingers rest on for
+        // another 900 ms, and only then does the next step begin.
+        assert!(
+            d.on_recognition(&c, rec(Observation::Hold { fingers: 3 }, 600), None)
+                .is_empty(),
+            "the hold starts the sequence"
+        );
+        for now_ms in [700, 900, 1_100, 1_300, 1_500] {
+            // The touch that began at 0 is the hold's own: still down.
+            d.observe(Some(0), now_ms * 1000);
+            assert!(
+                d.tick(&c, now_ms * 1000).is_empty(),
+                "the fingers are still down at {now_ms} ms"
+            );
+        }
+        // They lift: the window starts here, so a step 400 ms later is in
+        // time although it is 1.3 s after the hold fired.
+        d.observe(None, 1_500_000);
+        assert!(d.tick(&c, 1_900_000).is_empty());
+        let out = d.on_recognition(&c, span(up(), 1_900, 2_100), None);
+        assert_eq!(names(&c, &out), ["hold-then-up"]);
     }
 
     #[test]

@@ -359,10 +359,11 @@ impl Service {
             for r in recognitions {
                 self.on_recognition(r);
             }
-            self.dispatcher.observe(self.engine.busy_since());
+            let now = self.now_us();
+            self.dispatcher.observe(self.engine.busy_since(), now);
             self.sync_trail();
             let config = self.config.clone();
-            for d in self.dispatcher.tick(&config, self.now_us()) {
+            for d in self.dispatcher.tick(&config, now) {
                 self.on_dispatched(d);
             }
         }

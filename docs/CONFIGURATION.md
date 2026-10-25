@@ -196,6 +196,9 @@ closer than `stroke_gap_ms` to the previous one still belongs to the same symbol
 that matches no configured symbol is judged stroke by stroke, which is what makes two quick
 swipes a sequence.
 
+A step is over when its touch is: a `hold` is recognized `hold_duration_ms` into the touch, but its
+window starts when the fingers lift, so how long they rest on afterwards does not matter.
+
 When a sequence does not fire, the log says which of the two it was: `sequence "name" not
 completed: no next step began within its within_ms` (too slow — raise `within_ms` or do it faster)
 or `... the next gesture was not its next step` (the pad saw something else: check the steps with

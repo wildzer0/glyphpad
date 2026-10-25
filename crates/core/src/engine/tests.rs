@@ -1101,6 +1101,32 @@ fn drawn_steps_closer_than_the_stroke_gap_are_still_two_gestures() {
     }
 }
 
+const HOLD_SEQUENCE: &str = r#"
+[settings]
+draw_activation = { mode = "fingers", count = 3 }
+
+[[gesture]]
+name = "hold-then-down"
+type = "sequence"
+steps = [{ type = "hold", fingers = 3 }, { type = "swipe", fingers = 3, direction = "down" }]
+within_ms = 600
+action = { type = "notify", message = "seq" }
+"#;
+
+#[test]
+fn a_hold_step_starts_its_window_when_the_fingers_lift() {
+    // The hold fires 600 ms into a two-second rest, so measuring the pause
+    // from the recognition would put the next step 1.7 s late: it counts
+    // from the lift, when the hold's gesture is actually over.
+    let config = crate::config::parse(HOLD_SEQUENCE).unwrap().config;
+    let mut pad = Pad::new();
+    pad.stroke(3, (40.0, 40.0), (0.0, 0.0), 2_000);
+    pad.wait_ms(300);
+    pad.stroke(3, (40.0, 60.0), (0.0, 40.0), 200);
+    let names = dispatched_names(&config, &pad);
+    assert!(names.iter().any(|n| n == "hold-then-down"), "{names:?}");
+}
+
 #[test]
 fn a_pause_longer_than_the_window_leaves_two_gestures() {
     let config = crate::config::parse(TWO_SWIPES).unwrap().config;

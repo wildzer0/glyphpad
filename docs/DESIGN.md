@@ -524,7 +524,9 @@ Consequences and details:
   starting with one) is **delayed by `within_ms`**, like a single tap waiting for a double tap.
 - Candidates are in priority order; the first complete sequence wins. Each keeps its own
   `within_ms`, so a sequence with a short window that shares its first step with a longer one is
-  not kept alive by that one.
+  not kept alive by that one. The window runs from the end of the step, which for a `hold` is the
+  lift of its fingers, not the moment the hold fired: `Dispatcher::observe` pushes the reference
+  forward while the step's own touch is still down.
 - Diagnostic recognitions neither advance nor break a sequence (they come right before the fallback
   swipe of the same stroke).
 - Steps match with the same `specificity` as plain gestures; a `profile`/`when` of the sequence
