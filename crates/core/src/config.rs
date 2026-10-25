@@ -680,6 +680,24 @@ pub struct Loaded {
     pub warnings: Vec<Diagnostic>,
 }
 
+/// Line of a `key = …` entry of `[settings]`, for diagnostics: settings are
+/// deserialized as one table, which loses the position of each value.
+fn settings_line(text: &str, key: &str) -> Option<usize> {
+    let mut inside = false;
+    for (i, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            inside = trimmed.starts_with("[settings]") || trimmed.starts_with("[settings.");
+            continue;
+        }
+        if inside && trimmed.starts_with(key) && trimmed[key.len()..].trim_start().starts_with('=')
+        {
+            return Some(i + 1);
+        }
+    }
+    None
+}
+
 /// 1-based line and column of a byte offset.
 fn position(text: &str, offset: usize) -> (usize, usize) {
     let before = &text[..offset.min(text.len())];
@@ -779,9 +797,10 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
         ),
     ] {
         if !ok {
+            let line = settings_line(text, name.split(' ').next().unwrap_or(name));
             err(
                 &mut errors,
-                None,
+                line,
                 format!("settings → {name}"),
                 "value out of range".into(),
             );
@@ -791,16 +810,17 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
         if rule.profile.trim().is_empty() || rule.app.to_vec().iter().all(|a| a.trim().is_empty()) {
             err(
                 &mut errors,
-                None,
+                settings_line(text, "profile_rules"),
                 format!("settings → profile_rules → item {}", i + 1),
                 "needs an `app` and a `profile`".into(),
             );
         }
     }
+    let draw_line = settings_line(text, "draw_activation");
     match s.draw_activation {
         DrawActivation::Fingers { count } if !(1..=crate::MAX_CONTACTS as u8).contains(&count) => err(
             &mut errors,
-            None,
+            draw_line,
             "settings → draw_activation → count".into(),
             format!("must be between 1 and {}", crate::MAX_CONTACTS),
         ),
@@ -812,19 +832,19 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
         }),
         DrawActivation::Edge { zone_percent, .. } if !(1.0..=50.0).contains(&zone_percent) => err(
             &mut errors,
-            None,
+            draw_line,
             "settings → draw_activation → zone_percent".into(),
             "must be between 1 and 50".into(),
         ),
         DrawActivation::Hold { ms, .. } if !(100..=5_000).contains(&ms) => err(
             &mut errors,
-            None,
+            draw_line,
             "settings → draw_activation → ms".into(),
             "must be between 100 and 5000".into(),
         ),
         DrawActivation::Toggle { timeout_ms, .. } if !(500..=60_000).contains(&timeout_ms) => err(
             &mut errors,
-            None,
+            draw_line,
             "settings → draw_activation → timeout_ms".into(),
             "must be between 500 and 60000".into(),
         ),
@@ -1203,6 +1223,25 @@ action = { type = "lock_screen" }
         assert!(
             e.iter()
                 .any(|e| e.contains("\"b\" → steps: a sequence has 2 to 4 steps")),
+            "{e:?}"
+        );
+    }
+
+    #[test]
+    fn settings_errors_name_their_line() {
+        let e = errors("[settings]\ntap_max_duration_ms = 0\nstart_minimized = false\n");
+        assert_eq!(
+            e,
+            ["line 2: settings → tap_max_duration_ms: value out of range"]
+        );
+        let e = errors("[settings]\ndraw_activation = { mode = \"fingers\", count = 99 }\n");
+        assert!(
+            e[0].starts_with("line 2: settings → draw_activation"),
+            "{e:?}"
+        );
+        let e = errors("[settings]\nprofile_rules = [{ app = \"\", profile = \"x\" }]\n");
+        assert!(
+            e[0].starts_with("line 2: settings → profile_rules"),
             "{e:?}"
         );
     }
