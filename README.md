@@ -23,11 +23,12 @@ define, and runs the action you chose.
   changes saved as you make them. The file `glyphpad.toml` stays the source of truth if you
   prefer editing text.
 - **Portable and light**: one executable, no installer, no administrator rights, nothing
-  running when idle but the engine. No telemetry: the only network access is the optional
-  update check on this project's GitHub releases.
+  running when idle but the engine. In portable mode it keeps a rotated log next to itself.
+  No telemetry: the only network access is the optional update check on this project's GitHub
+  releases.
 
-> **Status: alpha, Windows only for now.** Linux support is planned. The specification is
-> in [`docs/SPEC.md`](docs/SPEC.md).
+> **Status: 1.0, Windows only for now.** Linux support (touch input, actions and tray) is the
+> one milestone left. The specification is in [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Requirements
 

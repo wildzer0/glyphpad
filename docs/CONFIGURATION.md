@@ -74,6 +74,10 @@ are what they are, see the comments in `crates/core/src/config.rs`.
 | `default_confidence` | `0.80` (0–1) | Minimum score of a symbol when the gesture sets no `confidence` |
 | `rotation_tolerance_deg` | `0.0` (0–180) | How far a symbol may be turned and still match; 0 = orientation matters |
 
+A positive `rotation_tolerance_deg` costs time: the recognizer tries the trace at a few coarse
+angles and refines the best one in 5° steps, which takes about 12 ms at 10° and 40 ms at 180°
+instead of 3 ms with orientation fixed.
+
 `draw_activation` is an inline table with a `mode`:
 
 ```toml
@@ -184,6 +188,14 @@ action = { type = "lock_screen" }   # required
 | `click` | **`fingers`**, `direction` (makes it click-and-drag) |
 | `symbol` | **`symbol`** a name or a list (`["q", "X"]`), `confidence` 0–1 |
 | `sequence` | **`steps`** 2–4 tables each with a `type` and its fields, `within_ms` (default 800, 100–5000) |
+
+`within_ms` is the longest pause between the end of one step and the *start* of the next, not the
+time the next step takes. Steps drawn with the drawing finger count (a three-finger swipe, say)
+are recognized `stroke_gap_ms` after the fingers lift; that delay does not count, but a step drawn
+closer than `stroke_gap_ms` to the previous one still belongs to the same symbol, so a drawing
+that matches no configured symbol is judged stroke by stroke, which is what makes two quick
+swipes a sequence.
+
 
 `direction` is `up`, `down`, `left`, `right`, `up_left`, `up_right`, `down_left` or `down_right`.
 `modifier_fingers` (1–3) makes the gesture a **chord**: that many other fingers must rest on the
@@ -309,6 +321,7 @@ All next to `glyphpad.toml`:
 | `backups/glyphpad-YYYYMMDD-HHMMSS-NNN.toml` | Earlier versions of the configuration |
 | `history.jsonl` | The recognition history, if `save_history` is on |
 | `stats.json` | Usage counters, if `statistics` is on |
+| `glyphpad.log` (+ `glyphpad.log.1`) | The log, in portable mode only; rotated at 1 MB |
 | `update-state.json` | When updates were last checked, the ETag, the ignored version |
 
 Next to `glyphpad.exe`, only while updating: `glyphpad.old.exe` (the previous version, removed on

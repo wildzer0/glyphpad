@@ -18,6 +18,9 @@ hold_duration_ms = 600
 hold_max_movement_mm = 4.0
 swipe_min_distance_mm = 18.0
 swipe_min_speed_mm_s = 60.0
+pinch_min_mm = 8.0
+rotate_min_deg = 25.0
+edge_zone_percent = 6.0      # depth of the border zone for edge swipes, in % of the pad
 
 # Drawn symbols. Windows keeps moving the pointer while you touch the
 # touchpad, so symbols are drawn in a way it ignores:

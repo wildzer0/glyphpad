@@ -32,7 +32,9 @@ Dependency direction: `app` → `gui`, `updater`, `actions`, `platform` → `cor
   `#[allow(unsafe_code)]`.
 - The Windows MSVC build statically links the CRT (`.cargo/config.toml`).
 - Release profile: fat LTO, one codegen unit, stripped symbols, `panic = "unwind"`
-  so a panicking backend thread can be caught and restarted.
+  so a panicking backend thread can be caught: the engine thread reports the failure in
+  the window instead of leaving a program that silently does nothing. Window procedures
+  catch their own panics; the touch-source thread is not restarted.
 
 ## Touch input pipeline (Windows)
 
@@ -77,10 +79,16 @@ action on a separate thread.
   the event channel until the next deadline, so it uses no CPU while idle;
   `Engine::process_all` does the same deterministically for captures.
 
-Disambiguation: a session with a physical click produces nothing (click +
-gesture comes in M5); a hold consumes its session; taps and swipes exclude
-each other by their thresholds; among matching gestures the first in the
-file wins.
+Disambiguation: a session with a physical click produces a click gesture (or a
+click-and-drag) and nothing else; a hold consumes its session; a chord voids the
+session's own tap or swipe; taps and swipes exclude each other by their thresholds;
+among matching gestures the first in the file wins. A tap waits for a possible next
+tap only when a gesture with more taps is configured, and is confirmed at once as
+soon as the next touch can no longer be one.
+
+Every recognition carries the times of its own movement — touch-down and lift, taken by
+the recognizer that produced it — so a tap confirmed late, or a stroke judged after a
+drawing, keeps its real times. Sequences use these, never the moment of recognition.
 
 ## Symbols and draw mode
 
@@ -93,7 +101,9 @@ file wins.
 - Scores are `1 − rms / 0.4`, where `rms` is the matched points' RMS distance
   as a fraction of the symbol's size; see `symbols::ZERO_SCORE_RMS` for the
   calibration on real captures. One recognition against the 63 built-in
-  templates takes about 2.5 ms in a release build.
+  templates takes about 2.5 ms in a release build. A rotation tolerance costs
+  proportionally: the trace is tried at coarse angles and the best one refined in
+  5° steps, about 12 ms at 10° and 40 ms at 180°.
 - `core::symbols::templates`: `templates.json` next to the configuration
   holds the user's samples, with the time of every point. A symbol's
   recorded samples are added to its built-in ones (a symbol can be set to ignore them). Built-in shapes come in seven
@@ -101,7 +111,8 @@ file wins.
 - `core::engine::draw`: decides which sessions are strokes, per draw mode,
   collects strokes until `stroke_gap_ms` passes, then recognizes. A symbol
   is accepted only if a configured gesture uses it and its score reaches that
-  gesture's confidence; otherwise a single stroke is judged as a tap or swipe.
+  gesture's confidence; otherwise the drawing is judged stroke by stroke as a tap
+  or swipe, which is what lets a sequence of drawn gestures work at any pace.
   Because of this wait, gestures made with the drawing finger count (e.g.
   three-finger swipes) fire `stroke_gap_ms` later than others.
 
@@ -109,7 +120,8 @@ file wins.
 
 `core::trigger` turns a gesture's fields into a validated `Trigger` (also
 used for each step of a sequence) and scores how specifically it matches an
-observation. `core::dispatch::Dispatcher` sits between the engine and the
+observation. Each candidate sequence keeps its own `within_ms` while the
+dispatcher waits for the next step. `core::dispatch::Dispatcher` sits between the engine and the
 actions: plain recognitions resolve to the most specific matching gesture
 (priority order breaks ties); a recognition that starts a sequence is held
 until the next step starts, and either the sequence completes and fires
@@ -234,6 +246,14 @@ single-instance (message-only window)
 - **Notifications** are shown in GlyphPad's own overlay rather than as
   Windows toasts, which need an app identity that a portable program without
   installer does not have.
+- **Logging.** The log goes to the terminal and, in portable mode, to a rotated
+  `glyphpad.log` next to the configuration. A program started from Explorer has no
+  terminal: that file is the only record.
+- **Several touchpads.** Every Precision Touchpad is read at once (an external pad
+  and the laptop's, say) and the engine keeps a session per device, but the window
+  shows the last device that reported and the thresholds come from one pad's size.
+- **An engine that panics is not restarted.** It reports the failure in the window;
+  the gestures stop until GlyphPad is started again.
 - **Overlay scaling.** The overlay is drawn with GDI and is not DPI-aware, so
   Windows scales it on high-DPI screens (slightly blurry).
 - **Binary size.** With the window and tray the release binary is about

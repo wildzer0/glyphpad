@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Portable mode keeps a rotated log (`glyphpad.log`, one previous copy) next to the configuration.
+- The window says so when the gesture engine stops after an internal error, instead of leaving a
+  program that silently does nothing.
+
+### Changed
+- **Sequences of drawn steps work at any pace.** A step drawn with the drawing finger count (a
+  three-finger swipe, say) less than `stroke_gap_ms` after the previous one used to merge into a
+  single drawing that matched no symbol, so *nothing at all* happened; two quick three-finger
+  swipes now run the sequence. A drawing that matches no symbol is judged one stroke at a time.
+- A tap waiting for a possible second tap is confirmed as soon as the next touch cannot be one,
+  instead of when that touch ends: a tap followed by pointer movement no longer runs its action
+  seconds later, and sequences that start with a tap no longer extend past `within_ms`.
+- Every recognition carries the times of its own movement, so `within_ms` means the same thing
+  whether or not a multi-tap gesture is configured, and each candidate sequence keeps its own
+  window.
+- Rotation tolerance is searched coarse-to-fine: about 26 ms at 45° and 40 ms at 180° (was 47 and
+  152 ms), inside the 50 ms budget.
+- `glyphpad capture` keeps a running summary instead of every frame, so a long recording no longer
+  grows in memory or rescans itself every second.
+- Conflict detection in the window waits for the draft to settle and hashes only what it looks at,
+  instead of formatting the whole draft on every frame.
+- A pack import writes a symbol's examples once, and a new gesture's configuration is written
+  before its examples, so a failed save leaves no orphan templates.
+- Hiding the window while the recording wizard runs ends the recording, instead of leaving the
+  gestures paused for good.
+- Renaming or deleting a profile updates the profiles rules that use it.
+- The update readiness marker is written once the window's event loop is alive: a new version that
+  cannot create its window is rolled back instead of replacing a working one.
+- The HID parser reuses its buffers instead of allocating several vectors per report.
+- A trace playback repaints 30 times a second instead of every frame.
+
+### Fixed
+- `glyphpad capture` and `glyphpad replay` panicked, or printed an absurd duration, on a capture
+  whose timestamps go backwards; the summary is now per device and saturating.
+- A Precision Touchpad that reports the end of a touch only as Contact Count 0 left the engine
+  with a touch that never ended, so nothing was recognized on such a device.
+- `Ctrl+Plus` sent a bare `=`; it now sends Shift with the plus key.
+- A settings error in `glyphpad.toml` now names its line as well as the field.
+- A shortcut field follows a shortcut changed by undo, an import or a replaced action.
+- The single-instance mutex is created after clearing the last error, so a stale error could not
+  make the first instance exit as if another one were running.
+- `write_atomically` flushes the temporary file to disk before renaming it.
+- The local update source (debug builds, tests) refuses drive-relative asset names.
+- A chord's tap duration is measured from the fingers touching down, not from the frame it was
+  noticed.
+- The line diff of the conflict dialog can no longer overflow on a very long file.
+
 ## [1.0.2] - 2026-10-25
 
 ### Added

@@ -283,7 +283,7 @@ A **Recognition** (`core/src/engine/mod.rs`) is what the engine reports:
 |---|---|
 | `observation` | *What* happened (`Tap`, `Swipe`, `Pinch`, `Symbol`, `UnrecognizedSymbol`, `Sample`…), independent of configuration. |
 | `at_us` | Frame time when it was **recognized**. |
-| `started_us` / `ended_us` | When the movement itself **began / ended**. For a tap or swipe these are touch-down and lift; for a drawn symbol, the first point and the last lift (the recognition comes `stroke_gap_ms` later). Sequences measure with these. |
+| `started_us` / `ended_us` | When the movement itself **began / ended**, stamped by the recognizer that produced it: touch-down and lift for a tap (even a tap confirmed later), a swipe, a hold, a click or a chord; the touch-down of the first stroke and the lift of the last for a drawn symbol (whose recognition comes `stroke_gap_ms` later). Sequences measure with these, never with `at_us`. |
 | `trace` | The finger paths with times, for the history and its animated replay. |
 
 The engine knows nothing about gestures as configured; it only knows what the configuration
@@ -361,7 +361,7 @@ flowchart TB
 | Piece | Role |
 |---|---|
 | `SessionTracker` / `Session` | A **session** = first finger down → last finger up. Tracks fingers (position, drift), max fingers, button, the *peak phase* (the stretch with the most fingers down, before the first lift), per-finger paths with times, the centroid trace. All recognizers read the session. |
-| `TapRecognizer` | Taps and multi-taps. Fires on lift, or waits `multi_tap_gap_ms` **only if** a gesture with more taps and the same finger count exists. |
+| `TapRecognizer` | Taps and multi-taps. Fires on lift, or waits `multi_tap_gap_ms` **only if** a gesture with more taps and the same finger count exists. A waiting tap is confirmed as soon as the next touch can no longer be one (longer or farther than a tap), with the tap's own touch-down and lift. |
 | `HoldRecognizer` | Fires *while the fingers are still down* once they rested `hold_duration_ms` within `hold_max_movement_mm`; **consumes** the session. Armed only for finger counts a hold gesture uses. |
 | `MotionRecognizer` | Swipe, edge swipe, pinch, rotate, measured together on the peak phase, decided on lift; the one that exceeds its threshold by the largest factor wins. 4 or 8 directions (`quantize`). |
 | `ClickRecognizer` | Sessions with the physical button: click, click-and-drag. A click session produces no other gesture. |
@@ -457,6 +457,13 @@ stateDiagram-v2
 - Hence: **gestures made with the drawing finger count (e.g. 3-finger swipes) fire `stroke_gap_ms`
   after the lift.** This is inherent, not a bug, and it is why `Recognition` has both `at_us` and
   `ended_us`.
+- **A drawing that is no symbol is judged stroke by stroke.** Every stroke keeps its own session,
+  so a sequence of drawn gestures works at any pace: two 3-finger swipes 200 ms apart are one
+  two-stroke drawing, which matches no symbol, and each stroke is then recognized as the swipe it
+  was. A drawing that *does* match a configured symbol is not split: a V-shaped pair can still be
+  taken for `V` or an arrow when one of them is configured.
+- Rotation tolerance is searched coarse-to-fine: a few coarse angles over the whole tolerance, then
+  5° steps around the best one, so 180° costs about 40 ms instead of 150.
 - Hazard to know: a straight 3-finger swipe also *competes* with configured symbols; a clean line
   can score close to `arrow-up/down` and, if a gesture uses one of those with a low threshold, it
   could be taken for the symbol.
@@ -515,7 +522,9 @@ Consequences and details:
 
 - A plain gesture that is the first step of a sequence (e.g. a plain 3-finger tap next to a sequence
   starting with one) is **delayed by `within_ms`**, like a single tap waiting for a double tap.
-- Candidates are in priority order; the first complete sequence wins.
+- Candidates are in priority order; the first complete sequence wins. Each keeps its own
+  `within_ms`, so a sequence with a short window that shares its first step with a longer one is
+  not kept alive by that one.
 - Diagnostic recognitions neither advance nor break a sequence (they come right before the fallback
   swipe of the same stroke).
 - Steps match with the same `specificity` as plain gestures; a `profile`/`when` of the sequence
@@ -537,6 +546,7 @@ Consequences and details:
 | `backups/` | Last `backup_count` versions of the TOML. |
 | `stats.json` | Local usage counters (never sent anywhere). |
 | `update-state.json` | Update checker memory (ETag, ignored version, last check). |
+| `glyphpad.log` | Only in portable mode; rotated at 1 MB, one previous copy kept. |
 | `history.jsonl` | Only if `save_history`. |
 
 Location (`app/src/config_file.rs::locate`): `--config FILE` → **portable** (a `glyphpad.toml` next
@@ -841,12 +851,15 @@ These are the things that have already caused bugs or will if forgotten.
    switching thinks a touch is in progress and the overlay stays open. (`Service::on_event`.)
 2. **Time is the frame time base.** Never mix `Instant` and `*_us` timestamps; use
    `Service::now_us()` to convert. Deterministic tests rely on the engine never reading a clock.
-3. **A recognition has three times** (`started_us`, `ended_us`, `at_us`). Windows for sequences use
-   `ended_us` of the previous step and `started_us` of the next. Using `at_us` makes sequences
-   depend on `stroke_gap_ms` and hold durations.
+3. **A recognition has three times** (`started_us`, `ended_us`, `at_us`), and every producer stamps
+   its own: `Found` in the engine carries them, instead of borrowing the times of the frame that
+   happened to confirm a tap or finish a drawing. Windows for sequences use `ended_us` of the
+   previous step and `started_us` of the next. Using `at_us` makes sequences depend on
+   `stroke_gap_ms` and hold durations.
 4. **A gesture may be silent for a while on purpose**: taps waiting for a possible double tap,
    strokes waiting for `stroke_gap_ms`, first steps of sequences waiting for `within_ms`. Always
-   consider these delays before calling something "not recognized".
+   consider these delays before calling something "not recognized". A tap waiting for its double
+   is released early once the next touch cannot be one, so a drag after a tap does not delay it.
 5. **The overlay must always be closable**: every code path that shows a trail needs an end
    (`end_trail`, a message, or the watchdog).
 6. **Everything that changes engine state goes through the engine thread.** The GUI sends a
@@ -864,7 +877,12 @@ These are the things that have already caused bugs or will if forgotten.
 13. **Hot paths allocate little**: the engine is called per touch frame (up to hundreds per second);
     keep per-frame work small and avoid cloning big structures (use `Arc`).
 14. **Never run a test executable with `autostart = true`**: it rewrites the HKCU `Run` key.
-15. **Linux clippy does not check Windows-only code** (§15).
+15. **Linux clippy does not check Windows-only code** (§15). Windows-only code can be
+    type-checked on any machine with `cargo check --target x86_64-pc-windows-msvc` for the crates
+    that do not need a C toolchain (`glyphpad-platform`, `glyphpad-actions`).
+16. **A drawing is a bag of strokes with their sessions.** `finish_symbol` judges each stroke when
+    the whole drawing is no symbol; keep the per-stroke sessions or sequences of drawn gestures
+    stop working again.
 
 ---
 
