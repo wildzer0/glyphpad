@@ -150,6 +150,9 @@ struct Pending {
 pub struct FrameAssembler {
     pending: Option<Pending>,
     last_button: bool,
+    /// The last emitted frame had fingers down, so a report that says "no
+    /// contacts" is the lift that ends the touch rather than stray noise.
+    last_touched: bool,
 }
 
 impl FrameAssembler {
@@ -193,16 +196,18 @@ impl FrameAssembler {
                     return None;
                 }
                 None => {
-                    // A stray empty report. Only a change of the physical
-                    // button is worth a frame; anything else would look like
-                    // all fingers lifting.
-                    return (button != self.last_button).then(|| {
-                        self.emit(RawFrame {
-                            scan_time,
-                            button,
-                            contacts: Vec::new(),
-                        })
-                    });
+                    // A stray empty report. A change of the physical button,
+                    // or the end of a touch that was still on the surface in
+                    // the last frame, is worth a frame; anything else would
+                    // look like all fingers lifting.
+                    if button == self.last_button && !self.last_touched {
+                        return None;
+                    }
+                    return Some(self.emit(RawFrame {
+                        scan_time,
+                        button,
+                        contacts: Vec::new(),
+                    }));
                 }
             }
         }
@@ -219,6 +224,7 @@ impl FrameAssembler {
 
     fn emit(&mut self, frame: RawFrame) -> RawFrame {
         self.last_button = frame.button;
+        self.last_touched = frame.contacts.iter().any(|c| c.tip);
         frame
     }
 }
@@ -448,6 +454,38 @@ mod tests {
             .push(report(2, 11, vec![c(0, true), c(1, true)]))
             .unwrap();
         assert_eq!(frame.contacts.len(), 2);
+    }
+
+    #[test]
+    fn a_report_without_contacts_ends_a_touch_in_progress() {
+        // Some PTPs report the lift as Contact Count 0 without repeating the
+        // finger slots; dropping that report would leave the engine thinking
+        // the touch never ended.
+        let mut asm = FrameAssembler::default();
+        assert!(asm.push(report(0, 1, vec![])).is_none(), "nothing to end");
+        assert_eq!(
+            asm.push(report(1, 2, vec![c(0, true)]))
+                .map(|f| f.contacts.len()),
+            Some(1)
+        );
+        let lift = asm.push(report(0, 3, vec![])).expect("the lift frame");
+        assert!(lift.contacts.is_empty());
+        // Once emitted, further empty reports are noise again.
+        assert!(asm.push(report(0, 4, vec![])).is_none());
+        assert!(asm.push(report(0, 5, vec![])).is_none());
+    }
+
+    #[test]
+    fn a_lift_frame_that_clears_the_tips_is_not_followed_by_a_second_one() {
+        // The reference touchpad reports the lift as a frame whose slots all
+        // have Tip Switch 0, then a Contact Count 0 report.
+        let mut asm = FrameAssembler::default();
+        asm.push(report(1, 1, vec![c(0, true)]));
+        let lift = asm
+            .push(report(1, 2, vec![c(0, false)]))
+            .expect("lift frame");
+        assert_eq!(lift.contacts.len(), 1);
+        assert!(asm.push(report(0, 3, vec![c(0, false)])).is_none());
     }
 
     #[test]
