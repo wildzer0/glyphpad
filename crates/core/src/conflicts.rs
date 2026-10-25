@@ -36,12 +36,31 @@ fn overlap(a: &Gesture, b: &Gesture) -> bool {
     profiles && apps_overlap
 }
 
-/// Triggers equal as movements (a symbol's confidence does not matter).
+/// Whether two rectangles of the pad share an area. Edges that only touch
+/// do not: a tap is in one zone or the other.
+fn regions_overlap(a: &crate::trigger::Region, b: &crate::trigger::Region) -> bool {
+    a.x[0] < b.x[1] && b.x[0] < a.x[1] && a.y[0] < b.y[1] && b.y[0] < a.y[1]
+}
+
+/// Triggers equal as movements (a symbol's confidence does not matter), and
+/// zones that overlap for the same tap.
 fn same_movement(a: &Trigger, b: &Trigger) -> bool {
     match (a, b) {
         (Trigger::Symbol { names: x, .. }, Trigger::Symbol { names: y, .. }) => {
             x.iter().any(|n| y.contains(n))
         }
+        (
+            Trigger::Zone {
+                fingers: fa,
+                taps: ta,
+                region: ra,
+            },
+            Trigger::Zone {
+                fingers: fb,
+                taps: tb,
+                region: rb,
+            },
+        ) => fa == fb && ta == tb && regions_overlap(ra, rb),
         _ => a == b,
     }
 }
@@ -75,13 +94,20 @@ pub fn find(config: &Config, templates: &BTreeMap<String, Vec<Sample>>) -> Vec<C
             }
             if let (Some(ta), Some(tb)) = (&a.trigger, &b.trigger) {
                 if same_movement(ta, tb) {
-                    out.push(Conflict {
-                        gestures: vec![a.def.name.clone(), b.def.name.clone()],
-                        reason: format!(
+                    let reason = match (ta, tb) {
+                        (Trigger::Zone { .. }, Trigger::Zone { .. }) => format!(
+                            "the zones of “{}” and “{}” overlap; only “{}” (first in the list) will ever fire",
+                            a.def.name, b.def.name, a.def.name
+                        ),
+                        _ => format!(
                             "both trigger on “{}”; only “{}” (first in the list) will ever fire",
                             ta.describe(),
                             a.def.name
                         ),
+                    };
+                    out.push(Conflict {
+                        gestures: vec![a.def.name.clone(), b.def.name.clone()],
+                        reason,
                     });
                 }
                 for (hold, chord) in [(ta, tb), (tb, ta)] {
@@ -175,6 +201,38 @@ mod tests {
             "[[gesture]]\nname = \"a\"\n{TAP3}\nprofile = \"p\"\n[[gesture]]\nname = \"b\"\n{TAP3}\nprofile = \"q\"\n"
         ));
         assert!(c.is_empty());
+    }
+
+    #[test]
+    fn zones_that_overlap_conflict() {
+        let zone = |name: &str, x: [f32; 2], y: [f32; 2]| {
+            format!(
+                "[[gesture]]\nname = \"{name}\"\ntype = \"zone\"\nfingers = 1\nregion = {{ x = [{}, {}], y = [{}, {}] }}\naction = {{ type = \"lock_screen\" }}\n",
+                x[0], x[1], y[0], y[1]
+            )
+        };
+        // Sharing part of the pad: a tap there could be either.
+        let c = conflicts(
+            &(zone("a", [0.0, 25.0], [0.0, 20.0]) + &zone("b", [20.0, 45.0], [0.0, 20.0])),
+        );
+        assert_eq!(c.len(), 1, "{c:?}");
+        assert!(c[0].reason.contains("overlap"), "{}", c[0].reason);
+        // Apart: no conflict.
+        let c = conflicts(
+            &(zone("a", [0.0, 25.0], [0.0, 20.0]) + &zone("b", [30.0, 55.0], [0.0, 20.0])),
+        );
+        assert!(c.is_empty(), "{c:?}");
+        // Touching edges are not overlapping.
+        let c = conflicts(
+            &(zone("a", [0.0, 25.0], [0.0, 20.0]) + &zone("b", [25.0, 50.0], [0.0, 20.0])),
+        );
+        assert!(c.is_empty(), "{c:?}");
+        // Different finger counts never fire on one tap.
+        let c = conflicts(
+            &(zone("a", [0.0, 25.0], [0.0, 20.0])
+                + "[[gesture]]\nname = \"b\"\ntype = \"zone\"\nfingers = 2\nregion = { x = [0.0, 25.0], y = [0.0, 20.0] }\naction = { type = \"lock_screen\" }\n"),
+        );
+        assert!(c.is_empty(), "{c:?}");
     }
 
     #[test]
