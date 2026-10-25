@@ -492,6 +492,32 @@ impl Pad {
         self.push((0..fingers).map(|id| at(id, end, false)).collect(), false);
     }
 
+    /// Like `draw`, with `resting` further fingers lying still in `at` (a
+    /// symbol chord), apart from the moving ones.
+    fn draw_chord(&mut self, fingers: u32, resting: u32, at: (f32, f32), path: &[(f32, f32)]) {
+        let mut points = vec![path[0]];
+        for w in path.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+            let steps = (len / (120.0 * FRAME_US as f32 / 1e6)).ceil().max(1.0) as usize;
+            for i in 1..=steps {
+                let k = i as f32 / steps as f32;
+                points.push((a.0 + (b.0 - a.0) * k, a.1 + (b.1 - a.1) * k));
+            }
+        }
+        let moving = |id: u32, (x, y): (f32, f32), tip| contact(id, x + 15.0 * id as f32, y, tip);
+        let still = |id: u32, tip| contact(id, at.0 + 15.0 * id as f32, at.1, tip);
+        for &p in &points {
+            let mut contacts: Vec<Contact> = (0..fingers).map(|id| moving(id, p, true)).collect();
+            contacts.extend((0..resting).map(|i| still(fingers + i, true)));
+            self.push(contacts, false);
+        }
+        let end = *points.last().unwrap();
+        let mut contacts: Vec<Contact> = (0..fingers).map(|id| moving(id, end, false)).collect();
+        contacts.extend((0..resting).map(|i| still(fingers + i, false)));
+        self.push(contacts, false);
+    }
+
     fn rest(&mut self, at: (f32, f32), ms: u64) {
         for _ in 0..(ms * 1000 / FRAME_US) {
             self.push(vec![contact(0, at.0, at.1, true)], false);
@@ -543,6 +569,47 @@ fn names(out: &[Observation]) -> Vec<String> {
             other => other.to_string(),
         })
         .collect()
+}
+
+const SYMBOL_CHORD: &str = r#"
+[settings]
+draw_activation = { mode = "fingers", count = 3 }
+
+[[gesture]]
+name = "L-chord"
+type = "symbol"
+symbol = "L"
+modifier_fingers = 1
+action = { type = "notify", message = "chord" }
+
+[[gesture]]
+name = "L"
+type = "symbol"
+symbol = "L"
+action = { type = "notify", message = "plain" }
+"#;
+
+#[test]
+fn a_symbol_drawn_over_resting_fingers_is_a_chord() {
+    let config = crate::config::parse(SYMBOL_CHORD).unwrap().config;
+    // Three fingers draw the L while a fourth rests: the chord gesture.
+    let mut pad = Pad::new();
+    pad.draw_chord(3, 1, (40.0, 100.0), L);
+    let names = dispatched_names(&config, &pad);
+    assert_eq!(names, ["L-chord"], "{names:?}");
+    // The same L with no finger resting is the plain gesture.
+    let mut pad = Pad::new();
+    pad.draw(3, L);
+    let names = dispatched_names(&config, &pad);
+    assert_eq!(names, ["L"], "{names:?}");
+    // And the chord does not fire on a plain drawing.
+    let only_chord = crate::config::parse(SYMBOL_CHORD).unwrap().config;
+    let mut chord_only = only_chord;
+    chord_only.gestures.retain(|g| g.def.name == "L-chord");
+    let mut pad = Pad::new();
+    pad.draw(3, L);
+    let names = dispatched_names(&chord_only, &pad);
+    assert!(names.iter().all(|n| n != "L-chord"), "{names:?}");
 }
 
 #[test]

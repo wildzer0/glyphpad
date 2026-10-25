@@ -377,6 +377,22 @@ pub fn trigger_form(
             t.region = None;
         }
         GestureKind::Symbol => {
+            w::row(
+                ui,
+                "Resting fingers",
+                "Other fingers rest while the drawing ones move: the same symbol can then mean something else.",
+                |ui| {
+                    let mut m = t.modifier_fingers.unwrap_or(0);
+                    ui.horizontal(|ui| {
+                        w::stepper(ui, &mut m, 0, 3);
+                        ui.label(w::dim(
+                            ui,
+                            if m == 0 { "none" } else { "resting" },
+                        ));
+                    });
+                    t.modifier_fingers = (m > 0).then_some(m);
+                },
+            );
             let mut chosen = t.symbol.as_ref().map(OneOrMany::to_vec).unwrap_or_default();
             w::row(ui, "Symbols", "Any of the chosen ones triggers it.", |ui| {
                 ui.horizontal_wrapped(|ui| {

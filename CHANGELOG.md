@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A drawn symbol can be a chord: `modifier_fingers = 1` draws it with the drawing fingers while
+  another rests, so the same shape can mean two things.
+
 ## [1.5.0] - 2026-10-25
 
 ### Added

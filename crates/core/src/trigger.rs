@@ -151,6 +151,8 @@ pub enum Trigger {
     Symbol {
         names: Vec<String>,
         confidence: Option<f32>,
+        /// Fingers resting while the others draw: a symbol chord.
+        modifiers: u8,
     },
 }
 
@@ -237,7 +239,7 @@ impl TriggerDef {
             GestureKind::Click => allowed.push("direction"),
             GestureKind::Symbol => {
                 need("symbol", self.symbol.is_some(), &mut errors);
-                allowed.push("confidence");
+                allowed.extend(["confidence", "modifier_fingers"]);
             }
             GestureKind::Hold | GestureKind::Sequence => {}
         }
@@ -391,6 +393,7 @@ impl TriggerDef {
             GestureKind::Symbol => Trigger::Symbol {
                 names,
                 confidence: self.confidence,
+                modifiers,
             },
             GestureKind::Sequence => {
                 return Err(vec![(
@@ -589,8 +592,34 @@ impl Trigger {
                     direction: d,
                 },
             ) => yes(f == fingers && d == direction),
-            (Trigger::Symbol { names, confidence }, Observation::Symbol { name, score, .. }) => {
+            (
+                Trigger::Symbol {
+                    names,
+                    confidence,
+                    modifiers: 0,
+                },
+                Observation::Symbol { name, score, .. },
+            ) => {
                 yes(names.contains(name) && *score >= confidence.unwrap_or(default_confidence))
+            }
+            (
+                Trigger::Symbol {
+                    names,
+                    confidence,
+                    modifiers,
+                },
+                Observation::Chord {
+                    modifiers: resting,
+                    gesture,
+                },
+            ) if *modifiers > 0 => {
+                let min = confidence.unwrap_or(default_confidence);
+                yes(resting == modifiers
+                    && matches!(
+                        **gesture,
+                        Observation::Symbol { ref name, score, .. }
+                            if names.contains(name) && score >= min
+                    ))
             }
             _ => 0,
         }
@@ -687,7 +716,17 @@ impl Trigger {
                 fingers,
                 direction: Some(d),
             } => format!("click and drag {d} with {}", f(*fingers)),
-            Trigger::Symbol { names, .. } => format!("draw {}", names.join(" or ")),
+            Trigger::Symbol {
+                names, modifiers, ..
+            } => format!(
+                "draw {}{}",
+                names.join(" or "),
+                if *modifiers > 0 {
+                    format!(" while {} rest", f(*modifiers))
+                } else {
+                    String::new()
+                }
+            ),
             Trigger::Zone {
                 fingers,
                 taps,

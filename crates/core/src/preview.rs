@@ -270,6 +270,7 @@ mod tests {
         let t = Trigger::Symbol {
             names: vec!["L".into()],
             confidence: None,
+            modifiers: 0,
         };
         let p = of(&t, &templates);
         assert_eq!(p.lines.len(), 1);
@@ -277,6 +278,7 @@ mod tests {
         let missing = Trigger::Symbol {
             names: vec!["nope".into()],
             confidence: None,
+            modifiers: 0,
         };
         assert_eq!(of(&missing, &templates), Pictogram::default());
     }

@@ -374,6 +374,12 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Edit this zone", "Modifica questa zona"),
     ("All four corners", "Tutti e quattro gli angoli"),
     ("Merge the chosen ones", "Unisci quelli scelti"),
+    ("Resting fingers", "Dita ferme"),
+    (
+        "Other fingers rest while the drawing ones move: the same symbol can then mean something else.",
+        "Altre dita restano ferme mentre quelle che disegnano si muovono: così lo stesso simbolo può significare altro.",
+    ),
+    ("none", "nessuna"),
     ("Closest symbols", "Simboli più vicini"),
     (
         "What the unrecognized drawings came closest to: the ones being drawn badly, or whose minimum score is too high.",

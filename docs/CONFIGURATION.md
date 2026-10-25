@@ -225,7 +225,7 @@ action = { type = "lock_screen" }   # required
 | `pinch` | **`fingers`** ≥ 2, **`zoom`** (`in` = fingers closer, `out` = apart) |
 | `rotate` | **`fingers`** ≥ 2, **`rotation`** (`clockwise`, `counterclockwise`) |
 | `click` | **`fingers`**, `direction` (makes it click-and-drag) |
-| `symbol` | **`symbol`** a name or a list (`["q", "X"]`), `confidence` 0–1 |
+| `symbol` | **`symbol`** a name or a list (`["q", "X"]`), `confidence` 0–1, `modifier_fingers` (1–3: fingers resting while the others draw) |
 | `sequence` | **`steps`** 2–4 tables each with a `type` and its fields, `within_ms` (default 800, 100–5000) |
 
 `within_ms` is the longest pause between the end of one step and the *start* of the next, not the
@@ -234,6 +234,11 @@ are recognized `stroke_gap_ms` after the fingers lift; that delay does not count
 closer than `stroke_gap_ms` to the previous one still belongs to the same symbol, so a drawing
 that matches no configured symbol is judged stroke by stroke, which is what makes two quick
 swipes a sequence.
+
+A symbol can be a **chord**: with `modifier_fingers = 1`, the symbol is drawn with the drawing
+fingers while one more rests, so a three-finger `L` and a three-finger `L` over a resting finger
+are two different gestures. It works with `draw_activation.mode = "fingers"`; the resting fingers
+are the ones that do not move.
 
 A step is over when its touch is: a `hold` is recognized `hold_duration_ms` into the touch, but its
 window starts when the fingers lift, so how long they rest on afterwards does not matter.

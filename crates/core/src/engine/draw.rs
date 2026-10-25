@@ -17,6 +17,9 @@ pub struct DrawParams {
     pub min_stroke_mm: f32,
     /// How still a finger must stay for hold-to-draw.
     pub hold_still_mm: f32,
+    /// Most fingers that may rest while the others draw a symbol (a symbol
+    /// chord): set from the configured symbol gestures.
+    pub max_resting: u8,
 }
 
 #[derive(Debug)]
@@ -38,6 +41,8 @@ enum State {
         ended_us: u64,
         /// Touch-down of the first stroke.
         started_us: u64,
+        /// Fingers that rested while the strokes were drawn: a symbol chord.
+        modifiers: u8,
     },
 }
 
@@ -76,6 +81,8 @@ pub struct Finished {
     pub started_us: u64,
     /// Lift of the last stroke.
     pub ended_us: u64,
+    /// Fingers that rested while the symbol was drawn.
+    pub modifiers: u8,
 }
 
 impl DrawRecognizer {
@@ -172,10 +179,23 @@ impl DrawRecognizer {
                 match p.activation {
                     DrawActivation::Fingers { count } => {
                         let n = usize::from(count);
-                        if s.max_fingers != n {
+                        if s.max_fingers == n {
+                            s.trace.iter().filter(|t| t.count == n).copied().collect()
+                        } else if p.max_resting > 0 {
+                            // A symbol chord: some fingers rest while `count`
+                            // draw, so the stroke is the moving fingers'
+                            // centroid, not the whole hand's.
+                            let (moving, resting) = split_resting(s, p.hold_still_mm);
+                            if moving.len() != n
+                                || resting.is_empty()
+                                || resting.len() > usize::from(p.max_resting)
+                            {
+                                return None;
+                            }
+                            moving_centroid(&moving)
+                        } else {
                             return None;
                         }
-                        s.trace.iter().filter(|t| t.count == n).copied().collect()
                     }
                     DrawActivation::Edge {
                         edge, zone_percent, ..
@@ -203,9 +223,22 @@ impl DrawRecognizer {
         matches!(self.state, State::Collecting { fingers: 1, .. })
     }
 
+    /// How many fingers rested while this session drew: the modifiers of a
+    /// symbol chord, zero when it took the whole hand.
+    fn resting_count(&self, s: &Session, p: &DrawParams) -> u8 {
+        match p.activation {
+            DrawActivation::Fingers { count } => s
+                .max_fingers
+                .saturating_sub(usize::from(count))
+                .min(u8::MAX as usize) as u8,
+            _ => 0,
+        }
+    }
+
     pub fn add(&mut self, samples: Vec<TraceSample>, session: Session, p: &DrawParams) {
         let end = session.last_us;
         let start = session.start_us;
+        let modifiers = self.resting_count(&session, p);
         match &mut self.state {
             State::Idle => {
                 let origin_us = samples[0].t_us;
@@ -217,6 +250,7 @@ impl DrawRecognizer {
                     deadline_us: Some(end + p.stroke_gap_us),
                     ended_us: end,
                     started_us: start,
+                    modifiers,
                 };
             }
             State::Collecting {
@@ -252,16 +286,63 @@ impl DrawRecognizer {
                 origin_us: _,
                 ended_us,
                 started_us,
+                modifiers,
                 ..
             } => Some(Finished {
                 strokes,
                 sessions,
                 started_us,
                 ended_us,
+                modifiers,
             }),
             State::Idle => None,
         }
     }
+}
+
+/// Splits a session's fingers into the ones that moved and the ones that
+/// stayed put: the still ones are a symbol chord's modifiers, the moving ones
+/// are what the symbol is drawn with.
+fn split_resting(s: &Session, still_mm: f32) -> (Vec<&Stroke>, Vec<u32>) {
+    let mut moving = Vec::new();
+    let mut resting = Vec::new();
+    for (id, path) in &s.paths {
+        let travel: f32 = path
+            .windows(2)
+            .map(|w| distance((w[0].x_mm, w[0].y_mm), (w[1].x_mm, w[1].y_mm)))
+            .sum();
+        if travel < still_mm {
+            resting.push(*id);
+        } else {
+            moving.push(path);
+        }
+    }
+    (moving, resting)
+}
+
+/// The centroid of the moving fingers, frame by frame.
+fn moving_centroid(paths: &[&Stroke]) -> Vec<TraceSample> {
+    let mut frames: std::collections::BTreeMap<u64, (f32, f32, usize)> =
+        std::collections::BTreeMap::new();
+    for path in paths {
+        for point in path.iter() {
+            let e = frames.entry(point.t_us).or_insert((0.0, 0.0, 0));
+            e.0 += point.x_mm;
+            e.1 += point.y_mm;
+            e.2 += 1;
+        }
+    }
+    frames
+        .into_iter()
+        .map(|(t_us, (x, y, n))| TraceSample {
+            t_us,
+            mm: (x / n as f32, y / n as f32),
+            // Only the edge mode reads the normalized position, and it takes
+            // no chords: the millimetres are what the recognizer uses.
+            norm: (0.0, 0.0),
+            count: n,
+        })
+        .collect()
 }
 
 fn in_zone(t: &TraceSample, edge: Edge, zone_percent: f32) -> bool {

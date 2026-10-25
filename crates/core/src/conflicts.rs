@@ -171,7 +171,7 @@ pub fn symbols(config: &Config, templates: &BTreeMap<String, Vec<Sample>>) -> Ve
     // Symbols used by gestures, with the lowest confidence asked for each.
     let mut used: BTreeMap<String, f32> = BTreeMap::new();
     for g in &gestures {
-        if let Some(Trigger::Symbol { names, confidence }) = &g.trigger {
+        if let Some(Trigger::Symbol { names, confidence, .. }) = &g.trigger {
             for n in names {
                 let c = confidence.unwrap_or(config.settings.default_confidence);
                 let e = used.entry(n.clone()).or_insert(c);

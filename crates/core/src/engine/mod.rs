@@ -247,6 +247,9 @@ pub struct Spec {
     pub chords: bool,
     /// Draw mode; `None` disables symbols.
     pub draw: Option<DrawParams>,
+    /// Most fingers a symbol gesture lets rest while the others draw: the
+    /// draw mode has to accept them to build the stroke.
+    symbol_modifiers: u8,
     /// Loosest threshold overrides among the configured gestures: the engine
     /// must recognize what any gesture asks for, and the matched gesture's own
     /// threshold is checked afterwards, in `Trigger::specificity`.
@@ -273,6 +276,7 @@ impl Default for Spec {
             clicks: [false; MAX_CONTACTS + 1],
             chords: false,
             draw: None,
+            symbol_modifiers: 0,
             loose_swipe_distance_mm: None,
             loose_swipe_speed_mm_s: None,
             loose_pinch_mm: None,
@@ -289,6 +293,9 @@ fn draw_params(s: &Settings) -> DrawParams {
         stroke_gap_us: s.stroke_gap_ms * 1000,
         min_stroke_mm: s.min_stroke_mm,
         hold_still_mm: s.hold_max_movement_mm,
+        // Set from the configuration's symbol gestures afterwards, since the
+        // settings alone do not know them.
+        max_resting: 0,
     }
 }
 
@@ -392,16 +399,26 @@ impl Spec {
                     spec.clicks[n] = true;
                     spec.eight_way[n] |= direction.is_some_and(Direction::is_diagonal);
                 }
-                Trigger::Symbol { names, confidence } => {
+                Trigger::Symbol {
+                    names,
+                    confidence,
+                    modifiers,
+                } => {
                     let conf = confidence.unwrap_or(s.default_confidence);
                     for name in names {
                         let t: &mut f32 = thresholds.entry(name.clone()).or_insert(conf);
                         *t = t.min(conf);
                     }
+                    // A symbol chord: the draw mode has to let this many
+                    // fingers rest while the others draw.
+                    spec.symbol_modifiers = spec.symbol_modifiers.max(*modifiers);
                 }
             }
         }
         spec.symbol_thresholds = Some(thresholds);
+        if let Some(draw) = &mut spec.draw {
+            draw.max_resting = spec.symbol_modifiers;
+        }
         spec
     }
 
@@ -421,6 +438,7 @@ impl Spec {
             clicks: [true; MAX_CONTACTS + 1],
             chords: true,
             draw: Some(draw_params(&Settings::default())),
+            symbol_modifiers: 3,
             loose_swipe_distance_mm: None,
             loose_swipe_speed_mm_s: None,
             loose_pinch_mm: None,
@@ -866,13 +884,24 @@ impl Engine {
                 .symbol_threshold(&best.symbol)
                 .is_some_and(|min| best.score >= min)
         {
+            let symbol = Observation::Symbol {
+                name: best.symbol.clone(),
+                score: best.score,
+                candidates,
+                strokes: done.strokes,
+            };
+            // Fingers rested while the symbol was drawn: a symbol chord,
+            // matched only by a gesture that expects them.
+            let observation = if done.modifiers > 0 {
+                Observation::Chord {
+                    modifiers: done.modifiers,
+                    gesture: Box::new(symbol),
+                }
+            } else {
+                symbol
+            };
             return vec![Found {
-                observation: Observation::Symbol {
-                    name: best.symbol.clone(),
-                    score: best.score,
-                    candidates,
-                    strokes: done.strokes,
-                },
+                observation,
                 trace,
                 started_us: times.0,
                 ended_us: times.1,
