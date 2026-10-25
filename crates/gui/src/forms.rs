@@ -385,10 +385,7 @@ pub fn trigger_form(
                     let mut m = t.modifier_fingers.unwrap_or(0);
                     ui.horizontal(|ui| {
                         w::stepper(ui, &mut m, 0, 3);
-                        ui.label(w::dim(
-                            ui,
-                            if m == 0 { "none" } else { "resting" },
-                        ));
+                        ui.label(w::dim(ui, if m == 0 { "none" } else { "resting" }));
                     });
                     t.modifier_fingers = (m > 0).then_some(m);
                 },

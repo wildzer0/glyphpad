@@ -599,9 +599,7 @@ impl Trigger {
                     modifiers: 0,
                 },
                 Observation::Symbol { name, score, .. },
-            ) => {
-                yes(names.contains(name) && *score >= confidence.unwrap_or(default_confidence))
-            }
+            ) => yes(names.contains(name) && *score >= confidence.unwrap_or(default_confidence)),
             (
                 Trigger::Symbol {
                     names,
