@@ -56,10 +56,10 @@ pub fn prepare_staging(current: &Path) -> Result<PathBuf, Error> {
 
 /// Removes leftovers of a previous update: the old executable and the
 /// staging folder. Failures (the old process may still run) are ignored.
+/// The marker is not touched: the old process owns it.
 pub fn cleanup(current: &Path) {
     let _ = std::fs::remove_file(old_path(current));
     let _ = std::fs::remove_dir_all(staging_dir(current));
-    let _ = std::fs::remove_file(marker_path(current));
 }
 
 /// What [`install`] did, so it can be undone.
@@ -232,11 +232,9 @@ mod tests {
     fn cleanup_removes_leftovers() {
         let (_dir, current, staged) = setup();
         install(&staged, &current).unwrap();
-        std::fs::write(marker_path(&current), b"").unwrap();
         cleanup(&current);
         assert!(!old_path(&current).exists());
         assert!(!staging_dir(&current).exists());
-        assert!(!marker_path(&current).exists());
         assert_eq!(std::fs::read(&current).unwrap(), b"new binary");
     }
 

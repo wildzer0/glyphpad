@@ -90,6 +90,43 @@ pub enum Command {
     /// Drop a recorded sample or demonstration.
     DiscardRecorded(usize),
     ClearRecorded,
+    /// Look for a newer version now; `manual` shows a result even when
+    /// there is nothing new (SPEC §12.1).
+    CheckUpdates {
+        manual: bool,
+    },
+    /// Download and install the available update, then restart.
+    InstallUpdate,
+    /// Stop offering this version.
+    IgnoreUpdate(String),
+}
+
+/// A newer version found by the updater.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvailableUpdate {
+    pub version: String,
+    /// Release notes (Markdown as written).
+    pub notes: String,
+    /// The release's web page, for manual updates.
+    pub url: String,
+    pub prerelease: bool,
+}
+
+/// What the updater is doing, for the banner and the settings (SPEC §12).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum UpdateStatus {
+    #[default]
+    Idle,
+    Checking,
+    UpToDate,
+    Available(AvailableUpdate),
+    Downloading(String),
+    Installing(String),
+    Restarting(String),
+    /// The check or the installation failed; nothing was changed.
+    Failed(String),
+    /// The executable's folder cannot be written: update by hand.
+    Manual(AvailableUpdate, String),
 }
 
 /// One recognition, as shown in the history (SPEC §10.1).
@@ -159,6 +196,9 @@ pub struct Shared {
     pub status: Option<String>,
     /// Warnings about the configuration and the environment.
     pub warnings: Vec<String>,
+    pub update: UpdateStatus,
+    /// When the updater last asked GitHub, as a local date and time.
+    pub last_update_check: Option<String>,
 }
 
 impl Shared {
@@ -183,6 +223,7 @@ pub struct UiLink {
     repaint: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
     visible: std::sync::atomic::AtomicBool,
     show: std::sync::atomic::AtomicBool,
+    quit: std::sync::atomic::AtomicBool,
 }
 
 impl UiLink {
@@ -213,6 +254,16 @@ impl UiLink {
     pub fn request_show(&self) {
         self.show.store(true, std::sync::atomic::Ordering::Relaxed);
         self.wake();
+    }
+
+    /// Asks the interface to close for good (after an update took over).
+    pub fn request_quit(&self) {
+        self.quit.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.wake();
+    }
+
+    pub fn take_quit_request(&self) -> bool {
+        self.quit.swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn take_show_request(&self) -> bool {

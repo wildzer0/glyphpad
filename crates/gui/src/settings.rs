@@ -474,15 +474,46 @@ fn updates(ui: &mut egui::Ui, cx: &Ctx, u: &mut glyphpad_core::config::UpdateSet
             );
         });
         w::row(ui, "Check every", "", |ui| {
+            ui.add(
+                egui::DragValue::new(&mut u.check_interval_h)
+                    .range(1..=720)
+                    .suffix(" hours"),
+            );
+        });
+        w::row(ui, "Now", "", |ui| {
+            use glyphpad_core::service::UpdateStatus as U;
+            let busy = matches!(
+                cx.shared.update,
+                U::Checking | U::Downloading(_) | U::Installing(_) | U::Restarting(_)
+            );
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::DragValue::new(&mut u.check_interval_h)
-                        .range(1..=720)
-                        .suffix(" hours"),
-                );
-                w::button_enabled(ui, icons::ARROWS_CLOCKWISE, "Check now", false)
-                    .on_disabled_hover_text("Updates arrive in a later version (M6).");
+                if w::button_enabled(ui, icons::ARROWS_CLOCKWISE, "Check now", !busy).clicked() {
+                    cx.send(Command::CheckUpdates { manual: true });
+                }
+                let (text, tone) = match &cx.shared.update {
+                    U::Checking => ("Checking…".to_string(), None),
+                    U::UpToDate => ("You have the latest version.".into(), Some(Tone::Ok)),
+                    U::Available(a) => (
+                        format!("Version {} is available.", a.version),
+                        Some(Tone::Accent),
+                    ),
+                    U::Failed(why) => (why.clone(), Some(Tone::Bad)),
+                    _ => (String::new(), None),
+                };
+                if !text.is_empty() {
+                    match tone {
+                        Some(t) => {
+                            ui.label(egui::RichText::new(text).color(t.fg(ui)));
+                        }
+                        None => {
+                            ui.label(w::dim(ui, text));
+                        }
+                    }
+                }
             });
+            if let Some(when) = &cx.shared.last_update_check {
+                ui.label(w::caption(ui, format!("Last checked {when}.")));
+            }
         });
     });
 }

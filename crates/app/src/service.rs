@@ -35,6 +35,9 @@ pub struct Options {
     /// Print recognitions in the terminal (`glyphpad debug`).
     pub print: bool,
     pub mode: EngineMode,
+    /// The updater's inbox, which update commands from the window and the
+    /// tray are forwarded to.
+    pub updates: Option<Sender<crate::update::Request>>,
 }
 
 /// Something to show in the overlay; a no-op where there is none.
@@ -116,6 +119,7 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
         location: options.location,
         print: options.print,
         mode: options.mode,
+        updates: options.updates,
         enabled: true,
         freezer: None,
         feedback,
@@ -149,6 +153,7 @@ struct Service {
     location: Location,
     print: bool,
     mode: EngineMode,
+    updates: Option<Sender<crate::update::Request>>,
     enabled: bool,
     freezer: Option<Freezer>,
     feedback: Feedback,
@@ -797,6 +802,12 @@ impl Service {
         self.write_config(&new, false)
     }
 
+    fn forward(&self, request: crate::update::Request) {
+        if let Some(tx) = &self.updates {
+            let _ = tx.send(request);
+        }
+    }
+
     fn on_command(&mut self, cmd: Command) {
         match cmd {
             Command::SetMode(mode) => {
@@ -932,6 +943,11 @@ impl Service {
                     Err(e) => self.set_status(format!("cannot restore {name}: {e}")),
                 }
             }
+            Command::CheckUpdates { manual } => {
+                self.forward(crate::update::Request::Check { manual })
+            }
+            Command::InstallUpdate => self.forward(crate::update::Request::Install),
+            Command::IgnoreUpdate(version) => self.forward(crate::update::Request::Ignore(version)),
             Command::FilesChanged => self.files_changed_at = Some(Instant::now()),
             Command::ListWindows => {
                 let apps = self.foreground.windows();

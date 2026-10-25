@@ -9,6 +9,7 @@ mod print;
 mod service;
 #[cfg(windows)]
 mod tray;
+mod update;
 
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
@@ -39,6 +40,15 @@ struct Cli {
     /// Configuration file to use instead of the portable or standard one.
     #[arg(long, global = true, value_name = "FILE")]
     config: Option<PathBuf>,
+
+    /// Set by the old version when it starts the new one after an update.
+    #[arg(long, global = true, hide = true)]
+    post_update: bool,
+
+    /// Take releases from a folder instead of GitHub (debug builds only).
+    #[cfg(debug_assertions)]
+    #[arg(long, global = true, hide = true, value_name = "DIR")]
+    update_source: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -86,6 +96,12 @@ enum Cmd {
         #[arg(long)]
         replace: bool,
     },
+    /// Check for a newer version and install it.
+    Update {
+        /// Only report whether a newer version exists.
+        #[arg(long)]
+        check: bool,
+    },
     /// Validate a configuration file and print its errors and warnings.
     CheckConfig {
         /// Defaults to the configuration GlyphPad would use.
@@ -114,8 +130,17 @@ fn main() {
 fn run(cli: Cli) -> Result<()> {
     let toplevel_window = cli.toplevel_window;
     let config_arg = cli.config.as_deref();
+    #[cfg(debug_assertions)]
+    let update_source = cli.update_source.clone();
+    #[cfg(not(debug_assertions))]
+    let update_source: Option<PathBuf> = None;
+    let extra = GuiExtra {
+        post_update: cli.post_update,
+        update_source: update_source.clone(),
+    };
     match cli.command.unwrap_or(Cmd::Run) {
-        Cmd::Run => gui(config_arg, toplevel_window, false),
+        Cmd::Run => gui(config_arg, toplevel_window, false, extra),
+        Cmd::Update { check } => update_command(config_arg, update_source, check),
         Cmd::Capture {
             file,
             seconds,
@@ -134,7 +159,7 @@ fn run(cli: Cli) -> Result<()> {
             print!("{}", live::dump_descriptors()?);
             Ok(())
         }
-        Cmd::Debug => gui(config_arg, toplevel_window, true),
+        Cmd::Debug => gui(config_arg, toplevel_window, true, extra),
         Cmd::Record {
             name,
             samples,
@@ -144,9 +169,23 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// What an update adds to starting the window.
+struct GuiExtra {
+    /// This process was started by the version it replaces.
+    post_update: bool,
+    update_source: Option<PathBuf>,
+}
+
+/// The single-instance lock, where the updater can give it up and take it
+/// back (SPEC §12.2).
+#[cfg(windows)]
+static INSTANCE: std::sync::Mutex<
+    Option<glyphpad_platform::windows::single_instance::InstanceGuard>,
+> = std::sync::Mutex::new(None);
+
 /// The window, the tray and the engine: `run` (and `debug`, which starts in
 /// test mode on the live debug tab and prints recognitions).
-fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool) -> Result<()> {
+fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool, extra: GuiExtra) -> Result<()> {
     use std::sync::{Arc, OnceLock};
 
     use glyphpad_core::service::{EngineMode, UiLink};
@@ -155,26 +194,30 @@ fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool) -> Result<()
     // (SPEC §10.1). `debug` is a diagnostic and may run alongside.
     let link: Arc<OnceLock<Arc<UiLink>>> = Arc::default();
     #[cfg(windows)]
-    let _instance = if debug {
-        None
-    } else {
+    if !debug {
         let slot = link.clone();
         match glyphpad_platform::windows::single_instance::acquire(move || {
             if let Some(ui) = slot.get() {
                 ui.request_show();
             }
         }) {
-            glyphpad_platform::windows::single_instance::Instance::Primary(guard) => Some(guard),
+            glyphpad_platform::windows::single_instance::Instance::Primary(guard) => {
+                if let Ok(mut held) = INSTANCE.lock() {
+                    *held = Some(guard);
+                }
+            }
             glyphpad_platform::windows::single_instance::Instance::Secondary => {
                 println!("GlyphPad is already running; showing its window.");
                 return Ok(());
             }
         }
-    };
+    }
 
     let location = config_file::locate(explicit)?;
     tracing::info!("configuration: {}", location.describe());
     let rx = live::start(toplevel_window)?;
+    let (updates_tx, updates_rx) = crossbeam_channel::unbounded();
+    let state_path = config_file::update_state_path(&location);
     let svc = service::spawn(
         rx,
         service::Options {
@@ -185,9 +228,37 @@ fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool) -> Result<()
             } else {
                 EngineMode::Normal
             },
+            updates: Some(updates_tx),
         },
     )?;
     let _ = link.set(svc.ui.clone());
+    after_update_housekeeping(&svc, &extra);
+    // A development build must not replace itself with a release.
+    if !debug && (!cfg!(debug_assertions) || extra.update_source.is_some()) {
+        update::spawn(
+            updates_rx,
+            update::Settings {
+                shared: svc.shared.clone(),
+                ui: svc.ui.clone(),
+                commands: svc.commands.clone(),
+                state_path,
+                source: update::make_source(VERSION, extra.update_source.clone()),
+                version: semver::Version::parse(VERSION).context("the program's version")?,
+                release_lock: Box::new(|| {
+                    #[cfg(windows)]
+                    if let Ok(mut held) = INSTANCE.lock() {
+                        held.take();
+                    }
+                }),
+                reclaim_lock: Box::new(|| {
+                    #[cfg(windows)]
+                    if let Ok(mut held) = INSTANCE.lock() {
+                        *held = glyphpad_platform::windows::single_instance::reacquire();
+                    }
+                }),
+            },
+        );
+    }
     let start_minimized = svc
         .shared
         .lock()
@@ -225,6 +296,7 @@ fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool) -> Result<()
                 }
             }),
             open_folder: Box::new(open_folder),
+            open_url: Box::new(|url| open_folder(Path::new(url))),
             bring_to_front: Box::new(|_hwnd| {
                 #[cfg(windows)]
                 glyphpad_platform::windows::foreground::bring_to_front(_hwnd);
@@ -232,6 +304,94 @@ fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool) -> Result<()
         },
     )
     .map_err(|e| anyhow::anyhow!("the window failed: {e}"))
+}
+
+/// A started-by-update process tells the old one it came up and says so on
+/// screen; any other start tidies up after an earlier update (SPEC §12.2).
+fn after_update_housekeeping(svc: &service::ServiceHandle, extra: &GuiExtra) {
+    let Ok(exe) = glyphpad_updater::install::current_exe() else {
+        return;
+    };
+    if extra.post_update {
+        // The configuration is loaded and the engine runs: tell the old process.
+        let marker = glyphpad_updater::install::marker_path(&exe);
+        if let Err(e) = std::fs::write(&marker, VERSION) {
+            tracing::warn!("cannot write the update marker: {e}");
+        }
+        let _ = svc
+            .commands
+            .send(glyphpad_core::service::Command::RunAction(
+                glyphpad_core::action::Action::Notify {
+                    title: Some("GlyphPad updated".into()),
+                    message: format!("Now running version {VERSION}"),
+                },
+            ));
+    }
+    // The old executable can only be deleted once its process has exited,
+    // which after a fresh update takes a few seconds.
+    std::thread::spawn(move || {
+        for _ in 0..30 {
+            glyphpad_updater::install::cleanup(&exe);
+            if !glyphpad_updater::install::old_path(&exe).exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    });
+}
+
+/// `glyphpad update [--check]`: look for a newer version and, without
+/// `--check`, install it. A running GlyphPad keeps the old version until restarted.
+fn update_command(explicit: Option<&Path>, source_dir: Option<PathBuf>, check: bool) -> Result<()> {
+    let location = config_file::locate(explicit)?;
+    let loaded = config_file::load(&location, false)?;
+    let current = semver::Version::parse(VERSION).context("the program's version")?;
+    let source = update::make_source(VERSION, source_dir);
+    let state_path = config_file::update_state_path(&location);
+    let mut state = glyphpad_updater::state::State::load(&state_path);
+    let mut cache = Vec::new();
+    let found = update::find(
+        source.as_ref(),
+        &mut state,
+        &mut cache,
+        &current,
+        update::channel(loaded.config.update.channel),
+    )?;
+    if let Err(e) = state.save(&state_path) {
+        tracing::warn!("cannot save the update state: {e}");
+    }
+    let Some(release) = found else {
+        println!("GlyphPad {VERSION} is up to date.");
+        return Ok(());
+    };
+    println!(
+        "Version {} is available (you have {VERSION}).",
+        release.version
+    );
+    if !release.notes.trim().is_empty() {
+        println!("\n{}\n", release.notes.trim());
+    }
+    println!("Release page: {}", release.page_url);
+    if check {
+        return Ok(());
+    }
+    match update::download_and_install(source.as_ref(), &release) {
+        Ok(_) => {
+            println!(
+                "Updated to {}. Restart GlyphPad to use it (a running one keeps the old version until then).",
+                release.version
+            );
+            Ok(())
+        }
+        Err(glyphpad_updater::Error::NotWritable(why)) => {
+            bail!(
+                "cannot update in place ({why}). Download version {} from {}",
+                release.version,
+                release.page_url
+            )
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn open_folder(path: &Path) {

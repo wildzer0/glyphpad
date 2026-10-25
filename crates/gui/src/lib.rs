@@ -73,6 +73,8 @@ pub struct Host {
     /// tray events wake the window up.
     pub tray: Box<dyn FnOnce(egui::Context) -> Option<Box<dyn Tray>>>,
     pub open_folder: Box<dyn Fn(&Path)>,
+    /// Opens a web page in the default browser.
+    pub open_url: Box<dyn Fn(&str)>,
     /// Activates the window given its native handle, past the system's
     /// focus-stealing prevention.
     pub bring_to_front: Box<dyn Fn(isize)>,
@@ -100,6 +102,7 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
         ui,
         tray,
         open_folder,
+        open_url,
         bring_to_front,
     } = host;
     eframe::run_native(
@@ -124,6 +127,8 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
                 ui,
                 tray,
                 open_folder,
+                open_url,
+                dismissed_failure: None,
                 bring_to_front,
                 hwnd: None,
                 tab: options.tab,
@@ -154,6 +159,9 @@ struct App {
     ui: Arc<UiLink>,
     tray: Option<Box<dyn Tray>>,
     open_folder: Box<dyn Fn(&Path)>,
+    open_url: Box<dyn Fn(&str)>,
+    /// The update failure the user closed, so it is not shown again.
+    dismissed_failure: Option<String>,
     bring_to_front: Box<dyn Fn(isize)>,
     /// Native handle of the window, once known.
     hwnd: Option<isize>,
@@ -237,9 +245,7 @@ impl eframe::App for App {
                 }
                 TrayAction::OpenConfigFolder => (self.open_folder)(&self.config_dir()),
                 TrayAction::CheckUpdates => {
-                    if let Ok(mut s) = self.shared.lock() {
-                        s.status = Some("Update checks arrive in a later version (M6).".into());
-                    }
+                    let _ = self.commands.send(Command::CheckUpdates { manual: true });
                     self.show_window(ctx);
                 }
                 TrayAction::Quit => {
@@ -247,6 +253,11 @@ impl eframe::App for App {
                     ctx.send_viewport_cmd(ViewportCommand::Close);
                 }
             }
+        }
+        // An update took over: this process has nothing left to do.
+        if self.ui.take_quit_request() {
+            self.quitting = true;
+            ctx.send_viewport_cmd(ViewportCommand::Close);
         }
         if self.ui.take_show_request() {
             self.show_window(ctx);
@@ -354,6 +365,7 @@ impl eframe::App for App {
                 bottom: 0,
             }))
             .show(ui, |ui| {
+                self.update_banner(ui, &cx);
                 self.save_banner(ui, &cx);
                 if let Some(wz) = &mut self.wizard {
                     match wz.show(ui, &cx) {
@@ -569,6 +581,100 @@ impl App {
                 }
             });
         });
+    }
+
+    /// Offers a new version, or says what the update is doing (SPEC §12.1).
+    fn update_banner(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
+        use glyphpad_core::service::UpdateStatus as U;
+        let notes = |text: &str| {
+            let lines: Vec<&str> = text
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
+            let mut out = lines.iter().take(6).copied().collect::<Vec<_>>().join("\n");
+            if lines.len() > 6 {
+                out.push_str("\n…");
+            }
+            out
+        };
+        match cx.shared.update.clone() {
+            U::Available(u) => {
+                let heading = format!(
+                    "Version {} is available{} (you have {})",
+                    u.version,
+                    if u.prerelease { ", a pre-release" } else { "" },
+                    cx.version
+                );
+                widgets::banner(
+                    ui,
+                    widgets::Tone::Accent,
+                    &heading,
+                    &notes(&u.notes),
+                    |ui| {
+                        if widgets::primary_button(
+                            ui,
+                            icons::DOWNLOAD_SIMPLE,
+                            "Install and restart",
+                        )
+                        .clicked()
+                        {
+                            cx.send(Command::InstallUpdate);
+                        }
+                        if widgets::button(ui, "", "Ignore this version").clicked() {
+                            cx.send(Command::IgnoreUpdate(u.version.clone()));
+                        }
+                        if widgets::button(ui, icons::ARROW_SQUARE_OUT, "Release notes").clicked() {
+                            (self.open_url)(&u.url);
+                        }
+                    },
+                );
+            }
+            U::Downloading(v) => widgets::banner(
+                ui,
+                widgets::Tone::Accent,
+                &format!("Downloading version {v}…"),
+                "GlyphPad keeps working; it restarts by itself when the download is verified.",
+                |_| {},
+            ),
+            U::Installing(v) | U::Restarting(v) => widgets::banner(
+                ui,
+                widgets::Tone::Accent,
+                &format!("Starting version {v}…"),
+                "If it does not start, the current version is restored.",
+                |_| {},
+            ),
+            U::Manual(u, why) => widgets::banner(
+                ui,
+                widgets::Tone::Warn,
+                &format!(
+                    "Version {} is available, but GlyphPad cannot update itself here",
+                    u.version
+                ),
+                &format!("{why}\nDownload it from the release page and replace this program."),
+                |ui| {
+                    if widgets::primary_button(ui, icons::ARROW_SQUARE_OUT, "Open the release page")
+                        .clicked()
+                    {
+                        (self.open_url)(&u.url);
+                    }
+                },
+            ),
+            U::Failed(why) if self.dismissed_failure.as_deref() != Some(&why) => {
+                widgets::banner(
+                    ui,
+                    widgets::Tone::Bad,
+                    "The update did not work",
+                    &why,
+                    |ui| {
+                        if widgets::button(ui, icons::X, "Dismiss").clicked() {
+                            self.dismissed_failure = Some(why.clone());
+                        }
+                    },
+                );
+            }
+            U::Failed(_) | U::Idle | U::Checking | U::UpToDate => {}
+        }
     }
 
     /// Says what needs attention about saving, above the page.

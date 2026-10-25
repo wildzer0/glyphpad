@@ -101,6 +101,14 @@ pub fn history_path(location: &Location) -> PathBuf {
 }
 
 /// `templates.json` sits next to the configuration it belongs to.
+/// Where the updater keeps what it remembers, next to the configuration.
+pub fn update_state_path(location: &Location) -> PathBuf {
+    location.path().parent().map_or_else(
+        || PathBuf::from("update-state.json"),
+        |d| d.join("update-state.json"),
+    )
+}
+
 pub fn templates_path(location: &Location) -> PathBuf {
     location.path().parent().map_or_else(
         || PathBuf::from(TEMPLATES_FILE_NAME),

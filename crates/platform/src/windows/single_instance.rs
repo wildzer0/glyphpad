@@ -80,6 +80,21 @@ pub fn acquire(on_show: impl Fn() + Send + 'static) -> Instance {
     Instance::Primary(InstanceGuard(mutex))
 }
 
+/// Takes the lock again after giving it up for an update that then failed.
+/// The window that answers "show yourself" is still there, so no listener
+/// is started. `None` if somebody else holds the lock now.
+pub fn reacquire() -> Option<InstanceGuard> {
+    // SAFETY: a static name and no security attributes.
+    let mutex = unsafe { CreateMutexW(None, false, MUTEX_NAME) }.ok()?;
+    // SAFETY: read right after the call that set it.
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        // SAFETY: the duplicate handle is ours to close.
+        let _ = unsafe { CloseHandle(mutex) };
+        return None;
+    }
+    Some(InstanceGuard(mutex))
+}
+
 fn signal_primary() {
     // The first instance may still be creating its window.
     let deadline = Instant::now() + Duration::from_secs(2);
