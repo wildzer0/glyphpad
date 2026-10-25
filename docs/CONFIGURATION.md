@@ -196,6 +196,12 @@ closer than `stroke_gap_ms` to the previous one still belongs to the same symbol
 that matches no configured symbol is judged stroke by stroke, which is what makes two quick
 swipes a sequence.
 
+When a sequence does not fire, the log says which of the two it was: `sequence "name" not
+completed: no next step began within its within_ms` (too slow — raise `within_ms` or do it faster)
+or `... the next gesture was not its next step` (the pad saw something else: check the steps with
+`glyphpad replay <capture> --config <file> --all`, which lists every gesture the engine recognizes
+regardless of what is configured).
+
 
 `direction` is `up`, `down`, `left`, `right`, `up_left`, `up_right`, `down_left` or `down_right`.
 `modifier_fingers` (1–3) makes the gesture a **chord**: that many other fingers must rest on the

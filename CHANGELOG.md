@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A sequence that does not complete now says why in the log ("no next step began within its
+  `within_ms`", or "the next gesture was not its next step") and names the sequence, instead of
+  leaving its steps to fire on their own as if nothing had happened. `glyphpad replay` prints the
+  same line, which is the quickest way to tell a sequence done too slowly from one that is not
+  configured as expected.
+
 ## [1.1.0] - 2026-10-25
 
 ### Added

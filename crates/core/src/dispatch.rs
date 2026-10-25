@@ -75,6 +75,15 @@ fn longest(candidates: &[(usize, u64)]) -> u64 {
     candidates.iter().map(|&(_, d)| d).max().unwrap_or(0)
 }
 
+/// The candidates' names, quoted, for a log line.
+fn names(config: &Config, candidates: &[(usize, u64)]) -> String {
+    candidates
+        .iter()
+        .map(|&(i, _)| format!("\"{}\"", config.gestures[i].def.name))
+        .collect::<Vec<_>>()
+        .join(" or ")
+}
+
 impl Dispatcher {
     pub fn reset(&mut self) {
         self.pending = None;
@@ -103,10 +112,17 @@ impl Dispatcher {
         self.pending.is_some()
     }
 
-    fn flush(&mut self, config: &Config) -> Vec<Dispatched> {
+    fn flush(&mut self, config: &Config, reason: &str) -> Vec<Dispatched> {
         let Some(p) = self.pending.take() else {
             return Vec::new();
         };
+        // A sequence that does not complete leaves its steps to fire on their
+        // own, which for a step that is no gesture at all looks like nothing
+        // happened: say why, in the log and in `replay`.
+        tracing::info!(
+            "sequence {} not completed: {reason}; its steps run on their own",
+            names(config, &p.candidates)
+        );
         p.held
             .into_iter()
             .map(|(r, app)| Dispatched {
@@ -120,7 +136,9 @@ impl Dispatcher {
     /// Lets a held sequence time out.
     pub fn tick(&mut self, config: &Config, now_us: u64) -> Vec<Dispatched> {
         match self.deadline() {
-            Some(d) if now_us >= d => self.flush(config),
+            Some(d) if now_us >= d => {
+                self.flush(config, "no next step began within its `within_ms`")
+            }
             _ => Vec::new(),
         }
     }
@@ -165,6 +183,11 @@ impl Dispatcher {
                     .find(|&&(i, _)| config.gestures[i].steps.len() == p.next_step + 1)
                 {
                     self.pending = None;
+                    tracing::debug!(
+                        "sequence \"{}\" completed by {}",
+                        config.gestures[done].def.name,
+                        r.observation
+                    );
                     out.push(Dispatched {
                         gesture: Some(done),
                         recognition: r,
@@ -173,6 +196,13 @@ impl Dispatcher {
                     return out;
                 }
                 p.next_step += 1;
+                tracing::debug!(
+                    "sequence {}: step {} done, waiting for step {} within {} ms",
+                    names(config, &advanced),
+                    p.next_step,
+                    p.next_step + 1,
+                    longest(&advanced).saturating_sub(r.ended_us) / 1000
+                );
                 p.candidates = advanced
                     .iter()
                     .map(|&(i, _)| candidate_deadline(config, i, r.ended_us))
@@ -182,7 +212,7 @@ impl Dispatcher {
                 return out;
             }
             // The sequence broke: what was held fires on its own.
-            out.extend(self.flush(config));
+            out.extend(self.flush(config, "the next gesture was not its next step"));
         }
 
         let starts: Vec<(usize, u64)> = config
@@ -204,6 +234,11 @@ impl Dispatcher {
                 app,
             });
         } else {
+            tracing::debug!(
+                "sequence {}: step 1 done, waiting for step 2 within {} ms",
+                names(config, &starts),
+                longest(&starts).saturating_sub(r.ended_us) / 1000
+            );
             self.pending = Some(Pending {
                 step_deadline_us: longest(&starts),
                 candidates: starts,
