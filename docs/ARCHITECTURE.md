@@ -108,8 +108,13 @@ used for each step of a sequence) and scores how specifically it matches an
 observation. `core::dispatch::Dispatcher` sits between the engine and the
 actions: plain recognitions resolve to the most specific matching gesture
 (priority order breaks ties); a recognition that starts a sequence is held
-for `within_ms`, and either the sequence completes and fires instead, or the
-held gestures fire in order. `dispatch::run_all` does the same for replays
+until the next step starts, and either the sequence completes and fires
+instead, or the held gestures fire in order. `within_ms` limits the *pause*
+between the end of a step and the start of the next one (`Recognition::
+started_us`), not the time the step takes. The engine reports the touch or
+drawing in progress (`Engine::busy_since`, passed on with
+`Dispatcher::observe`): a step that began in time is waited for until it has
+been recognized (a stroke only after `stroke_gap_ms`), for at most 5 s. `dispatch::run_all` does the same for replays
 and the regression tests.
 
 Recognizers added in M5: `MotionRecognizer` (swipe, edge swipe, pinch and

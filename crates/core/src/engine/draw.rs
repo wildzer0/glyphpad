@@ -69,6 +69,8 @@ impl Arming {
 pub struct Finished {
     pub strokes: Vec<Stroke>,
     pub fallback: Option<Box<Session>>,
+    /// First point of the first stroke.
+    pub started_us: u64,
     /// Lift of the last stroke.
     pub ended_us: u64,
 }
@@ -76,6 +78,14 @@ pub struct Finished {
 impl DrawRecognizer {
     pub fn reset(&mut self) {
         self.state = State::Idle;
+    }
+
+    /// Start of the symbol in progress, if any.
+    pub fn origin(&self) -> Option<u64> {
+        match self.state {
+            State::Collecting { origin_us, .. } => Some(origin_us),
+            State::Idle => None,
+        }
     }
 
     pub fn deadline(&self) -> Option<u64> {
@@ -232,11 +242,13 @@ impl DrawRecognizer {
             State::Collecting {
                 strokes,
                 fallback,
+                origin_us,
                 ended_us,
                 ..
             } => Some(Finished {
                 strokes,
                 fallback,
+                started_us: origin_us,
                 ended_us,
             }),
             State::Idle => None,

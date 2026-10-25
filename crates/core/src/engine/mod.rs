@@ -415,6 +415,9 @@ pub struct Recognition {
     /// a swipe drawn as a stroke, which is only recognized once the stroke
     /// gap has passed. Sequences measure their window from here.
     pub ended_us: u64,
+    /// When the movement itself began (the touch-down, or the first point of
+    /// a drawing). Sequences allow their pause up to here.
+    pub started_us: u64,
     /// What the fingers drew, for the history and its playback.
     pub trace: Arc<GestureTrace>,
 }
@@ -458,6 +461,10 @@ struct DeviceState {
     last_frame_us: u64,
     /// Where the movement of the symbol finished last ended, until used.
     symbol_ended_us: Option<u64>,
+    /// Where that movement began, until used.
+    symbol_started_us: Option<u64>,
+    /// Start of the latest touch session.
+    touch_start_us: u64,
     /// Trace of the last finished session, for taps confirmed later.
     last_trace: Arc<GestureTrace>,
 }
@@ -469,6 +476,21 @@ fn ended_of(observation: &Observation, symbol_ended_us: Option<u64>, at_us: u64)
         Observation::Tap { .. } | Observation::Hold { .. } => at_us,
         _ => symbol_ended_us.map_or(at_us, |e| e.min(at_us)),
     }
+}
+
+/// Start of the movement behind an observation: the first point of a symbol
+/// in progress for what came out of one, else the latest touch-down.
+fn started_of(
+    observation: &Observation,
+    symbol_started_us: Option<u64>,
+    touch_start_us: u64,
+    at_us: u64,
+) -> u64 {
+    match observation {
+        Observation::Tap { .. } | Observation::Hold { .. } => touch_start_us,
+        _ => symbol_started_us.unwrap_or(touch_start_us),
+    }
+    .min(at_us)
 }
 
 impl DeviceState {
@@ -632,7 +654,9 @@ impl Engine {
         st.last_frame_us = ts;
         let mut out: Out = Vec::new();
 
-        match st.tracker.update(frame) {
+        let update = st.tracker.update(frame);
+        let began = update == Some(session::SessionUpdate::Began);
+        match update {
             None => {}
             Some(session::SessionUpdate::Ended) => {
                 if let Some(s) = st.tracker.take() {
@@ -689,11 +713,17 @@ impl Engine {
             }
         }
         let ended = st.symbol_ended_us.take();
+        let started = st.symbol_started_us.take();
+        let touch_start = st.touch_start_us;
+        if began {
+            st.touch_start_us = ts;
+        }
         let out: Vec<Recognition> = out
             .into_iter()
             .map(|(observation, trace)| Recognition {
                 device,
                 ended_us: ended_of(&observation, ended, ts),
+                started_us: started_of(&observation, started, touch_start, ts),
                 observation,
                 at_us: ts,
                 trace,
@@ -724,6 +754,7 @@ impl Engine {
             return Vec::new();
         };
         st.symbol_ended_us = Some(done.ended_us);
+        st.symbol_started_us = Some(done.started_us);
         let trace = Arc::new(GestureTrace {
             fingers: BTreeMap::new(),
             strokes: done.strokes.clone(),
@@ -811,9 +842,12 @@ impl Engine {
                 Self::consume(st, &mut out, hold);
             }
             let ended = st.symbol_ended_us.take();
+            let started = st.symbol_started_us.take();
+            let touch_start = st.touch_start_us;
             all.extend(out.into_iter().map(|(observation, trace)| Recognition {
                 device,
                 ended_us: ended_of(&observation, ended, now_us),
+                started_us: started_of(&observation, started, touch_start, now_us),
                 observation,
                 at_us: now_us,
                 trace,
@@ -843,6 +877,16 @@ impl Engine {
             out.extend(self.tick(d));
         }
         out
+    }
+
+    /// Start of the touch or drawing in progress, if any: something is being
+    /// done and will be recognized once it is over.
+    pub fn busy_since(&self) -> Option<u64> {
+        self.devices
+            .values()
+            .flat_map(|st| [st.tracker.session().map(|s| s.start_us), st.draw.origin()])
+            .flatten()
+            .min()
     }
 
     /// Earliest time at which [`tick`](Self::tick) may produce something.

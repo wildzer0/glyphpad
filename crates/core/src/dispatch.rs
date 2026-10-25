@@ -8,10 +8,9 @@
 //! sequence breaks or times out, they fire in order after all.
 
 use crate::action::AppInfo;
-use crate::config::{Config, DrawActivation};
+use crate::config::Config;
 use crate::engine::{Engine, Observation, Recognition, resolve};
 use crate::model::DeviceEvent;
-use crate::trigger::Trigger;
 
 /// A recognition and the gesture it triggers (index into `config.gestures`).
 #[derive(Debug, Clone, PartialEq)]
@@ -28,18 +27,21 @@ struct Pending {
     candidates: Vec<usize>,
     /// Index of the step each candidate expects next.
     next_step: usize,
-    /// Latest end of the next step for the sequence to go on.
+    /// Latest start of the next step for the sequence to go on.
     step_deadline_us: u64,
-    /// When the held gestures fire after all: the step deadline, plus the
-    /// stroke gap if the next step may be drawn as a stroke, which is only
-    /// recognized that long after the fingers lift.
-    deadline_us: u64,
     held: Vec<(Recognition, Option<AppInfo>)>,
 }
+
+/// A touch that began in time is waited for at most this long: a gesture is
+/// only recognized once it is over, and a finger left resting must not hold
+/// the gestures back forever.
+const ENGAGED_MAX_US: u64 = 5_000_000;
 
 #[derive(Debug, Default)]
 pub struct Dispatcher {
     pending: Option<Pending>,
+    /// Start of the touch or drawing the engine is in the middle of.
+    busy_since: Option<u64>,
 }
 
 fn index_of(config: &Config, observation: &Observation, app: Option<&AppInfo>) -> Option<usize> {
@@ -55,47 +57,44 @@ fn is_diagnostic(o: &Observation) -> bool {
     )
 }
 
-/// Whether the touch for `step` may be taken for a stroke of a symbol, and
-/// so recognized only once the stroke gap has passed.
-fn may_be_stroke(config: &Config, step: &Trigger) -> bool {
-    let fingers = step.fingers();
-    matches!(step, Trigger::Swipe { .. } | Trigger::EdgeSwipe { .. })
-        && match config.settings.draw_activation {
-            DrawActivation::Fingers { count } => fingers == count || fingers == 1,
-            DrawActivation::Edge { .. } | DrawActivation::Hold { .. } => fingers == 1,
-            DrawActivation::Toggle { .. } => fingers == 1,
-        }
-}
-
-/// Deadlines of a sequence waiting for step `step` of `candidates` after
-/// the previous one ended at `ended_us`: the step must end by the first,
-/// the held gestures fire at the second.
-fn deadlines(config: &Config, candidates: &[usize], step: usize, ended_us: u64) -> (u64, u64) {
+/// Latest start of step `step` of `candidates` after the previous one ended
+/// at `ended_us`. The pause between the steps is what `within_ms` limits,
+/// not the time the next step itself takes.
+fn step_deadline(config: &Config, candidates: &[usize], ended_us: u64) -> u64 {
     let within = candidates
         .iter()
         .map(|&i| config.gestures[i].within_ms)
         .max()
         .unwrap_or(0);
-    let by = ended_us + within * 1000;
-    let stroke = candidates
-        .iter()
-        .filter_map(|&i| config.gestures[i].steps.get(step))
-        .any(|t| may_be_stroke(config, t));
-    let grace = if stroke {
-        config.settings.stroke_gap_ms * 1000
-    } else {
-        0
-    };
-    (by, by + grace)
+    ended_us + within * 1000
 }
 
 impl Dispatcher {
     pub fn reset(&mut self) {
         self.pending = None;
+        self.busy_since = None;
     }
 
+    /// Tells where the engine is: `busy_since` is the start of the touch or
+    /// drawing in progress. A step that began in time is waited for until it
+    /// has been recognized, however long that takes (a swipe drawn as a
+    /// stroke only after the stroke gap). Call after every engine step.
+    pub fn observe(&mut self, busy_since: Option<u64>) {
+        self.busy_since = busy_since;
+    }
+
+    /// When the held gestures fire after all.
     pub fn deadline(&self) -> Option<u64> {
-        self.pending.as_ref().map(|p| p.deadline_us)
+        let p = self.pending.as_ref()?;
+        Some(match self.busy_since {
+            Some(b) if b <= p.step_deadline_us => p.step_deadline_us.max(b + ENGAGED_MAX_US),
+            _ => p.step_deadline_us,
+        })
+    }
+
+    /// Whether a sequence is waiting for its next step.
+    pub fn is_pending(&self) -> bool {
+        self.pending.is_some()
     }
 
     fn flush(&mut self, config: &Config) -> Vec<Dispatched> {
@@ -114,8 +113,8 @@ impl Dispatcher {
 
     /// Lets a held sequence time out.
     pub fn tick(&mut self, config: &Config, now_us: u64) -> Vec<Dispatched> {
-        match &self.pending {
-            Some(p) if now_us >= p.deadline_us => self.flush(config),
+        match self.deadline() {
+            Some(d) if now_us >= d => self.flush(config),
             _ => Vec::new(),
         }
     }
@@ -126,7 +125,7 @@ impl Dispatcher {
         r: Recognition,
         app: Option<AppInfo>,
     ) -> Vec<Dispatched> {
-        let mut out = self.tick(config, r.at_us);
+        let mut out = Vec::new();
         if is_diagnostic(&r.observation) {
             out.push(Dispatched {
                 gesture: None,
@@ -151,9 +150,8 @@ impl Dispatcher {
                 .copied()
                 .filter(|&i| matches_step(i, p.next_step))
                 .collect();
-            // The window counts to the end of the movement, not to the
-            // moment it was recognized.
-            if !advanced.is_empty() && r.ended_us <= p.step_deadline_us {
+            // The pause counts up to the moment the movement began.
+            if !advanced.is_empty() && r.started_us <= p.step_deadline_us {
                 // Candidates are in priority order, so the first complete one wins.
                 if let Some(&done) = advanced
                     .iter()
@@ -168,8 +166,7 @@ impl Dispatcher {
                     return out;
                 }
                 p.next_step += 1;
-                (p.step_deadline_us, p.deadline_us) =
-                    deadlines(config, &advanced, p.next_step, r.ended_us);
+                p.step_deadline_us = step_deadline(config, &advanced, r.ended_us);
                 p.candidates = advanced;
                 p.held.push((r, app));
                 return out;
@@ -197,12 +194,10 @@ impl Dispatcher {
                 app,
             });
         } else {
-            let (step_deadline_us, deadline_us) = deadlines(config, &starts, 1, r.ended_us);
             self.pending = Some(Pending {
+                step_deadline_us: step_deadline(config, &starts, r.ended_us),
                 candidates: starts,
                 next_step: 1,
-                step_deadline_us,
-                deadline_us,
                 held: vec![(r, app)],
             });
         }
@@ -235,15 +230,18 @@ pub fn run_all<'a>(
             while let Some(t) = next(engine, &dispatcher).filter(|&t| t <= frame.timestamp_us) {
                 let rs = engine.tick(t);
                 feed(rs, &mut dispatcher, &mut out);
+                dispatcher.observe(engine.busy_since());
                 out.extend(dispatcher.tick(config, t));
             }
         }
         let rs = engine.on_event(event);
         feed(rs, &mut dispatcher, &mut out);
+        dispatcher.observe(engine.busy_since());
     }
     while let Some(t) = next(engine, &dispatcher) {
         let rs = engine.tick(t);
         feed(rs, &mut dispatcher, &mut out);
+        dispatcher.observe(engine.busy_since());
         out.extend(dispatcher.tick(config, t));
     }
     out
@@ -286,11 +284,17 @@ action = { type = "minimize" }
     }
 
     fn rec(observation: Observation, at_ms: u64) -> Recognition {
+        span(observation, at_ms, at_ms)
+    }
+
+    /// A recognition of a movement from `start_ms` to `end_ms`.
+    fn span(observation: Observation, start_ms: u64, end_ms: u64) -> Recognition {
         Recognition {
             device: DeviceId(1),
             observation,
-            at_us: at_ms * 1000,
-            ended_us: at_ms * 1000,
+            at_us: end_ms * 1000,
+            ended_us: end_ms * 1000,
+            started_us: start_ms * 1000,
             trace: Arc::default(),
         }
     }
@@ -325,12 +329,49 @@ action = { type = "minimize" }
         let c = config();
         let mut d = Dispatcher::default();
         assert!(d.on_recognition(&c, rec(tap(), 100), None).is_empty());
-        // 500 ms window plus the 400 ms stroke gap: the 3-finger swipe may
-        // be drawn as a stroke, which is recognized that much later.
-        assert_eq!(d.deadline(), Some(1_000_000));
+        // 500 ms of pause after the tap ended.
+        assert_eq!(d.deadline(), Some(600_000));
         let out = d.on_recognition(&c, rec(up(), 400), None);
         assert_eq!(names(&c, &out), ["tap-then-up"]);
         assert!(d.deadline().is_none());
+    }
+
+    #[test]
+    fn the_pause_counts_to_the_start_of_the_next_step() {
+        let c = config();
+        let mut d = Dispatcher::default();
+        d.on_recognition(&c, rec(tap(), 100), None);
+        // Starts 450 ms after the tap, takes 300 ms: still in time.
+        let out = d.on_recognition(&c, span(up(), 550, 850), None);
+        assert_eq!(names(&c, &out), ["tap-then-up"]);
+    }
+
+    #[test]
+    fn a_step_begun_in_time_is_waited_for() {
+        let c = config();
+        let mut d = Dispatcher::default();
+        d.on_recognition(&c, rec(tap(), 100), None);
+        // The fingers touched down in time: nothing fires while it lasts,
+        // not even when the pause is over.
+        d.observe(Some(500_000));
+        assert!(d.tick(&c, 700_000).is_empty());
+        assert!(d.tick(&c, 3_000_000).is_empty());
+        let out = d.on_recognition(&c, span(up(), 500, 1_300), None);
+        assert_eq!(names(&c, &out), ["tap-then-up"]);
+        // A touch left resting is not waited for forever.
+        d.on_recognition(&c, rec(tap(), 2_000), None);
+        d.observe(Some(2_200_000));
+        assert!(d.tick(&c, 6_000_000).is_empty());
+        assert_eq!(names(&c, &d.tick(&c, 7_200_000)), ["tap3"]);
+    }
+
+    #[test]
+    fn a_touch_begun_too_late_is_not_waited_for() {
+        let c = config();
+        let mut d = Dispatcher::default();
+        d.on_recognition(&c, rec(tap(), 100), None);
+        d.observe(Some(800_000));
+        assert_eq!(names(&c, &d.tick(&c, 600_000)), ["tap3"]);
     }
 
     #[test]
@@ -338,8 +379,8 @@ action = { type = "minimize" }
         let c = config();
         let mut d = Dispatcher::default();
         assert!(d.on_recognition(&c, rec(tap(), 100), None).is_empty());
-        assert!(d.tick(&c, 900_000).is_empty());
-        assert_eq!(names(&c, &d.tick(&c, 1_000_000)), ["tap3"]);
+        assert!(d.tick(&c, 500_000).is_empty());
+        assert_eq!(names(&c, &d.tick(&c, 600_000)), ["tap3"]);
         // A late second step is just a swipe.
         assert_eq!(
             names(&c, &d.on_recognition(&c, rec(up(), 1_300), None)),
