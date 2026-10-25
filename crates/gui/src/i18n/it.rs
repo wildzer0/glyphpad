@@ -374,6 +374,12 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Edit this zone", "Modifica questa zona"),
     ("All four corners", "Tutti e quattro gli angoli"),
     ("Merge the chosen ones", "Unisci quelli scelti"),
+    ("Closest symbols", "Simboli più vicini"),
+    (
+        "What the unrecognized drawings came closest to: the ones being drawn badly, or whose minimum score is too high.",
+        "A cosa si avvicinavano di più i disegni non riconosciuti: quelli disegnati male, o con una soglia minima troppo alta.",
+    ),
+    ("{} times, last score {}", "{} volte, ultimo punteggio {}"),
     ("Export this gesture…", "Esporta questa gesture…"),
     (
         "The two halves of an X recorded apart become one example.",

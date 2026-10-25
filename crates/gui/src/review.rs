@@ -105,6 +105,31 @@ fn statistics_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) {
                             ui.label(w::strong_raw(usage.unmapped.to_string()));
                         },
                     );
+                    let closest = usage.closest_symbols(5);
+                    if !closest.is_empty() {
+                        w::row(
+                            ui,
+                            "Closest symbols",
+                            "What the unrecognized drawings came closest to: the ones being drawn badly, or whose minimum score is too high.",
+                            |ui| {
+                                ui.vertical(|ui| {
+                                    for (symbol, best) in &closest {
+                                        ui.horizontal(|ui| {
+                                            ui.label(w::strong_raw((*symbol).to_string()));
+                                            let text = crate::i18n::tf(
+                                                "{} times, last score {}",
+                                                &[
+                                                    &best.count.to_string(),
+                                                    &format!("{:.2}", best.last_score),
+                                                ],
+                                            );
+                                            ui.label(w::dim_raw(ui, text));
+                                        });
+                                    }
+                                });
+                            },
+                        );
+                    }
                     if let Some(since) = &usage.since {
                         w::row(ui, "Counting since", "", |ui| {
                             ui.label(since);

@@ -665,7 +665,10 @@ impl Service {
                     tracing::info!("drawing not recognized ({best})");
                     self.feedback.message("Not recognized", best, false);
                     if !test {
-                        self.count(|u| u.unrecognized += 1);
+                        // Kept by symbol, so the statistics say which one is
+                        // being drawn badly rather than only how often.
+                        let closest = candidates.first().map(|c| (c.symbol.as_str(), c.score));
+                        self.count(|u| u.record_unrecognized(closest));
                     }
                 }
                 Observation::Symbol { name, score, .. } => {
