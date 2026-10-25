@@ -46,6 +46,18 @@ equals, the **first in the file** wins.
 
 ## `[settings]`
 
+### Touchpad
+
+| Key | Default | Meaning |
+|---|---|---|
+| `touchpad` | `""` | Part of the name of the pad to use, as the system reports it (`"amazonbasics"`); empty uses every pad that reports |
+
+A laptop with an internal pad and an external one reports both, and so does a machine with a
+wireless receiver that carries a digitizer. With `touchpad` set, the frames of the other pads are
+ignored, and the zone map in the window is drawn with that pad's size; the name is compared
+without regard to case and only needs to be a part of it. Settings → Touchpad lists the pads that
+have reported, with their sizes.
+
 ### Thresholds
 
 Global, millimeters. They define what counts as a tap, a hold, a swipe… For why the defaults

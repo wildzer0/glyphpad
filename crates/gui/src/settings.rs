@@ -142,7 +142,7 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) {
     let (s, u) = (&mut draft.settings, &mut draft.update);
     w::scroll_page(ui, "settings", |ui| {
         w::centered_column(ui, theme::PAGE_MAX_WIDTH, |ui| {
-            appearance_and_window(ui, s);
+            appearance_and_window(ui, s, &cx.shared.devices);
             drawing(ui, s, &d);
             profile_section(ui, cx, s, &profiles);
             repeat_and_pause(ui, cx, s);
@@ -179,7 +179,11 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) {
     }
 }
 
-fn appearance_and_window(ui: &mut egui::Ui, s: &mut Settings) {
+fn appearance_and_window(
+    ui: &mut egui::Ui,
+    s: &mut Settings,
+    devices: &[glyphpad_core::DeviceInfo],
+) {
     w::section(ui, "Appearance", "", |ui| {
         w::row(ui, "Theme", "“System” follows Windows.", |ui| {
             w::segmented_with_icons(
@@ -229,6 +233,39 @@ fn appearance_and_window(ui: &mut egui::Ui, s: &mut Settings) {
             &mut s.statistics,
         );
     });
+    w::section(
+        ui,
+        "Touchpad",
+        "Which pad GlyphPad listens to. Its size is what the zone map is drawn with.",
+        |ui| {
+            let mut chosen = s.touchpad.clone();
+            let mut options: Vec<(String, std::borrow::Cow<'static, str>)> =
+                vec![(String::new(), "Every touchpad that reports".into())];
+            for d in devices {
+                options.push((
+                    d.name.clone(),
+                    format!("{} — {:.0} × {:.0} mm", d.name, d.width_mm, d.height_mm).into(),
+                ));
+            }
+            w::row(ui, "Use", "", |ui| {
+                w::dropdown(ui, "touchpad-pick", &mut chosen, &options, 340.0);
+            });
+            if devices.is_empty() {
+                w::hint(ui, "No touchpad has reported yet.");
+            } else if chosen.is_empty() {
+                w::hint(
+                    ui,
+                    "Every pad that reports fires gestures. Choose yours to ignore the others.",
+                );
+            } else {
+                w::hint(
+                    ui,
+                    "Frames from the other touchpads are ignored, and the zone map uses this pad's size.",
+                );
+            }
+            s.touchpad = chosen;
+        },
+    );
 }
 
 fn drawing(ui: &mut egui::Ui, s: &mut Settings, d: &Settings) {

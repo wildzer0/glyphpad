@@ -48,7 +48,7 @@ fn touchpad(ui: &mut egui::Ui, cx: &Ctx, width: f32) {
     let s = cx.shared;
     let p = pal(ui);
     w::section(ui, "Touchpad", "", |ui| {
-        let (w_mm, h_mm) = s.pad_size_mm();
+        let (w_mm, h_mm) = s.pad_size_mm_for(&s.config.settings.touchpad);
         let pad_w = (width - 2.0 * space::XL).min(560.0);
         let (_, painter, pad) = Pad::new(ui, pad_w, w_mm, h_mm);
         canvas::draw_polylines(&painter, &pad, &s.drawing, Stroke::new(3.5, p.accent));

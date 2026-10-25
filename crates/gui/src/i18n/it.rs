@@ -330,6 +330,27 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Type a text", "Digita un testo"),
     ("Zone", "Zona"),
     (
+        "Which pad GlyphPad listens to. Its size is what the zone map is drawn with.",
+        "A quale touchpad GlyphPad dà ascolto. La sua dimensione è quella con cui viene disegnata la mappa delle zone.",
+    ),
+    ("Use", "Usa"),
+    (
+        "Every touchpad that reports",
+        "Ogni touchpad che si presenta",
+    ),
+    (
+        "No touchpad has reported yet.",
+        "Nessun touchpad si è ancora presentato.",
+    ),
+    (
+        "Every pad that reports fires gestures. Choose yours to ignore the others.",
+        "Ogni touchpad che si presenta esegue le gesture. Scegli il tuo per ignorare gli altri.",
+    ),
+    (
+        "Frames from the other touchpads are ignored, and the zone map uses this pad's size.",
+        "I dati degli altri touchpad vengono ignorati e la mappa delle zone usa la dimensione di questo.",
+    ),
+    (
         "Click the map to place the zone, drag its corner to resize it.",
         "Clicca sulla mappa per posizionare la zona, trascinane l'angolo per ridimensionarla.",
     ),

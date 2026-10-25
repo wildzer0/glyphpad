@@ -9,6 +9,10 @@ config_version = 1
 
 [settings]
 active_profile = "default"
+# Which touchpad to use: part of its name ("amazonbasics", say). Empty listens
+# to every pad that reports; a laptop with an internal pad usually wants this
+# set, so the internal one does not fire gestures meant for the external one.
+# touchpad = "amazonbasics"
 
 # Thresholds. Distances are millimeters, so they work on any touchpad size.
 tap_max_duration_ms = 250

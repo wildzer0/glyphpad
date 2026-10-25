@@ -549,6 +549,9 @@ fn detail(
     profiles: &[String],
 ) {
     let default_confidence = ed.draft.settings.default_confidence;
+    // The pad the zones are for: the one chosen in Settings, else the one in
+    // use. Its size is what the zone map is drawn with.
+    let pad = cx.shared.pad_size_mm_for(&ed.draft.settings.touchpad);
     let others: Vec<String> = ed
         .draft
         .gestures
@@ -647,7 +650,7 @@ fn detail(
                         symbols,
                         default_confidence,
                         true,
-                        cx.shared.pad_size_mm(),
+                        pad,
                     );
                     forms::set_trigger(def, &t);
                     if def.kind == GestureKind::Sequence {
@@ -672,7 +675,7 @@ fn detail(
                             def,
                             symbols,
                             default_confidence,
-                            cx.shared.pad_size_mm(),
+                            pad,
                         );
                     } else {
                         def.steps = None;

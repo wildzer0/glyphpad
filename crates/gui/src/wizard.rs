@@ -323,7 +323,7 @@ impl Wizard {
         let s = cx.shared;
         let p = pal(ui);
         let n = s.recorded.len();
-        let (w_mm, h_mm) = s.pad_size_mm();
+        let (w_mm, h_mm) = s.pad_size_mm_for(&s.config.settings.touchpad);
         let total = s
             .recorded
             .iter()
@@ -682,7 +682,8 @@ impl Wizard {
                 &symbols,
                 cx.shared.config.settings.default_confidence,
                 false,
-                cx.shared.pad_size_mm(),
+                cx.shared
+                    .pad_size_mm_for(&cx.shared.config.settings.touchpad),
             );
             forms::set_trigger(def, &t);
         });

@@ -23,6 +23,10 @@ pub const EXAMPLE_CONFIG: &str = include_str!("../../../glyphpad.example.toml");
 pub struct Settings {
     /// Gestures with a `profile` only fire while it is active.
     pub active_profile: String,
+    /// Which touchpad to use: part of its name, as the system reports it
+    /// ("amazonbasics", say). Empty uses every touchpad that reports, and a
+    /// machine with an internal one as well as an external will see both.
+    pub touchpad: String,
 
     // Thresholds. Distances are in millimeters so they hold on touchpads of any size.
     /// Longest touch still counted as a tap. Windows' own tap detection
@@ -181,6 +185,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             active_profile: "default".into(),
+            touchpad: String::new(),
             tap_max_duration_ms: 250,
             tap_max_movement_mm: 4.0,
             multi_tap_gap_ms: 300,
@@ -795,6 +800,7 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
 
     let s = &raw.settings;
     for (name, ok) in [
+        ("touchpad", s.touchpad.chars().count() <= 120),
         (
             "tap_max_duration_ms",
             (1..=5_000).contains(&s.tap_max_duration_ms),

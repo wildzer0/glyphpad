@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `[settings] touchpad` chooses which touchpad to use, by part of its name: the other pads'
+  frames are then ignored, and the zone map is drawn with the chosen pad's size. Settings →
+  Touchpad lists the pads that have reported, with their sizes. Empty (the default) keeps
+  listening to them all, as before.
 - A zone is placed on a map of the real touchpad: click to put it, drag its corner to resize it,
   or pick one of the four corners; the numbers in millimetres stay underneath.
 - Two zones that overlap are reported as a conflict, in the gesture list's conflict banner.

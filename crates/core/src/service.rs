@@ -221,10 +221,29 @@ impl Shared {
 
     /// Size of the touchpad in use, or of the first one.
     pub fn pad_size_mm(&self) -> (f32, f32) {
-        self.active_device
-            .and_then(|id| self.device(id))
+        self.pad_size_mm_for("")
+    }
+
+    /// Size of the touchpad whose name contains `wanted` (as
+    /// `[settings] touchpad` says), of the one that reported last, or of the
+    /// first one: with an internal pad and an external one, the size has to
+    /// come from the pad the zones are for.
+    pub fn pad_size_mm_for(&self, wanted: &str) -> (f32, f32) {
+        self.pad_named(wanted)
+            .or_else(|| self.active_device.and_then(|id| self.device(id)))
             .or(self.devices.first())
             .map_or((100.0, 70.0), |d| (d.width_mm, d.height_mm))
+    }
+
+    /// The touchpad whose name contains `wanted`, without regard to case.
+    pub fn pad_named(&self, wanted: &str) -> Option<&DeviceInfo> {
+        let wanted = wanted.trim().to_lowercase();
+        if wanted.is_empty() {
+            return None;
+        }
+        self.devices
+            .iter()
+            .find(|d| d.name.to_lowercase().contains(&wanted))
     }
 }
 
@@ -289,5 +308,51 @@ impl std::fmt::Debug for UiLink {
         f.debug_struct("UiLink")
             .field("visible", &self.is_visible())
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn device(id: u32, name: &str, w: f32, h: f32) -> DeviceInfo {
+        DeviceInfo {
+            id: DeviceId(id),
+            path: format!("path-{id}"),
+            name: name.into(),
+            vendor_id: 1,
+            product_id: 2,
+            width_mm: w,
+            height_mm: h,
+            max_contacts: 5,
+        }
+    }
+
+    fn shared(devices: Vec<DeviceInfo>, active: Option<DeviceId>) -> Shared {
+        Shared {
+            devices,
+            active_device: active,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_chosen_pad_gives_the_size() {
+        let s = shared(
+            vec![
+                device(1, "Telink amazonbasics_touchpad", 155.8, 115.2),
+                device(2, "Microsoft HIDI2C Device", 117.0, 72.0),
+            ],
+            Some(DeviceId(2)),
+        );
+        // Without a choice, the pad that reported last; with one, that pad,
+        // without regard to case and on a part of the name.
+        assert_eq!(s.pad_size_mm(), (117.0, 72.0));
+        assert_eq!(s.pad_size_mm_for("AmazonBasics"), (155.8, 115.2));
+        assert_eq!(s.pad_size_mm_for("hid"), (117.0, 72.0));
+        // A pad that has not reported yet: the usual fallback.
+        assert_eq!(s.pad_size_mm_for("logitech"), (117.0, 72.0));
+        assert!(s.pad_named("amazon").is_some());
+        assert!(s.pad_named("  ").is_none());
     }
 }

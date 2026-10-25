@@ -389,6 +389,12 @@ impl Service {
     fn on_event(&mut self, event: DeviceEvent) -> Vec<Recognition> {
         match &event {
             DeviceEvent::Frame { device, frame } => {
+                // With one pad of several chosen, the others' frames are not
+                // gestures: an internal pad under the wrists would otherwise
+                // fire what the external one is meant to.
+                if !self.pad_wanted(*device) {
+                    return Vec::new();
+                }
                 self.clock = (frame.timestamp_us, Instant::now());
                 // The frame that lifts the last finger is never skipped:
                 // it is the only one to say nothing touches any more.
@@ -478,6 +484,18 @@ impl Service {
                 self.engine.on_event(&event)
             }
         }
+    }
+
+    /// Whether frames from `device` are the ones to use: with
+    /// `[settings] touchpad` set, only that pad's, otherwise every pad's.
+    fn pad_wanted(&self, device: DeviceId) -> bool {
+        let wanted = self.config.settings.touchpad.trim();
+        if wanted.is_empty() {
+            return true;
+        }
+        self.devices
+            .get(&device)
+            .is_some_and(|d| d.name.to_lowercase().contains(&wanted.to_lowercase()))
     }
 
     fn publish_devices(&self) {
