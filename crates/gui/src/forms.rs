@@ -162,6 +162,7 @@ pub fn trigger_form(
     symbols: &[String],
     default_confidence: f32,
     allow_sequence: bool,
+    pad: (f32, f32),
 ) {
     let kind = t.kind.unwrap_or(GestureKind::Tap);
     if let Some(k) = kind_picker(ui, kind, allow_sequence) {
@@ -275,50 +276,64 @@ pub fn trigger_form(
                 );
                 t.taps = (taps > 1).then_some(taps);
             });
+            let mut r = t.region.unwrap_or(glyphpad_core::trigger::Region {
+                x: [0.0, 20.0],
+                y: [0.0, 15.0],
+            });
             w::row(
                 ui,
                 "Region",
-                "The part of the touchpad, in millimetres from its top-left corner.",
+                "Click the map to place the zone, drag its corner to resize it.",
                 |ui| {
-                    let mut r = t.region.unwrap_or(glyphpad_core::trigger::Region {
-                        x: [0.0, 20.0],
-                        y: [0.0, 15.0],
+                    ui.horizontal(|ui| {
+                        for (label, corner) in [
+                            ("Top left", Corner::TopLeft),
+                            ("Top right", Corner::TopRight),
+                            ("Bottom left", Corner::BottomLeft),
+                            ("Bottom right", Corner::BottomRight),
+                        ] {
+                            if w::small_button(ui, label).clicked() {
+                                r = corner_region(corner, pad);
+                            }
+                        }
                     });
+                    ui.add_space(space::XS);
+                    let changed = zone_map(ui, id.with("zone-map"), &mut r, pad);
+                    let _ = changed;
+                    ui.add_space(space::XS);
                     ui.horizontal(|ui| {
                         ui.label(w::dim(ui, "x"));
                         ui.add(
                             egui::DragValue::new(&mut r.x[0])
-                                .range(0.0..=400.0)
+                                .range(0.0..=pad.0)
                                 .speed(0.5)
                                 .suffix(" mm"),
                         );
                         ui.label(w::dim(ui, "→"));
                         ui.add(
                             egui::DragValue::new(&mut r.x[1])
-                                .range(0.0..=400.0)
+                                .range(0.0..=pad.0)
                                 .speed(0.5)
                                 .suffix(" mm"),
                         );
-                    });
-                    ui.horizontal(|ui| {
                         ui.label(w::dim(ui, "y"));
                         ui.add(
                             egui::DragValue::new(&mut r.y[0])
-                                .range(0.0..=400.0)
+                                .range(0.0..=pad.1)
                                 .speed(0.5)
                                 .suffix(" mm"),
                         );
                         ui.label(w::dim(ui, "→"));
                         ui.add(
                             egui::DragValue::new(&mut r.y[1])
-                                .range(0.0..=400.0)
+                                .range(0.0..=pad.1)
                                 .speed(0.5)
                                 .suffix(" mm"),
                         );
                     });
-                    t.region = Some(r);
                 },
             );
+            t.region = Some(sorted(r));
         }
         GestureKind::Symbol => {
             let mut chosen = t.symbol.as_ref().map(OneOrMany::to_vec).unwrap_or_default();
@@ -470,6 +485,147 @@ fn threshold_row(
     });
 }
 
+/// The smallest zone worth tapping, in millimetres.
+const MIN_ZONE_MM: f32 = 5.0;
+
+#[derive(Clone, Copy)]
+enum Corner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// A corner zone of the pad: a fifth of each side, so it is easy to hit
+/// without looking.
+fn corner_region(corner: Corner, pad: (f32, f32)) -> glyphpad_core::trigger::Region {
+    let (w, h) = (
+        (pad.0 * 0.2).max(MIN_ZONE_MM),
+        (pad.1 * 0.2).max(MIN_ZONE_MM),
+    );
+    let (x, y) = match corner {
+        Corner::TopLeft => (0.0, 0.0),
+        Corner::TopRight => (pad.0 - w, 0.0),
+        Corner::BottomLeft => (0.0, pad.1 - h),
+        Corner::BottomRight => (pad.0 - w, pad.1 - h),
+    };
+    sorted(glyphpad_core::trigger::Region {
+        x: [x, x + w],
+        y: [y, y + h],
+    })
+}
+
+/// Edges in order, even when the numbers were typed backwards.
+fn sorted(mut r: glyphpad_core::trigger::Region) -> glyphpad_core::trigger::Region {
+    if r.x[0] > r.x[1] {
+        r.x.swap(0, 1);
+    }
+    if r.y[0] > r.y[1] {
+        r.y.swap(0, 1);
+    }
+    r
+}
+
+/// The touchpad drawn to scale, with the zone on it. Clicking places the
+/// zone under the pointer; dragging its bottom-right handle resizes it. The
+/// numbers below stay the truth — the map only spares the arithmetic.
+fn zone_map(
+    ui: &mut egui::Ui,
+    id: Id,
+    region: &mut glyphpad_core::trigger::Region,
+    pad: (f32, f32),
+) -> bool {
+    let p = pal(ui);
+    let width = ui.available_width().clamp(180.0, 380.0);
+    let scale = width / pad.0.max(1.0);
+    let size = egui::vec2(pad.0 * scale, pad.1 * scale);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, theme::radius::CARD, p.surface);
+    painter.rect_stroke(
+        rect,
+        theme::radius::CARD,
+        egui::Stroke::new(1.0, p.border_strong),
+        egui::StrokeKind::Inside,
+    );
+    // A grid every quarter of the pad, to read the position off it.
+    for i in 1..4 {
+        let x = rect.left() + rect.width() * i as f32 / 4.0;
+        let y = rect.top() + rect.height() * i as f32 / 4.0;
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            egui::Stroke::new(1.0, p.border.gamma_multiply(0.6)),
+        );
+        painter.line_segment(
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            egui::Stroke::new(1.0, p.border.gamma_multiply(0.6)),
+        );
+    }
+    let to_screen = |x: f32, y: f32| egui::pos2(rect.left() + x * scale, rect.top() + y * scale);
+    let to_mm = |pos: egui::Pos2| {
+        (
+            ((pos.x - rect.left()) / scale).clamp(0.0, pad.0),
+            ((pos.y - rect.top()) / scale).clamp(0.0, pad.1),
+        )
+    };
+    let zone = egui::Rect::from_two_pos(
+        to_screen(region.x[0], region.y[0]),
+        to_screen(region.x[1], region.y[1]),
+    );
+    painter.rect_filled(zone, 4, p.accent.gamma_multiply(0.22));
+    painter.rect_stroke(
+        zone,
+        4,
+        egui::Stroke::new(1.5, p.accent),
+        egui::StrokeKind::Inside,
+    );
+    let handle = egui::Rect::from_center_size(zone.max, egui::Vec2::splat(14.0));
+    painter.circle_filled(handle.center(), 4.5, p.accent);
+
+    let resizing_id = id.with("resizing");
+    let mut resizing: bool = ui.data_mut(|d| d.get_temp(resizing_id)).unwrap_or(false);
+    let mut changed = false;
+    if response.drag_started() {
+        resizing = response
+            .interact_pointer_pos()
+            .is_some_and(|pos| handle.expand(6.0).contains(pos));
+        ui.data_mut(|d| d.insert_temp(resizing_id, resizing));
+    }
+    if (response.clicked() || response.dragged())
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let (mx, my) = to_mm(pos);
+        if resizing {
+            // The bottom-right corner follows the pointer.
+            let (w, h) = (mx - region.x[0], my - region.y[0]);
+            region.x[1] = (region.x[0] + w.max(MIN_ZONE_MM)).min(pad.0);
+            region.y[1] = (region.y[0] + h.max(MIN_ZONE_MM)).min(pad.1);
+        } else {
+            // The zone moves, keeping its size and staying on the pad.
+            let (w, h) = (region.x[1] - region.x[0], region.y[1] - region.y[0]);
+            let x0 = (mx - w / 2.0).clamp(0.0, (pad.0 - w).max(0.0));
+            let y0 = (my - h / 2.0).clamp(0.0, (pad.1 - h).max(0.0));
+            region.x = [x0, x0 + w];
+            region.y = [y0, y0 + h];
+        }
+        changed = true;
+    }
+    if response.drag_stopped() {
+        ui.data_mut(|d| d.insert_temp(resizing_id, false));
+    }
+    if response.hovered() {
+        let over_handle = ui
+            .input(|i| i.pointer.hover_pos())
+            .is_some_and(|pos| handle.expand(6.0).contains(pos));
+        ui.ctx().set_cursor_icon(if over_handle {
+            egui::CursorIcon::ResizeNwSe
+        } else {
+            egui::CursorIcon::Grab
+        });
+    }
+    changed
+}
+
 fn chord(ui: &mut egui::Ui, t: &mut TriggerDef) {
     w::row(
         ui,
@@ -505,6 +661,7 @@ pub fn sequence_form(
     def: &mut GestureDef,
     symbols: &[String],
     default_confidence: f32,
+    pad: (f32, f32),
 ) {
     let p = pal(ui);
     let steps = def.steps.get_or_insert_with(Vec::new);
@@ -565,6 +722,7 @@ pub fn sequence_form(
                     symbols,
                     default_confidence,
                     false,
+                    pad,
                 );
                 if i + 1 < n {
                     // Only the pause before the next step matters.
@@ -1569,5 +1727,34 @@ mod tests {
             assert_ne!(action_icon(kind), icons::TIMER, "{kind}");
             assert_ne!(action_label(kind), "Pause", "{kind}");
         }
+    }
+}
+
+#[cfg(test)]
+mod zone_tests {
+    use super::*;
+
+    const PAD: (f32, f32) = (155.8, 115.2);
+
+    #[test]
+    fn a_corner_zone_sits_in_its_corner() {
+        let tl = corner_region(Corner::TopLeft, PAD);
+        assert_eq!((tl.x[0], tl.y[0]), (0.0, 0.0));
+        let br = corner_region(Corner::BottomRight, PAD);
+        assert!((br.x[1] - PAD.0).abs() < 0.01, "{br:?}");
+        assert!((br.y[1] - PAD.1).abs() < 0.01, "{br:?}");
+        // A fifth of the pad, never thinner than the minimum.
+        assert!((br.x[1] - br.x[0] - PAD.0 * 0.2).abs() < 0.01, "{br:?}");
+        let tiny = corner_region(Corner::TopLeft, (10.0, 10.0));
+        assert!(tiny.x[1] - tiny.x[0] >= MIN_ZONE_MM, "{tiny:?}");
+    }
+
+    #[test]
+    fn typed_edges_are_put_in_order() {
+        let r = sorted(glyphpad_core::trigger::Region {
+            x: [30.0, 10.0],
+            y: [25.0, 5.0],
+        });
+        assert_eq!((r.x, r.y), ([10.0, 30.0], [5.0, 25.0]));
     }
 }

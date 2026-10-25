@@ -682,6 +682,7 @@ impl Wizard {
                 &symbols,
                 cx.shared.config.settings.default_confidence,
                 false,
+                cx.shared.pad_size_mm(),
             );
             forms::set_trigger(def, &t);
         });

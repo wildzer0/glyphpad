@@ -329,6 +329,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("Type a text", "Digita un testo"),
     ("Zone", "Zona"),
+    (
+        "Click the map to place the zone, drag its corner to resize it.",
+        "Clicca sulla mappa per posizionare la zona, trascinane l'angolo per ridimensionarla.",
+    ),
     ("Region", "Regione"),
     (
         "The part of the touchpad, in millimetres from its top-left corner.",

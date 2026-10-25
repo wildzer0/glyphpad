@@ -647,6 +647,7 @@ fn detail(
                         symbols,
                         default_confidence,
                         true,
+                        cx.shared.pad_size_mm(),
                     );
                     forms::set_trigger(def, &t);
                     if def.kind == GestureKind::Sequence {
@@ -665,7 +666,14 @@ fn detail(
                                 },
                             ]);
                         }
-                        forms::sequence_form(ui, id.with("steps"), def, symbols, default_confidence);
+                        forms::sequence_form(
+                            ui,
+                            id.with("steps"),
+                            def,
+                            symbols,
+                            default_confidence,
+                            cx.shared.pad_size_mm(),
+                        );
                     } else {
                         def.steps = None;
                         def.within_ms = None;
