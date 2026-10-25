@@ -102,6 +102,11 @@ impl Feedback {
         self.overlay.trail(_strokes);
     }
 
+    fn end_trail(&self) {
+        #[cfg(windows)]
+        self.overlay.end_trail();
+    }
+
     fn message(&self, title: impl Into<String>, detail: impl Into<String>, success: bool) {
         let (title, detail) = (title.into(), detail.into());
         tracing::debug!("overlay: {title} — {detail}");
@@ -172,6 +177,7 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
         shared,
         ui,
         last_preview: Instant::now(),
+        trail_shown: false,
         last_auto_pause_check: Instant::now() - AUTO_PAUSE_POLL,
         config_text: Arc::new(String::new()),
         revision: 0,
@@ -218,6 +224,8 @@ struct Service {
     shared: Arc<Mutex<Shared>>,
     ui: Arc<UiLink>,
     last_preview: Instant,
+    /// The overlay is showing a drawing trail.
+    trail_shown: bool,
     last_auto_pause_check: Instant,
     /// The configuration file as last loaded, to tell our own writes and
     /// unchanged saves from real edits on disk.
@@ -333,6 +341,8 @@ impl Service {
             for r in recognitions {
                 self.on_recognition(r);
             }
+            self.dispatcher.observe(self.engine.busy_since());
+            self.sync_trail();
             let config = self.config.clone();
             for d in self.dispatcher.tick(&config, self.now_us()) {
                 self.on_dispatched(d);
@@ -340,11 +350,24 @@ impl Service {
         }
     }
 
+    /// Takes the drawing trail off the overlay once nothing is being drawn
+    /// any more, whatever ended it: a lift, a timeout, a swipe or tap that
+    /// nobody configured. Messages replace it on their own.
+    fn sync_trail(&mut self) {
+        if self.trail_shown && self.engine.drawing_preview().is_none() {
+            self.trail_shown = false;
+            self.feedback.end_trail();
+        }
+    }
+
     fn on_event(&mut self, event: DeviceEvent) -> Vec<Recognition> {
         match &event {
             DeviceEvent::Frame { device, frame } => {
                 self.clock = (frame.timestamp_us, Instant::now());
-                let live = self.last_preview.elapsed() >= LIVE_INTERVAL;
+                // The frame that lifts the last finger is never skipped:
+                // it is the only one to say nothing touches any more.
+                let live = self.last_preview.elapsed() >= LIVE_INTERVAL
+                    || frame.contacts.iter().all(|c| !c.tip);
                 let out = self.engine.on_event(&event);
                 if live {
                     self.last_preview = Instant::now();
@@ -352,6 +375,7 @@ impl Service {
                     if let Some((id, strokes)) = &preview
                         && let Some(d) = self.devices.get(id)
                     {
+                        self.trail_shown = true;
                         let (w, h) = (d.width_mm.max(1.0), d.height_mm.max(1.0));
                         self.feedback.trail(
                             strokes

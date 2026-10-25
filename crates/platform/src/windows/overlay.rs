@@ -37,6 +37,8 @@ use glyphpad_core::config::{Corner, OverlaySettings};
 /// "Something changed, repaint".
 const WM_REFRESH: u32 = WM_APP + 1;
 const HIDE_TIMER: usize = 1;
+/// Least time a drawing trail stays without news of the drawing.
+const WATCHDOG_MIN_MS: u64 = 2000;
 /// Pixels never painted: magenta does not occur in the panel.
 const KEY: COLORREF = rgb(255, 0, 255);
 const MARGIN: i32 = 16;
@@ -63,8 +65,11 @@ struct State {
     trail: Vec<Vec<(f32, f32)>>,
     message: Option<Message>,
     visible: bool,
-    /// Hide after the configured duration (a message); a trail being drawn stays.
+    /// Hide after a while: the configured duration for a message, a longer
+    /// one for a trail being drawn, which is normally ended explicitly.
     timed: bool,
+    /// The panel shows a drawing in progress rather than a result.
+    watchdog: bool,
     /// Change of size or opacity pending.
     relayout: bool,
 }
@@ -140,7 +145,21 @@ impl Overlay {
                     success: true,
                 });
                 s.visible = true;
-                s.timed = false;
+                // Safety net: every update re-arms the timer, so it only runs
+                // out if drawing ends without anyone saying so.
+                s.timed = true;
+                s.watchdog = true;
+            }
+        });
+    }
+
+    /// Drawing is over: hides the trail unless a message has replaced it.
+    pub fn end_trail(&self) {
+        self.update(|s| {
+            if s.visible && s.watchdog {
+                s.visible = false;
+                s.trail.clear();
+                s.message = None;
             }
         });
     }
@@ -152,6 +171,7 @@ impl Overlay {
                 s.message = Some(message);
                 s.visible = true;
                 s.timed = true;
+                s.watchdog = false;
             }
         });
     }
@@ -213,8 +233,15 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
 
 /// Applies the shared state: size, position, opacity, visibility.
 fn refresh(hwnd: HWND) {
-    let Some((visible, relayout, settings, aspect, timed)) = with_state(|s| {
-        let r = (s.visible, s.relayout, s.settings.clone(), s.aspect, s.timed);
+    let Some((visible, relayout, settings, aspect, timed, watchdog)) = with_state(|s| {
+        let r = (
+            s.visible,
+            s.relayout,
+            s.settings.clone(),
+            s.aspect,
+            s.timed,
+            s.watchdog,
+        );
         s.relayout = false;
         r
     }) else {
@@ -253,10 +280,15 @@ fn refresh(hwnd: HWND) {
         let _ = InvalidateRect(Some(hwnd), None, false);
         if visible {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-            // While drawing the panel stays; afterwards it hides after the duration.
             let _ = KillTimer(Some(hwnd), HIDE_TIMER);
             if timed {
-                SetTimer(Some(hwnd), HIDE_TIMER, settings.duration_ms as u32, None);
+                // A trail outlives the pause between two strokes.
+                let ms = if watchdog {
+                    settings.duration_ms.max(WATCHDOG_MIN_MS)
+                } else {
+                    settings.duration_ms
+                };
+                SetTimer(Some(hwnd), HIDE_TIMER, ms as u32, None);
             }
         } else {
             let _ = ShowWindow(hwnd, SW_HIDE);
@@ -274,6 +306,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             with_state(|s| {
                 s.visible = false;
                 s.timed = false;
+                s.watchdog = false;
                 s.trail.clear();
                 s.message = None;
             });

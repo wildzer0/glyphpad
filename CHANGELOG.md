@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Sequences: `within_ms` is now the pause between the end of one step and the *start* of the next, not the time up to the end of the next step. A calm pace (about 0.6 s between a tap and a swipe) used to break the sequence silently. A step that began in time is waited for until it is recognized.
+- Fingers no longer stay "stuck" in the Debug and recording views after lifting: the frame that lifts the last finger could be skipped by the 16 ms refresh limit.
+- The feedback overlay no longer stays open on "Drawing…" after a touch that triggers nothing (an unconfigured tap or swipe, a held sequence step): it closes when drawing ends, with a timeout as safety net.
+- A plain gesture that is the first step of a sequence now waits `within_ms` before firing instead of `within_ms` + `stroke_gap_ms`.
+
 ## [1.0.1] - 2026-10-25
 
 ### Fixed
