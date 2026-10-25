@@ -49,6 +49,17 @@ jiff = "0.2.38"
 # Property-based tests of the recognizer (SPEC §8).
 proptest = "1.12.0"
 semver = "1.0.28"
+# Update downloads (SPEC §12.2): rustls with bundled roots, no OpenSSL and no system
+# certificate store, so the single executable stays portable.
+ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
+# SHA256SUMS verification of downloaded packages (SPEC §12.3).
+sha2 = "0.11.1"
+# Package extraction: .zip on Windows, .tar.gz on Linux (SPEC §11.3).
+zip = { version = "9.1.0", default-features = false, features = ["deflate"] }
+flate2 = "1.1.10"
+tar = "0.4.46"
+# Scratch directories in the updater's tests.
+tempfile = "3.27.0"
 toml_edit = "0.25.17"
 
 [workspace.lints.rust]
