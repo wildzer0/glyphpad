@@ -52,6 +52,11 @@ pub enum Command {
         symbol: String,
         sample: Sample,
     },
+    /// Add several samples at once (an imported pack), with one write.
+    AddTemplates {
+        symbol: String,
+        samples: Vec<Sample>,
+    },
     /// Delete one of the user's samples of a symbol.
     DeleteTemplate {
         symbol: String,
