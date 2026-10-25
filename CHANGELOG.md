@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A gesture saved while the window had edits in flight stayed invisible: the editor latched into a
+  conflict it only left when resolved by hand, and from then on ignored the file. The file is now
+  the base the draft is rendered against and the source of the gestures it gained, the draft keeps
+  its edits, and the next save writes both — no latch, no invisible gestures.
+
 ## [1.6.2] - 2026-10-25
 
 ### Fixed
