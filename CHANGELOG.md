@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.0] - 2026-10-25
 
 ### Added
+- A `zone` gesture can fire on the physical click as well as a tap (`click = true`), which is
+  what one wants for a corner button: press it rather than tap it.
 - A `zone` gesture can have several regions (`regions = [...]`, up to 8) — one gesture for "any
   corner" — and the window has an "All four corners" button to make them.
 - `[settings] touchpad` chooses which touchpad to use, by part of its name: the other pads'

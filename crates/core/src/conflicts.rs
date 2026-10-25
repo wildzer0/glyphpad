@@ -54,13 +54,21 @@ fn same_movement(a: &Trigger, b: &Trigger) -> bool {
                 fingers: fa,
                 taps: ta,
                 regions: ra,
+                click: ca,
             },
             Trigger::Zone {
                 fingers: fb,
                 taps: tb,
                 regions: rb,
+                click: cb,
             },
-        ) => fa == fb && ta == tb && ra.iter().any(|a| rb.iter().any(|b| regions_overlap(a, b))),
+        ) => {
+            // A tap of the right count, or a click when both take one: only
+            // then can one touch fire both.
+            fa == fb
+                && (ta == tb || (*ca && *cb))
+                && ra.iter().any(|a| rb.iter().any(|b| regions_overlap(a, b)))
+        }
         _ => a == b,
     }
 }

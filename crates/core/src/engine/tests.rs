@@ -1137,6 +1137,38 @@ fn a_zone_gesture_matches_only_inside_its_region() {
     assert!(names.iter().any(|n| n == "corner"), "{names:?}");
 }
 
+const ZONE_CLICK: &str = r#"
+[[gesture]]
+name = "corner-click"
+type = "zone"
+fingers = 1
+click = true
+region = { x = [0.0, 25.0], y = [0.0, 20.0] }
+action = { type = "notify", message = "corner" }
+"#;
+
+#[test]
+fn a_zone_may_fire_on_the_physical_click() {
+    let config = crate::config::parse(ZONE_CLICK).unwrap().config;
+    // A click in the corner: it fires (the click's position comes from the
+    // touch trace, like the tap's).
+    let mut pad = Pad::new();
+    pad.stroke_with(1, (10.0, 8.0), (0.5, 0.5), 100, true, false);
+    let names = dispatched_names(&config, &pad);
+    assert!(names.iter().any(|n| n == "corner-click"), "{names:?}");
+    // A click elsewhere does not.
+    let mut pad = Pad::new();
+    pad.stroke_with(1, (60.0, 60.0), (0.5, 0.5), 100, true, false);
+    let names = dispatched_names(&config, &pad);
+    assert!(!names.iter().any(|n| n == "corner-click"), "{names:?}");
+    // Without `click`, the same click does nothing.
+    let plain = crate::config::parse(ZONE).unwrap().config;
+    let mut pad = Pad::new();
+    pad.stroke_with(1, (10.0, 8.0), (0.5, 0.5), 100, true, false);
+    let names = dispatched_names(&plain, &pad);
+    assert!(!names.iter().any(|n| n == "corner"), "{names:?}");
+}
+
 const SHORT_SWIPE: &str = r#"
 [[gesture]]
 name = "short"

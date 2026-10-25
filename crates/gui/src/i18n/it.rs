@@ -356,6 +356,11 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("Region", "Regione"),
     ("Regions", "Regioni"),
+    ("Physical click", "Click fisico"),
+    (
+        "The button under the touchpad fires the gesture too, not only a tap.",
+        "Anche il pulsante sotto il touchpad esegue la gesture, non solo un tocco.",
+    ),
     (
         "A zone is a button on the pad: one, or several (any corner). Click the map to place the edited one, drag its corner to resize it.",
         "Una zona è un pulsante sul pad: una, o più (qualsiasi angolo). Clicca la mappa per posizionare quella in modifica, trascinane l'angolo per ridimensionarla.",

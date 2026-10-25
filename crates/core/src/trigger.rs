@@ -82,6 +82,10 @@ pub struct TriggerDef {
     /// one starts, overriding the sequence's own `within_ms`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub within_ms: Option<u64>,
+    /// The physical button also fires a `zone` gesture: a click in the zone,
+    /// besides a tap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub click: Option<bool>,
     /// Where on the touchpad a `zone` gesture has to land. `region` is one
     /// and `regions` several ("any corner"): they are not given together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -96,11 +100,14 @@ const MAX_REGIONS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Trigger {
-    /// A tap inside one of the rectangles of the touchpad.
+    /// A tap (or a physical click) inside one of the rectangles of the
+    /// touchpad.
     Zone {
         fingers: u8,
         taps: u8,
         regions: Vec<Region>,
+        /// The physical button fires it too.
+        click: bool,
     },
     /// `modifiers` resting fingers make it a chord.
     Tap {
@@ -202,7 +209,7 @@ impl TriggerDef {
                 allowed.extend(["min_distance_mm", "min_speed_mm_s"]);
             }
             GestureKind::Zone => {
-                allowed.extend(["taps", "region", "regions"]);
+                allowed.extend(["taps", "region", "regions", "click"]);
                 if self.region.is_some() && self.regions.is_some() {
                     errors.push((
                         "regions",
@@ -250,6 +257,7 @@ impl TriggerDef {
             ("min_deg", self.min_deg.is_some()),
             ("region", self.region.is_some()),
             ("regions", self.regions.is_some()),
+            ("click", self.click.is_some()),
         ] {
             if present && !allowed.contains(&field) {
                 errors.push((
@@ -344,6 +352,7 @@ impl TriggerDef {
                 fingers,
                 taps: self.taps.unwrap_or(1),
                 regions: self.zone_regions(),
+                click: self.click.unwrap_or(false),
             },
             GestureKind::Tap => Trigger::Tap {
                 fingers,
@@ -417,6 +426,7 @@ impl Trigger {
                     fingers,
                     taps,
                     regions,
+                    click: _,
                 },
                 Observation::Tap {
                     fingers: f,
@@ -426,6 +436,22 @@ impl Trigger {
                 f == fingers
                     && t == taps
                     && at.is_some_and(|(x, y)| regions.iter().any(|r| r.contains(x, y))),
+            ),
+            (
+                Trigger::Zone {
+                    fingers,
+                    regions,
+                    click: true,
+                    ..
+                },
+                // The physical button, not a click-and-drag: a drag is a
+                // gesture of its own.
+                Observation::Click {
+                    fingers: f,
+                    direction: None,
+                },
+            ) => u8::from(
+                f == fingers && at.is_some_and(|(x, y)| regions.iter().any(|r| r.contains(x, y))),
             ),
             (
                 Trigger::Tap {
@@ -666,6 +692,7 @@ impl Trigger {
                 fingers,
                 taps,
                 regions,
+                click,
             } => {
                 let tap = if *taps == 1 {
                     "tap".to_string()
@@ -676,6 +703,12 @@ impl Trigger {
                     || "nowhere".to_string(),
                     |r| format!("{}–{} × {}–{} mm", r.x[0], r.x[1], r.y[0], r.y[1]),
                 );
+                let what = if *click { "click" } else { "tap" };
+                let tap = if *taps == 1 {
+                    format!("{tap} or {what}")
+                } else {
+                    tap
+                };
                 if regions.len() > 1 {
                     format!(
                         "{tap} with {} in {first} and {} more",

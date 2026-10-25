@@ -342,8 +342,11 @@ impl Spec {
         for t in triggers {
             let n = usize::from(t.fingers()).min(MAX_CONTACTS);
             match t {
-                Trigger::Zone { taps, .. } => {
+                Trigger::Zone { taps, click, .. } => {
                     spec.max_taps[n] = spec.max_taps[n].max(*taps);
+                    // The physical button has to be watched for a zone too,
+                    // or the click recognizer never runs.
+                    spec.clicks[n] |= *click;
                 }
                 Trigger::Tap {
                     taps, modifiers, ..

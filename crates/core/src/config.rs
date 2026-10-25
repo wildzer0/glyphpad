@@ -473,6 +473,9 @@ pub struct GestureDef {
     pub min_change_mm: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_deg: Option<f32>,
+    /// The physical button fires a `zone` gesture too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub click: Option<bool>,
     /// Where a `zone` gesture has to land, in millimetres: one region, or
     /// several ("any corner").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -576,6 +579,7 @@ impl GestureDef {
             within_ms: None,
             region: self.region,
             regions: self.regions.clone(),
+            click: self.click,
         }
     }
 
@@ -599,6 +603,7 @@ impl GestureDef {
             min_deg: trigger.min_deg,
             region: trigger.region,
             regions: trigger.regions,
+            click: trigger.click,
             steps: None,
             within_ms: None,
             action,

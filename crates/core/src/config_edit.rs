@@ -293,6 +293,7 @@ action = { type = "lock_screen" }
             min_deg: None,
             region: None,
             regions: None,
+            click: None,
             steps: None,
             within_ms: None,
             action: Action::Chain {

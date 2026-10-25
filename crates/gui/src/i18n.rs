@@ -122,6 +122,7 @@ pub fn describe_trigger(t: &glyphpad_core::trigger::Trigger) -> String {
             fingers,
             taps,
             regions,
+            click,
         } => {
             let what = if *taps == 1 {
                 "tocco".to_string()
@@ -132,6 +133,11 @@ pub fn describe_trigger(t: &glyphpad_core::trigger::Trigger) -> String {
                 || "da nessuna parte".to_string(),
                 |r| format!("{}–{} × {}–{} mm", r.x[0], r.x[1], r.y[0], r.y[1]),
             );
+            let what = if *click {
+                format!("{what} o click")
+            } else {
+                what
+            };
             if regions.len() > 1 {
                 format!(
                     "{what} con {} in {first} e altre {}",

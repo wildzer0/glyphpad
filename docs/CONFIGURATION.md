@@ -220,7 +220,7 @@ action = { type = "lock_screen" }   # required
 | `tap` | **`fingers`** 1–10, `taps` 1–3 (default 1), `modifier_fingers` |
 | `hold` | **`fingers`** |
 | `swipe` | **`fingers`**, **`direction`**, `modifier_fingers` |
-| `zone` | **`fingers`**, **`region`** or **`regions`**, `taps` | A tap inside a rectangle of the pad, in millimetres: `region = { x = [0, 25], y = [0, 20] }` is a 25 × 20 mm corner at the top left; `regions = [...]` takes several (at most 8) |
+| `zone` | **`fingers`**, **`region`** or **`regions`**, `taps`, `click` | A tap inside a rectangle of the pad, in millimetres: `region = { x = [0, 25], y = [0, 20] }` is a 25 × 20 mm corner at the top left; `regions = [...]` takes several (at most 8); `click = true` fires on the physical button too |
 | `edge_swipe` | **`fingers`**, **`edge`**, **`direction`** |
 | `pinch` | **`fingers`** ≥ 2, **`zoom`** (`in` = fingers closer, `out` = apart) |
 | `rotate` | **`fingers`** ≥ 2, **`rotation`** (`clockwise`, `counterclockwise`) |

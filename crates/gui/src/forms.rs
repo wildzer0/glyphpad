@@ -75,6 +75,7 @@ pub fn set_trigger(def: &mut GestureDef, t: &TriggerDef) {
     def.confidence = t.confidence;
     def.region = t.region;
     def.regions = t.regions.clone();
+    def.click = t.click;
 }
 
 /// Fields a kind needs, with sensible starting values, when switching to it.
@@ -286,6 +287,16 @@ pub fn trigger_form(
             let edited_id = id.with("zone-edited");
             let mut edited: usize = ui.data_mut(|d| d.get_temp(edited_id)).unwrap_or(0);
             edited = edited.min(regions.len().saturating_sub(1));
+            w::row(
+                ui,
+                "Physical click",
+                "The button under the touchpad fires the gesture too, not only a tap.",
+                |ui| {
+                    let mut on = t.click.unwrap_or(false);
+                    w::switch(ui, &mut on);
+                    t.click = on.then_some(true);
+                },
+            );
             w::row(
                 ui,
                 "Regions",
