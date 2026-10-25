@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-25
+
 ### Fixed
 - The history no longer records a second entry, without a gesture, for a drawing whose own stroke
   ran one: a sequence's closing swipe is drawn with the drawing finger count, so it was first
@@ -210,7 +212,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Show window" only flashed the taskbar button when the window was behind others.
 - The wizard's quality check was recomputed every frame, slowing the window down.
 
-[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/wildzer0/glyphpad/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/wildzer0/glyphpad/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/wildzer0/glyphpad/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/wildzer0/glyphpad/compare/v1.0.1...v1.0.2
