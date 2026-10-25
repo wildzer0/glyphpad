@@ -11,7 +11,7 @@ pub struct SessionStats {
     pub devices: usize,
     pub disconnects: usize,
     pub frames: usize,
-    /// From the first to the last frame.
+    /// From the first to the last frame of a device.
     pub duration_us: u64,
     /// Most fingers touching at once (tip down, confident or not).
     pub max_touching: usize,
@@ -28,39 +28,65 @@ pub struct SessionStats {
     pub non_monotonic: usize,
     /// Frames repeating a contact id (an assembly bug if > 0).
     pub duplicate_ids: usize,
+    /// Lowest, highest and previous timestamp of every device, and the
+    /// intervals between consecutive frames of a device. Filled by
+    /// [`SessionStats::add`] and reduced by [`SessionStats::finish`].
+    devices_time: std::collections::BTreeMap<crate::model::DeviceId, (u64, u64, u64)>,
+    intervals: Vec<u64>,
 }
 
 impl SessionStats {
     pub fn from_events<'a>(events: impl IntoIterator<Item = &'a DeviceEvent>) -> Self {
         let mut s = Self::default();
-        let mut first_ts = None;
-        let mut last_ts: Option<u64> = None;
-        let mut intervals = Vec::new();
         for event in events {
-            match event {
-                DeviceEvent::Connected(_) => s.devices += 1,
-                DeviceEvent::Disconnected { .. } => s.disconnects += 1,
-                DeviceEvent::Frame { frame, .. } => {
-                    let ts = frame.timestamp_us;
-                    first_ts.get_or_insert(ts);
-                    if let Some(prev) = last_ts {
-                        if ts < prev {
-                            s.non_monotonic += 1;
+            s.add(event);
+        }
+        s.finish();
+        s
+    }
+
+    /// Folds one event in. Frames of several devices are kept apart: their
+    /// timestamps need not share a base, and a capture that outlives a
+    /// device reset can go backwards.
+    pub fn add(&mut self, event: &DeviceEvent) {
+        match event {
+            DeviceEvent::Connected(_) => self.devices += 1,
+            DeviceEvent::Disconnected { .. } => self.disconnects += 1,
+            DeviceEvent::Frame { device, frame } => {
+                let ts = frame.timestamp_us;
+                match self.devices_time.get_mut(device) {
+                    Some((low, high, previous)) => {
+                        if ts < *previous {
+                            self.non_monotonic += 1;
                         } else {
-                            intervals.push(ts - prev);
+                            self.intervals.push(ts - *previous);
                         }
+                        *previous = ts;
+                        *low = (*low).min(ts);
+                        *high = (*high).max(ts);
                     }
-                    last_ts = Some(ts);
-                    s.add_frame(frame);
+                    None => {
+                        self.devices_time.insert(*device, (ts, ts, ts));
+                    }
                 }
+                self.add_frame(frame);
             }
         }
-        s.duration_us = last_ts.unwrap_or(0) - first_ts.unwrap_or(0);
-        intervals.sort_unstable();
-        s.interval_min_us = intervals.first().copied();
-        s.interval_max_us = intervals.last().copied();
-        s.interval_median_us = intervals.get(intervals.len() / 2).copied();
-        s
+    }
+
+    /// Computes what needs the whole stream: the duration and the frame
+    /// interval summary. Call after the last [`add`](Self::add).
+    pub fn finish(&mut self) {
+        self.duration_us = self
+            .devices_time
+            .values()
+            .map(|&(low, high, _)| high.saturating_sub(low))
+            .max()
+            .unwrap_or(0);
+        self.intervals.sort_unstable();
+        self.interval_min_us = self.intervals.first().copied();
+        self.interval_max_us = self.intervals.last().copied();
+        self.interval_median_us = self.intervals.get(self.intervals.len() / 2).copied();
     }
 
     fn add_frame(&mut self, frame: &TouchFrame) {
@@ -136,6 +162,59 @@ impl fmt::Display for SessionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::DeviceId;
+
+    #[test]
+    fn timestamps_that_go_backwards_do_not_underflow() {
+        let device = DeviceId(1);
+        let frame = |ts| DeviceEvent::Frame {
+            device,
+            frame: TouchFrame {
+                timestamp_us: ts,
+                contacts: Vec::new(),
+                button_pressed: false,
+            },
+        };
+        let events = [frame(1_000_000), frame(500_000), frame(700_000)];
+        let s = SessionStats::from_events(&events);
+        assert_eq!(s.non_monotonic, 1);
+        assert_eq!(s.duration_us, 500_000, "from the first frame to the lowest");
+        assert_eq!(s.frames, 3);
+    }
+
+    #[test]
+    fn devices_are_measured_separately() {
+        let frame = |device, ts| DeviceEvent::Frame {
+            device: DeviceId(device),
+            frame: TouchFrame {
+                timestamp_us: ts,
+                contacts: Vec::new(),
+                button_pressed: false,
+            },
+        };
+        // Two devices whose clocks are not comparable.
+        let events = [
+            frame(1, 5_000_000),
+            frame(2, 10_000),
+            frame(1, 5_008_000),
+            frame(2, 18_000),
+        ];
+        let s = SessionStats::from_events(&events);
+        assert_eq!(s.non_monotonic, 0);
+        assert_eq!(s.duration_us, 8_000);
+        assert_eq!(s.interval_min_us, Some(8_000));
+    }
+
+    #[test]
+    fn summarizing_is_incremental_and_repeatable() {
+        let events = crate::capture::tests::sample_events();
+        let mut one_at_a_time = SessionStats::default();
+        for e in &events {
+            one_at_a_time.add(e);
+        }
+        one_at_a_time.finish();
+        assert_eq!(one_at_a_time, SessionStats::from_events(&events));
+    }
 
     #[test]
     fn summarizes_sample_session() {
