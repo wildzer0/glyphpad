@@ -263,8 +263,9 @@ impl UpdateSource for LocalSource {
     }
 
     fn fetch(&self, asset: &Asset, out: &mut dyn Write) -> Result<(), Error> {
-        // A plain file name: no way out of the folder.
-        if asset.url.contains(['/', '\\']) || asset.url.contains("..") {
+        // A plain file name: no way out of the folder. `Path::join` would
+        // replace the folder for a rooted path or a drive-relative `C:name`.
+        if asset.url.contains(['/', '\\', ':']) || asset.url.contains("..") {
             return Err(Error::UntrustedUrl(asset.url.clone()));
         }
         let mut file = std::fs::File::open(self.dir.join(&asset.url))?;

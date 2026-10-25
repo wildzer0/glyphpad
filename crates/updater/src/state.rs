@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 pub struct State {
     /// Seconds since the Unix epoch of the last successful check.
     pub last_check: Option<u64>,
+    /// The ETag of the last release list. It is only sent together with a
+    /// list still in memory: a 304 carries no releases, so sending it from a
+    /// fresh process would report "up to date" without having checked.
     pub etag: Option<String>,
     /// "Ignore this version" (SPEC §12.1).
     pub ignored: Option<String>,
