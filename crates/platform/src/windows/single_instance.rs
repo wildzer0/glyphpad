@@ -6,7 +6,8 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, LRESULT, WPARAM,
+    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GetLastError, HANDLE, HWND, LPARAM, LRESULT,
+    SetLastError, WPARAM,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
@@ -63,6 +64,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 }
 
 pub fn acquire(on_show: impl Fn() + Send + 'static) -> Instance {
+    // A stale error from an earlier call must not look like "already exists".
+    // SAFETY: no arguments.
+    unsafe { SetLastError(ERROR_SUCCESS) };
     // SAFETY: a static name and no security attributes.
     let mutex = unsafe { CreateMutexW(None, false, MUTEX_NAME) };
     // SAFETY: read right after the call that set it.
@@ -88,6 +92,8 @@ pub fn acquire(on_show: impl Fn() + Send + 'static) -> Instance {
 /// The window that answers "show yourself" is still there, so no listener
 /// is started. `None` if somebody else holds the lock now.
 pub fn reacquire() -> Option<InstanceGuard> {
+    // SAFETY: no arguments.
+    unsafe { SetLastError(ERROR_SUCCESS) };
     // SAFETY: a static name and no security attributes.
     let mutex = unsafe { CreateMutexW(None, false, MUTEX_NAME) }.ok()?;
     // SAFETY: read right after the call that set it.
