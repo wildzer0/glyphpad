@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A new gesture kind, `zone`: a tap inside a rectangle of the touchpad, in millimetres
+  (`region = { x = [0, 25], y = [0, 20] }`). The corners become buttons you can hit without
+  looking.
 - A gesture can set its own thresholds — `min_distance_mm` and `min_speed_mm_s` for swipes,
   `min_change_mm` for pinches, `min_deg` for rotations — stricter or looser than the settings, so
   two gestures on the same movement can ask for different lengths. The engine recognizes the

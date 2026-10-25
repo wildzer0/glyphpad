@@ -13,8 +13,9 @@ use crate::theme::{self, pal, space};
 use crate::widgets::{self as w, Tone};
 use crate::{Ctx, icons};
 
-pub const KINDS: [GestureKind; 9] = [
+pub const KINDS: [GestureKind; 10] = [
     GestureKind::Tap,
+    GestureKind::Zone,
     GestureKind::Hold,
     GestureKind::Swipe,
     GestureKind::EdgeSwipe,
@@ -28,6 +29,7 @@ pub const KINDS: [GestureKind; 9] = [
 pub fn kind_icon(k: GestureKind) -> &'static str {
     match k {
         GestureKind::Tap => icons::HAND_TAP,
+        GestureKind::Zone => icons::BOUNDING_BOX,
         GestureKind::Hold => icons::FINGERPRINT,
         GestureKind::Swipe => icons::HAND_SWIPE_RIGHT,
         GestureKind::EdgeSwipe => icons::BOUNDING_BOX,
@@ -47,6 +49,7 @@ pub fn kind_label(k: GestureKind) -> String {
 fn tile_label(k: GestureKind) -> &'static str {
     match k {
         GestureKind::Tap => "Tap",
+        GestureKind::Zone => "Zone",
         GestureKind::Hold => "Hold",
         GestureKind::Swipe => "Swipe",
         GestureKind::EdgeSwipe => "Edge swipe",
@@ -70,6 +73,7 @@ pub fn set_trigger(def: &mut GestureDef, t: &TriggerDef) {
     def.modifier_fingers = t.modifier_fingers;
     def.symbol = t.symbol.clone();
     def.confidence = t.confidence;
+    def.region = t.region;
 }
 
 /// Fields a kind needs, with sensible starting values, when switching to it.
@@ -81,6 +85,13 @@ fn reset_for(kind: GestureKind, old: &TriggerDef) -> TriggerDef {
     };
     match kind {
         GestureKind::Tap | GestureKind::Hold => t.fingers = Some(fingers),
+        GestureKind::Zone => {
+            t.fingers = Some(1);
+            t.region = Some(glyphpad_core::trigger::Region {
+                x: [0.0, 20.0],
+                y: [0.0, 15.0],
+            });
+        }
         GestureKind::Swipe => {
             t.fingers = Some(fingers);
             t.direction = Some(old.direction.unwrap_or(Direction::Up));
@@ -250,6 +261,62 @@ pub fn trigger_form(
                     } else {
                         t.direction = None;
                     }
+                },
+            );
+        }
+        GestureKind::Zone => {
+            w::row(ui, "Fingers", "", |ui| fingers(ui, &mut t.fingers, 1));
+            w::row(ui, "Taps", "", |ui| {
+                let mut taps = t.taps.unwrap_or(1);
+                w::segmented(
+                    ui,
+                    &mut taps,
+                    &[(1, "Single"), (2, "Double"), (3, "Triple")],
+                );
+                t.taps = (taps > 1).then_some(taps);
+            });
+            w::row(
+                ui,
+                "Region",
+                "The part of the touchpad, in millimetres from its top-left corner.",
+                |ui| {
+                    let mut r = t.region.unwrap_or(glyphpad_core::trigger::Region {
+                        x: [0.0, 20.0],
+                        y: [0.0, 15.0],
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(w::dim(ui, "x"));
+                        ui.add(
+                            egui::DragValue::new(&mut r.x[0])
+                                .range(0.0..=400.0)
+                                .speed(0.5)
+                                .suffix(" mm"),
+                        );
+                        ui.label(w::dim(ui, "→"));
+                        ui.add(
+                            egui::DragValue::new(&mut r.x[1])
+                                .range(0.0..=400.0)
+                                .speed(0.5)
+                                .suffix(" mm"),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(w::dim(ui, "y"));
+                        ui.add(
+                            egui::DragValue::new(&mut r.y[0])
+                                .range(0.0..=400.0)
+                                .speed(0.5)
+                                .suffix(" mm"),
+                        );
+                        ui.label(w::dim(ui, "→"));
+                        ui.add(
+                            egui::DragValue::new(&mut r.y[1])
+                                .range(0.0..=400.0)
+                                .speed(0.5)
+                                .suffix(" mm"),
+                        );
+                    });
+                    t.region = Some(r);
                 },
             );
         }

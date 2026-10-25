@@ -22,6 +22,25 @@ pub enum Turn {
     Counterclockwise,
 }
 
+/// A rectangle of the touchpad, in millimetres from its top-left corner
+/// (SPEC §2: spatial thresholds are in millimetres, so a zone survives a
+/// change of touchpad).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Region {
+    /// Left and right edges.
+    pub x: [f32; 2],
+    /// Top and bottom edges.
+    pub y: [f32; 2],
+}
+
+impl Region {
+    /// Whether a touch at `(x, y)` millimetres is inside.
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x[0] && x <= self.x[1] && y >= self.y[0] && y <= self.y[1]
+    }
+}
+
 /// The trigger fields of a gesture, as written in the file; also the shape
 /// of each step of a sequence.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -63,10 +82,19 @@ pub struct TriggerDef {
     /// one starts, overriding the sequence's own `within_ms`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub within_ms: Option<u64>,
+    /// Where on the touchpad a `zone` gesture has to land.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<Region>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Trigger {
+    /// A tap inside a rectangle of the touchpad.
+    Zone {
+        fingers: u8,
+        taps: u8,
+        region: Region,
+    },
     /// `modifiers` resting fingers make it a chord.
     Tap {
         fingers: u8,
@@ -157,6 +185,10 @@ impl TriggerDef {
                 need("direction", self.direction.is_some(), &mut errors);
                 allowed.extend(["min_distance_mm", "min_speed_mm_s"]);
             }
+            GestureKind::Zone => {
+                need("region", self.region.is_some(), &mut errors);
+                allowed.extend(["taps", "region"]);
+            }
             GestureKind::Pinch => {
                 need("zoom", self.zoom.is_some(), &mut errors);
                 allowed.push("min_change_mm");
@@ -186,6 +218,7 @@ impl TriggerDef {
             ("min_speed_mm_s", self.min_speed_mm_s.is_some()),
             ("min_change_mm", self.min_change_mm.is_some()),
             ("min_deg", self.min_deg.is_some()),
+            ("region", self.region.is_some()),
         ] {
             if present && !allowed.contains(&field) {
                 errors.push((
@@ -241,6 +274,17 @@ impl TriggerDef {
         {
             errors.push(("within_ms", "must be between 100 and 5000".into()));
         }
+        if let Some(r) = &self.region {
+            let in_range = |v: f32| (0.0..=400.0).contains(&v);
+            if !(in_range(r.x[0]) && in_range(r.x[1]) && in_range(r.y[0]) && in_range(r.y[1])) {
+                errors.push(("region", "edges must be between 0 and 400 mm".into()));
+            } else if r.x[0] >= r.x[1] || r.y[0] >= r.y[1] {
+                errors.push((
+                    "region",
+                    "the first edge of `x` and `y` must be left of and above the second".into(),
+                ));
+            }
+        }
         let names = self
             .symbol
             .as_ref()
@@ -254,6 +298,14 @@ impl TriggerDef {
             return Err(errors);
         }
         Ok(match kind {
+            GestureKind::Zone => Trigger::Zone {
+                fingers,
+                taps: self.taps.unwrap_or(1),
+                region: self.region.unwrap_or(Region {
+                    x: [0.0, 0.0],
+                    y: [0.0, 0.0],
+                }),
+            },
             GestureKind::Tap => Trigger::Tap {
                 fingers,
                 taps: self.taps.unwrap_or(1),
@@ -308,8 +360,32 @@ impl Trigger {
     /// plain swipe gestures (1), whatever their order (SPEC §6.1: the most
     /// specific gesture wins).
     pub fn specificity(&self, obs: &Observation, default_confidence: f32) -> u8 {
+        self.specificity_at(obs, default_confidence, None)
+    }
+
+    /// The same, with where the touch landed in millimetres: only a `zone`
+    /// gesture looks at it, and without it a zone never matches.
+    pub fn specificity_at(
+        &self,
+        obs: &Observation,
+        default_confidence: f32,
+        at: Option<(f32, f32)>,
+    ) -> u8 {
         let yes = |b: bool| if b { 2 } else { 0 };
         match (self, obs) {
+            (
+                Trigger::Zone {
+                    fingers,
+                    taps,
+                    region,
+                },
+                Observation::Tap {
+                    fingers: f,
+                    taps: t,
+                },
+            ) => u8::from(
+                f == fingers && t == taps && at.is_some_and(|(x, y)| region.contains(x, y)),
+            ),
             (
                 Trigger::Tap {
                     fingers,
@@ -462,7 +538,8 @@ impl Trigger {
             | Trigger::EdgeSwipe { fingers, .. }
             | Trigger::Pinch { fingers, .. }
             | Trigger::Rotate { fingers, .. }
-            | Trigger::Click { fingers, .. } => fingers,
+            | Trigger::Click { fingers, .. }
+            | Trigger::Zone { fingers, .. } => fingers,
             Trigger::Symbol { .. } => 0,
         }
     }
@@ -544,6 +621,25 @@ impl Trigger {
                 direction: Some(d),
             } => format!("click and drag {d} with {}", f(*fingers)),
             Trigger::Symbol { names, .. } => format!("draw {}", names.join(" or ")),
+            Trigger::Zone {
+                fingers,
+                taps,
+                region,
+            } => {
+                let tap = if *taps == 1 {
+                    "tap".to_string()
+                } else {
+                    format!("{taps}× tap")
+                };
+                format!(
+                    "{tap} with {} at {}–{} × {}–{} mm",
+                    f(*fingers),
+                    region.x[0],
+                    region.x[1],
+                    region.y[0],
+                    region.y[1]
+                )
+            }
         }
     }
 }
@@ -552,6 +648,7 @@ impl GestureKind {
     pub fn label(self) -> &'static str {
         match self {
             GestureKind::Tap => "tap",
+            GestureKind::Zone => "zone",
             GestureKind::Hold => "hold",
             GestureKind::Swipe => "swipe",
             GestureKind::EdgeSwipe => "edge swipe",

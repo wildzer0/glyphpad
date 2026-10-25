@@ -182,6 +182,7 @@ action = { type = "lock_screen" }   # required
 | `tap` | **`fingers`** 1–10, `taps` 1–3 (default 1), `modifier_fingers` |
 | `hold` | **`fingers`** |
 | `swipe` | **`fingers`**, **`direction`**, `modifier_fingers` |
+| `zone` | **`fingers`**, **`region`**, `taps` | A tap inside a rectangle of the pad, in millimetres: `region = { x = [0, 25], y = [0, 20] }` is a 25 × 20 mm corner at the top left |
 | `edge_swipe` | **`fingers`**, **`edge`**, **`direction`** |
 | `pinch` | **`fingers`** ≥ 2, **`zoom`** (`in` = fingers closer, `out` = apart) |
 | `rotate` | **`fingers`** ≥ 2, **`rotation`** (`clockwise`, `counterclockwise`) |
@@ -231,6 +232,19 @@ A gesture that matches nothing also says what the configuration has with that ma
 because the common mistake is a gesture of the wrong kind: fingers resting longer than
 `tap_max_duration_ms` (250 ms) are a **hold**, and a tap has to be quicker.
 
+
+A `zone` gesture turns part of the touchpad into a button: the tap has to land inside the
+rectangle, and the corner zones are the easiest to hit without looking. Millimetres, not
+fractions, so a new touchpad does not move it:
+
+```toml
+[[gesture]]
+name = "corner-lock"
+type = "zone"
+fingers = 1
+region = { x = [0.0, 25.0], y = [0.0, 20.0] }   # top left
+action = { type = "lock_screen" }
+```
 
 `direction` is `up`, `down`, `left`, `right`, `up_left`, `up_right`, `down_left` or `down_right`.
 `modifier_fingers` (1–3) makes the gesture a **chord**: that many other fingers must rest on the

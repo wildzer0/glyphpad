@@ -328,6 +328,12 @@ pub const TABLE: &[(&str, &str)] = &[
         "Apri un file, una cartella o un indirizzo",
     ),
     ("Type a text", "Digita un testo"),
+    ("Zone", "Zona"),
+    ("Region", "Regione"),
+    (
+        "The part of the touchpad, in millimetres from its top-left corner.",
+        "La parte del touchpad, in millimetri dall'angolo in alto a sinistra.",
+    ),
     ("Minimum distance", "Distanza minima"),
     (
         "How far the fingers must travel for this gesture.",

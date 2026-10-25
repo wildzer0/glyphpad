@@ -291,6 +291,7 @@ action = { type = "lock_screen" }
             min_speed_mm_s: None,
             min_change_mm: None,
             min_deg: None,
+            region: None,
             steps: None,
             within_ms: None,
             action: Action::Chain {

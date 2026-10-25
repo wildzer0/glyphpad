@@ -103,6 +103,22 @@ fn symbol(names: &[String], templates: &BTreeMap<String, Vec<Sample>>) -> Pictog
 pub fn of(trigger: &Trigger, templates: &BTreeMap<String, Vec<Sample>>) -> Pictogram {
     let mut p = Pictogram::default();
     match trigger {
+        Trigger::Zone { region, .. } => {
+            // A schematic pad: the cheat sheet's pictogram is not to scale.
+            const PAD: (f32, f32) = (150.0, 100.0);
+            let x = |v: f32| (v / PAD.0).clamp(0.0, 1.0);
+            let y = |v: f32| (v / PAD.1).clamp(0.0, 1.0);
+            let (left, right) = (x(region.x[0]), x(region.x[1]));
+            let (top, bottom) = (y(region.y[0]), y(region.y[1]));
+            p.lines = vec![vec![
+                (left, top),
+                (right, top),
+                (right, bottom),
+                (left, bottom),
+                (left, top),
+            ]];
+            p.dots = vec![((left + right) / 2.0, (top + bottom) / 2.0, false)];
+        }
         Trigger::Tap {
             fingers, modifiers, ..
         } => {

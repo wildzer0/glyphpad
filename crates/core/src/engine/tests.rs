@@ -1113,6 +1113,30 @@ within_ms = 600
 action = { type = "notify", message = "seq" }
 "#;
 
+const ZONE: &str = r#"
+[[gesture]]
+name = "corner"
+type = "zone"
+fingers = 1
+region = { x = [0.0, 25.0], y = [0.0, 20.0] }
+action = { type = "notify", message = "corner" }
+"#;
+
+#[test]
+fn a_zone_gesture_matches_only_inside_its_region() {
+    let config = crate::config::parse(ZONE).unwrap().config;
+    // A tap at (40, 40) mm is outside a 25 × 20 mm corner.
+    let mut outside = Pad::new();
+    outside.tap(1);
+    let names = dispatched_names(&config, &outside);
+    assert!(!names.iter().any(|n| n == "corner"), "{names:?}");
+    // A tap at (10, 8) mm is inside it.
+    let mut inside = Pad::new();
+    inside.stroke(1, (10.0, 8.0), (0.5, 0.5), 100);
+    let names = dispatched_names(&config, &inside);
+    assert!(names.iter().any(|n| n == "corner"), "{names:?}");
+}
+
 const SHORT_SWIPE: &str = r#"
 [[gesture]]
 name = "short"

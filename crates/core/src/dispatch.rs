@@ -9,7 +9,7 @@
 
 use crate::action::AppInfo;
 use crate::config::Config;
-use crate::engine::{Engine, Observation, Recognition, resolve};
+use crate::engine::{Engine, GestureTrace, Observation, Recognition, resolve_at};
 use crate::model::DeviceEvent;
 use crate::trigger::Trigger;
 
@@ -65,9 +65,29 @@ pub struct Dispatcher {
     busy_since: Option<u64>,
 }
 
-fn index_of(config: &Config, observation: &Observation, app: Option<&AppInfo>) -> Option<usize> {
-    let g = resolve(config, observation, app)?;
+fn index_of(
+    config: &Config,
+    observation: &Observation,
+    app: Option<&AppInfo>,
+    at: Option<(f32, f32)>,
+) -> Option<usize> {
+    let g = resolve_at(config, observation, app, at)?;
     config.gestures.iter().position(|x| std::ptr::eq(x, g))
+}
+
+/// Where a touch landed, in millimetres: the mean of the first point of every
+/// finger. A `zone` gesture is the only one that looks at it.
+fn trace_position(trace: &GestureTrace) -> Option<(f32, f32)> {
+    let mut sum = (0.0_f32, 0.0_f32);
+    let mut fingers = 0.0_f32;
+    for stroke in trace.fingers.values() {
+        if let Some(p) = stroke.first() {
+            sum.0 += p.x_mm;
+            sum.1 += p.y_mm;
+            fingers += 1.0;
+        }
+    }
+    (fingers > 0.0).then(|| (sum.0 / fingers, sum.1 / fingers))
 }
 
 /// Recognitions that never take part in sequences: diagnostics and samples.
@@ -182,10 +202,13 @@ impl Dispatcher {
         );
         p.held
             .into_iter()
-            .map(|(r, app)| Dispatched {
-                gesture: index_of(config, &r.observation, app.as_ref()),
-                recognition: r,
-                app,
+            .map(|(r, app)| {
+                let at = trace_position(&r.trace);
+                Dispatched {
+                    gesture: index_of(config, &r.observation, app.as_ref(), at),
+                    recognition: r,
+                    app,
+                }
             })
             .collect()
     }
@@ -217,11 +240,12 @@ impl Dispatcher {
         }
         let conf = config.settings.default_confidence;
         let profile = &config.settings.active_profile;
+        let at = trace_position(&r.trace);
         let matches_step = |i: usize, step: usize| {
             let g = &config.gestures[i];
             g.steps
                 .get(step)
-                .is_some_and(|t| t.specificity(&r.observation, conf) > 0)
+                .is_some_and(|t| t.specificity_at(&r.observation, conf, at) > 0)
         };
 
         if let Some(p) = &mut self.pending {
@@ -290,7 +314,7 @@ impl Dispatcher {
             .map(|(i, _)| (i, within_us(config, i, 0)))
             .collect();
         if starts.is_empty() {
-            let gesture = index_of(config, &r.observation, app.as_ref());
+            let gesture = index_of(config, &r.observation, app.as_ref(), at);
             if gesture.is_none()
                 && let Some(hint) = near_miss(config, &r.observation)
             {

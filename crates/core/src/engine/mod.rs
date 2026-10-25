@@ -342,6 +342,9 @@ impl Spec {
         for t in triggers {
             let n = usize::from(t.fingers()).min(MAX_CONTACTS);
             match t {
+                Trigger::Zone { taps, .. } => {
+                    spec.max_taps[n] = spec.max_taps[n].max(*taps);
+                }
                 Trigger::Tap {
                     taps, modifiers, ..
                 } => {
@@ -1020,11 +1023,22 @@ pub fn resolve<'a>(
     observation: &Observation,
     app: Option<&AppInfo>,
 ) -> Option<&'a Gesture> {
+    resolve_at(config, observation, app, None)
+}
+
+/// The same, with where the touch landed in millimetres: a `zone` gesture
+/// needs it, and outside this function nobody has to know.
+pub fn resolve_at<'a>(
+    config: &'a Config,
+    observation: &Observation,
+    app: Option<&AppInfo>,
+    at: Option<(f32, f32)>,
+) -> Option<&'a Gesture> {
     let conf = config.settings.default_confidence;
     let mut best: Option<(&Gesture, u8)> = None;
     for g in &config.gestures {
         let Some(t) = &g.trigger else { continue };
-        let s = t.specificity(observation, conf);
+        let s = t.specificity_at(observation, conf, at);
         if s > best.map_or(0, |b| b.1) && g.applies(&config.settings.active_profile, app) {
             best = Some((g, s));
         }

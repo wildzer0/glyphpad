@@ -118,6 +118,23 @@ pub fn describe_trigger(t: &glyphpad_core::trigger::Trigger) -> String {
         }
     };
     match t {
+        Trigger::Zone {
+            fingers,
+            taps,
+            region,
+        } => format!(
+            "{} con {} in {}–{} × {}–{} mm",
+            if *taps == 1 {
+                "tocco".to_string()
+            } else {
+                format!("{taps}× tocco")
+            },
+            dita(*fingers),
+            region.x[0],
+            region.x[1],
+            region.y[0],
+            region.y[1]
+        ),
         Trigger::Tap {
             fingers,
             taps,

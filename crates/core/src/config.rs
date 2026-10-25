@@ -349,6 +349,8 @@ impl Default for UpdateSettings {
 #[serde(rename_all = "snake_case")]
 pub enum GestureKind {
     Tap,
+    /// A tap inside a rectangle of the touchpad.
+    Zone,
     Hold,
     Swipe,
     EdgeSwipe,
@@ -466,6 +468,9 @@ pub struct GestureDef {
     pub min_change_mm: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_deg: Option<f32>,
+    /// Where a `zone` gesture has to land, in millimetres.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<crate::trigger::Region>,
     /// The gestures of a sequence, in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steps: Option<Vec<TriggerDef>>,
@@ -544,6 +549,7 @@ impl GestureDef {
             min_change_mm: self.min_change_mm,
             min_deg: self.min_deg,
             within_ms: None,
+            region: self.region,
         }
     }
 
@@ -565,6 +571,7 @@ impl GestureDef {
             min_speed_mm_s: trigger.min_speed_mm_s,
             min_change_mm: trigger.min_change_mm,
             min_deg: trigger.min_deg,
+            region: trigger.region,
             steps: None,
             within_ms: None,
             action,
