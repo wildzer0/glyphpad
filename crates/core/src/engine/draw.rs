@@ -28,14 +28,16 @@ enum State {
         origin_us: u64,
         /// Fingers of the first stroke.
         fingers: usize,
-        /// The session of the first stroke, judged as a tap or swipe if the
-        /// symbol is not recognized and it stays the only stroke.
-        fallback: Option<Box<Session>>,
+        /// The session of every stroke, in order, judged as a tap or swipe if
+        /// the drawing matches no symbol.
+        sessions: Vec<Session>,
         /// Lift of the last stroke plus the stroke gap; `None` while another
         /// touch is in progress.
         deadline_us: Option<u64>,
         /// Lift of the last stroke.
         ended_us: u64,
+        /// Touch-down of the first stroke.
+        started_us: u64,
     },
 }
 
@@ -64,12 +66,13 @@ impl Arming {
     }
 }
 
-/// A finished symbol: its strokes and, if it had only one, the session to
-/// fall back on.
+/// A finished symbol: its strokes and, if it matches no symbol, the session
+/// of each stroke to fall back on.
 pub struct Finished {
     pub strokes: Vec<Stroke>,
-    pub fallback: Option<Box<Session>>,
-    /// First point of the first stroke.
+    /// One per stroke, in the order they were drawn.
+    pub sessions: Vec<Session>,
+    /// Touch-down of the first stroke.
     pub started_us: u64,
     /// Lift of the last stroke.
     pub ended_us: u64,
@@ -80,10 +83,12 @@ impl DrawRecognizer {
         self.state = State::Idle;
     }
 
-    /// Start of the symbol in progress, if any.
+    /// Start of the symbol in progress, if any: the touch-down of its first
+    /// stroke, so a step that began in time is waited for even before its
+    /// first drawing sample exists.
     pub fn origin(&self) -> Option<u64> {
         match self.state {
-            State::Collecting { origin_us, .. } => Some(origin_us),
+            State::Collecting { started_us, .. } => Some(started_us),
             State::Idle => None,
         }
     }
@@ -200,6 +205,7 @@ impl DrawRecognizer {
 
     pub fn add(&mut self, samples: Vec<TraceSample>, session: Session, p: &DrawParams) {
         let end = session.last_us;
+        let start = session.start_us;
         match &mut self.state {
             State::Idle => {
                 let origin_us = samples[0].t_us;
@@ -207,21 +213,22 @@ impl DrawRecognizer {
                     strokes: vec![to_stroke(&samples, origin_us)],
                     origin_us,
                     fingers: session.max_fingers,
-                    fallback: Some(Box::new(session)),
+                    sessions: vec![session],
                     deadline_us: Some(end + p.stroke_gap_us),
                     ended_us: end,
+                    started_us: start,
                 };
             }
             State::Collecting {
                 strokes,
                 origin_us,
-                fallback,
+                sessions,
                 deadline_us,
                 ended_us,
                 ..
             } => {
                 strokes.push(to_stroke(&samples, *origin_us));
-                *fallback = None;
+                sessions.push(session);
                 *ended_us = end;
                 *deadline_us = Some(end + p.stroke_gap_us);
             }
@@ -241,14 +248,15 @@ impl DrawRecognizer {
         match std::mem::replace(&mut self.state, State::Idle) {
             State::Collecting {
                 strokes,
-                fallback,
-                origin_us,
+                sessions,
+                origin_us: _,
                 ended_us,
+                started_us,
                 ..
             } => Some(Finished {
                 strokes,
-                fallback,
-                started_us: origin_us,
+                sessions,
+                started_us,
                 ended_us,
             }),
             State::Idle => None,

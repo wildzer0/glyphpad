@@ -439,7 +439,39 @@ fn session_trace(s: &Session) -> Arc<GestureTrace> {
     })
 }
 
-type Out = Vec<(Observation, Arc<GestureTrace>)>;
+/// An observation together with the times of the movement behind it. Every
+/// producer knows them: an observation flushed from a previous touch (a tap
+/// waiting for its double, a stroke of a drawing) must not borrow the times
+/// of the frame that happened to confirm it.
+struct Found {
+    observation: Observation,
+    trace: Arc<GestureTrace>,
+    started_us: u64,
+    ended_us: u64,
+}
+
+impl Found {
+    fn new(observation: Observation, trace: Arc<GestureTrace>, s: &Session) -> Self {
+        Self {
+            observation,
+            trace,
+            started_us: s.start_us,
+            ended_us: s.last_us,
+        }
+    }
+}
+
+/// Turns a confirmed tap sequence into an observation.
+fn found_tap(hit: tap::TapHit) -> Found {
+    Found {
+        observation: hit.observation,
+        trace: hit.trace,
+        started_us: hit.started_us,
+        ended_us: hit.ended_us,
+    }
+}
+
+type Out = Vec<Found>;
 
 /// Points in millimeters.
 pub type Polyline = Vec<(f32, f32)>;
@@ -459,38 +491,6 @@ struct DeviceState {
     chord: chord::ChordRecognizer,
     draw: draw::DrawRecognizer,
     last_frame_us: u64,
-    /// Where the movement of the symbol finished last ended, until used.
-    symbol_ended_us: Option<u64>,
-    /// Where that movement began, until used.
-    symbol_started_us: Option<u64>,
-    /// Start of the latest touch session.
-    touch_start_us: u64,
-    /// Trace of the last finished session, for taps confirmed later.
-    last_trace: Arc<GestureTrace>,
-}
-
-/// End of the movement behind an observation: the lift of the last stroke
-/// for what came out of a symbol in progress, else the moment itself.
-fn ended_of(observation: &Observation, symbol_ended_us: Option<u64>, at_us: u64) -> u64 {
-    match observation {
-        Observation::Tap { .. } | Observation::Hold { .. } => at_us,
-        _ => symbol_ended_us.map_or(at_us, |e| e.min(at_us)),
-    }
-}
-
-/// Start of the movement behind an observation: the first point of a symbol
-/// in progress for what came out of one, else the latest touch-down.
-fn started_of(
-    observation: &Observation,
-    symbol_started_us: Option<u64>,
-    touch_start_us: u64,
-    at_us: u64,
-) -> u64 {
-    match observation {
-        Observation::Tap { .. } | Observation::Hold { .. } => touch_start_us,
-        _ => symbol_started_us.unwrap_or(touch_start_us),
-    }
-    .min(at_us)
 }
 
 impl DeviceState {
@@ -655,7 +655,6 @@ impl Engine {
         let mut out: Out = Vec::new();
 
         let update = st.tracker.update(frame);
-        let began = update == Some(session::SessionUpdate::Began);
         match update {
             None => {}
             Some(session::SessionUpdate::Ended) => {
@@ -675,74 +674,90 @@ impl Engine {
                             // Not a stroke: a symbol in progress is complete.
                             out.extend(Self::finish_symbol(st, spec, t, symbols, recording));
                             let trace = session_trace(&s);
-                            st.last_trace = trace.clone();
-                            let obs = st.tap.session_ended(&s, spec, t).into_iter();
                             out.extend(
-                                obs.chain(st.motion.session_ended(&s, spec, t))
-                                    .chain(st.click.session_ended(&s, spec, t))
-                                    .map(|o| (o, trace.clone())),
+                                st.tap.session_ended(&s, spec, t).into_iter().map(found_tap),
                             );
+                            for o in st
+                                .motion
+                                .session_ended(&s, spec, t)
+                                .into_iter()
+                                .chain(st.click.session_ended(&s, spec, t))
+                            {
+                                out.push(Found::new(o, trace.clone(), &s));
+                            }
                         }
                     }
                 }
             }
             Some(update) => {
                 if update == session::SessionUpdate::Began {
-                    let previous = st.last_trace.clone();
-                    out.extend(st.tap.session_began(ts).map(|o| (o, previous)));
+                    out.extend(st.tap.session_began(ts).map(found_tap));
                     if st.draw.deadline().is_some_and(|d| ts >= d) {
                         out.extend(Self::finish_symbol(st, spec, t, symbols, recording));
                     }
                     st.draw.session_began();
                 }
-                if let Some(s) = st.tracker.session()
-                    && let Some(hold) = st.hold.update(s, spec, t)
-                {
-                    Self::consume(st, &mut out, hold);
-                }
-                if let Some(s) = st.tracker.session()
-                    && let Some(chord) = st.chord.update(s, spec, t)
+                // A touch that can no longer be the second tap confirms the
+                // waiting one now, rather than at the end of this touch.
+                if st
+                    .tracker
+                    .session()
+                    .is_some_and(|s| st.tap.cannot_continue(s, t))
                 {
                     Self::flush_taps(st, &mut out);
-                    let trace = st.tracker.session().map(session_trace).unwrap_or_default();
+                }
+                let hold = st
+                    .tracker
+                    .session()
+                    .and_then(|s| st.hold.update(s, spec, t).map(|h| (h, s.start_us)));
+                if let Some((hold, started_us)) = hold {
+                    Self::consume(st, &mut out, hold, started_us, ts);
+                }
+                let chord = st.tracker.session().and_then(|s| {
+                    let chord = st.chord.update(s, spec, t)?;
+                    Some((chord, session_trace(s), s.start_us, s.last_us))
+                });
+                if let Some((chord, trace, started_us, ended_us)) = chord {
+                    Self::flush_taps(st, &mut out);
                     if let Some(s) = st.tracker.session_mut() {
                         s.chorded = true;
                     }
-                    out.push((chord, trace));
+                    out.push(Found {
+                        observation: chord,
+                        trace,
+                        started_us,
+                        ended_us,
+                    });
                 }
             }
         }
-        let ended = st.symbol_ended_us.take();
-        let started = st.symbol_started_us.take();
-        let touch_start = st.touch_start_us;
-        if began {
-            st.touch_start_us = ts;
-        }
         let out: Vec<Recognition> = out
             .into_iter()
-            .map(|(observation, trace)| Recognition {
+            .map(|f| Recognition {
                 device,
-                ended_us: ended_of(&observation, ended, ts),
-                started_us: started_of(&observation, started, touch_start, ts),
-                observation,
+                observation: f.observation,
                 at_us: ts,
-                trace,
+                ended_us: f.ended_us,
+                started_us: f.started_us,
+                trace: f.trace,
             })
             .collect();
         self.spend_arming(&out);
         out
     }
 
-    /// Confirms a tap sequence waiting for more taps; it belongs to the
-    /// last finished session.
+    /// Confirms a tap sequence waiting for more taps.
     fn flush_taps(st: &mut DeviceState, out: &mut Out) {
         let mut taps = Vec::new();
         st.tap.reset_into(&mut taps);
-        out.extend(taps.into_iter().map(|o| (o, st.last_trace.clone())));
+        out.extend(taps.into_iter().map(found_tap));
     }
 
-    /// Recognizes the symbol in progress, if any; an unrecognized single
-    /// stroke is judged as a tap or swipe instead.
+    /// Recognizes the symbol in progress, if any. A drawing that matches no
+    /// configured symbol is judged as a tap or swipe instead, one stroke at a
+    /// time: a sequence of drawn gestures (two three-finger swipes, say) ends
+    /// up as a single drawing when its strokes are closer than
+    /// `stroke_gap_ms`, and each of them is still a gesture in its own right.
     fn finish_symbol(
         st: &mut DeviceState,
         spec: &Spec,
@@ -753,19 +768,20 @@ impl Engine {
         let Some(done) = st.draw.finish() else {
             return Vec::new();
         };
-        st.symbol_ended_us = Some(done.ended_us);
-        st.symbol_started_us = Some(done.started_us);
         let trace = Arc::new(GestureTrace {
             fingers: BTreeMap::new(),
             strokes: done.strokes.clone(),
         });
+        let times = (done.started_us, done.ended_us);
         if recording {
-            return vec![(
-                Observation::Sample {
+            return vec![Found {
+                observation: Observation::Sample {
                     strokes: done.strokes,
                 },
                 trace,
-            )];
+                started_us: times.0,
+                ended_us: times.1,
+            }];
         }
         let xy: Vec<Vec<(f32, f32)>> = done
             .strokes
@@ -779,43 +795,67 @@ impl Engine {
                 .symbol_threshold(&best.symbol)
                 .is_some_and(|min| best.score >= min)
         {
-            return vec![(
-                Observation::Symbol {
+            return vec![Found {
+                observation: Observation::Symbol {
                     name: best.symbol.clone(),
                     score: best.score,
                     candidates,
                     strokes: done.strokes,
                 },
                 trace,
-            )];
+                started_us: times.0,
+                ended_us: times.1,
+            }];
         }
-        let mut out = vec![(
-            Observation::UnrecognizedSymbol {
+        let mut out = vec![Found {
+            observation: Observation::UnrecognizedSymbol {
                 candidates,
                 strokes: done.strokes,
             },
             trace,
-        )];
-        if let Some(s) = done.fallback {
-            let trace = session_trace(&s);
-            let obs = st.tap.session_ended(&s, spec, t).into_iter();
+            started_us: times.0,
+            ended_us: times.1,
+        }];
+        for session in done.sessions {
+            let stroke_trace = session_trace(&session);
             out.extend(
-                obs.chain(st.motion.session_ended(&s, spec, t))
-                    .map(|o| (o, trace.clone())),
+                st.tap
+                    .session_ended(&session, spec, t)
+                    .into_iter()
+                    .map(found_tap),
             );
+            for o in st
+                .motion
+                .session_ended(&session, spec, t)
+                .into_iter()
+                .chain(st.click.session_ended(&session, spec, t))
+            {
+                out.push(Found::new(o, stroke_trace.clone(), &session));
+            }
         }
         out
     }
 
     /// A hold fired mid-session: a tap sequence waiting for this touch is
     /// confirmed first, then the session is closed to other recognizers.
-    fn consume(st: &mut DeviceState, out: &mut Out, hold: Observation) {
+    fn consume(
+        st: &mut DeviceState,
+        out: &mut Out,
+        hold: Observation,
+        started_us: u64,
+        at_us: u64,
+    ) {
         Self::flush_taps(st, out);
         let trace = st.tracker.session().map(session_trace).unwrap_or_default();
         if let Some(s) = st.tracker.session_mut() {
             s.consumed = true;
         }
-        out.push((hold, trace));
+        out.push(Found {
+            observation: hold,
+            trace,
+            started_us,
+            ended_us: at_us,
+        });
     }
 
     /// Advances time without new frames, for timeouts (multi-tap gap, holds,
@@ -831,26 +871,24 @@ impl Engine {
                 st.tracker.cancel();
                 st.hold.reset();
             }
-            let previous = st.last_trace.clone();
-            out.extend(st.tap.tick(now_us).map(|o| (o, previous)));
+            out.extend(st.tap.tick(now_us).map(found_tap));
             if st.draw.deadline().is_some_and(|d| now_us >= d) {
                 out.extend(Self::finish_symbol(st, spec, t, symbols, recording));
             }
-            if st.tracker.session().is_some()
-                && let Some(hold) = st.hold.tick(now_us, t)
-            {
-                Self::consume(st, &mut out, hold);
+            let hold = st
+                .tracker
+                .session()
+                .and_then(|s| st.hold.tick(now_us, t).map(|h| (h, s.start_us)));
+            if let Some((hold, started_us)) = hold {
+                Self::consume(st, &mut out, hold, started_us, now_us);
             }
-            let ended = st.symbol_ended_us.take();
-            let started = st.symbol_started_us.take();
-            let touch_start = st.touch_start_us;
-            all.extend(out.into_iter().map(|(observation, trace)| Recognition {
+            all.extend(out.into_iter().map(|f| Recognition {
                 device,
-                ended_us: ended_of(&observation, ended, now_us),
-                started_us: started_of(&observation, started, touch_start, now_us),
-                observation,
+                observation: f.observation,
                 at_us: now_us,
-                trace,
+                ended_us: f.ended_us,
+                started_us: f.started_us,
+                trace: f.trace,
             }));
         }
         self.spend_arming(&all);

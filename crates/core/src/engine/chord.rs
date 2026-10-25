@@ -64,11 +64,18 @@ impl ChordRecognizer {
                 .map(|(id, f)| (*id, (f.start, f.pos)))
                 .collect();
             if !resting.is_empty() && !fresh.is_empty() {
+                // The tap's duration is measured from the first finger of the
+                // gesture touching down, not from the frame this was noticed.
+                let start_us = fresh
+                    .keys()
+                    .filter_map(|id| s.fingers.get(id).map(|f| f.down_us))
+                    .min()
+                    .unwrap_or(now);
                 self.group = Some(Group {
                     modifiers: resting,
                     max_members: fresh.len(),
                     members: fresh,
-                    start_us: now,
+                    start_us,
                     max_drift_mm: 0.0,
                 });
             }

@@ -23,11 +23,12 @@ pub struct Dispatched {
 
 #[derive(Debug)]
 struct Pending {
-    /// Sequences still possible, by gesture index.
-    candidates: Vec<usize>,
+    /// Sequences still possible, by gesture index, each with the latest start
+    /// of its next step (its own `within_ms`, not the longest one).
+    candidates: Vec<(usize, u64)>,
     /// Index of the step each candidate expects next.
     next_step: usize,
-    /// Latest start of the next step for the sequence to go on.
+    /// Latest start of the next step over all candidates, for the timeout.
     step_deadline_us: u64,
     held: Vec<(Recognition, Option<AppInfo>)>,
 }
@@ -57,16 +58,21 @@ fn is_diagnostic(o: &Observation) -> bool {
     )
 }
 
-/// Latest start of step `step` of `candidates` after the previous one ended
-/// at `ended_us`. The pause between the steps is what `within_ms` limits,
-/// not the time the next step itself takes.
-fn step_deadline(config: &Config, candidates: &[usize], ended_us: u64) -> u64 {
-    let within = candidates
-        .iter()
-        .map(|&i| config.gestures[i].within_ms)
-        .max()
-        .unwrap_or(0);
-    ended_us + within * 1000
+/// Latest start of the next step of gesture `index` after the previous one
+/// ended at `ended_us`. The pause between the steps is what `within_ms`
+/// limits, not the time the next step itself takes.
+fn step_deadline(config: &Config, index: usize, ended_us: u64) -> u64 {
+    ended_us + config.gestures[index].within_ms * 1000
+}
+
+/// The same deadline, with the gesture index, for one candidate.
+fn candidate_deadline(config: &Config, index: usize, ended_us: u64) -> (usize, u64) {
+    (index, step_deadline(config, index, ended_us))
+}
+
+/// Latest start over every candidate, for the overall timeout.
+fn longest(candidates: &[(usize, u64)]) -> u64 {
+    candidates.iter().map(|&(_, d)| d).max().unwrap_or(0)
 }
 
 impl Dispatcher {
@@ -144,18 +150,19 @@ impl Dispatcher {
         };
 
         if let Some(p) = &mut self.pending {
-            let advanced: Vec<usize> = p
+            // A candidate goes on only if this step is the one it expects and
+            // it began within that sequence's own window.
+            let advanced: Vec<(usize, u64)> = p
                 .candidates
                 .iter()
                 .copied()
-                .filter(|&i| matches_step(i, p.next_step))
+                .filter(|&(i, deadline)| matches_step(i, p.next_step) && r.started_us <= deadline)
                 .collect();
-            // The pause counts up to the moment the movement began.
-            if !advanced.is_empty() && r.started_us <= p.step_deadline_us {
+            if !advanced.is_empty() {
                 // Candidates are in priority order, so the first complete one wins.
-                if let Some(&done) = advanced
+                if let Some(&(done, _)) = advanced
                     .iter()
-                    .find(|&&i| config.gestures[i].steps.len() == p.next_step + 1)
+                    .find(|&&(i, _)| config.gestures[i].steps.len() == p.next_step + 1)
                 {
                     self.pending = None;
                     out.push(Dispatched {
@@ -166,8 +173,11 @@ impl Dispatcher {
                     return out;
                 }
                 p.next_step += 1;
-                p.step_deadline_us = step_deadline(config, &advanced, r.ended_us);
-                p.candidates = advanced;
+                p.candidates = advanced
+                    .iter()
+                    .map(|&(i, _)| candidate_deadline(config, i, r.ended_us))
+                    .collect();
+                p.step_deadline_us = longest(&p.candidates);
                 p.held.push((r, app));
                 return out;
             }
@@ -175,7 +185,7 @@ impl Dispatcher {
             out.extend(self.flush(config));
         }
 
-        let starts: Vec<usize> = config
+        let starts: Vec<(usize, u64)> = config
             .gestures
             .iter()
             .enumerate()
@@ -185,7 +195,7 @@ impl Dispatcher {
                     && !g.steps.is_empty()
                     && matches_step(*i, 0)
             })
-            .map(|(i, _)| i)
+            .map(|(i, _)| candidate_deadline(config, i, r.ended_us))
             .collect();
         if starts.is_empty() {
             out.push(Dispatched {
@@ -195,7 +205,7 @@ impl Dispatcher {
             });
         } else {
             self.pending = Some(Pending {
-                step_deadline_us: step_deadline(config, &starts, r.ended_us),
+                step_deadline_us: longest(&starts),
                 candidates: starts,
                 next_step: 1,
                 held: vec![(r, app)],

@@ -1055,3 +1055,116 @@ fn sequence_at_a_relaxed_pace() {
     let names = dispatched_names(&config, &pad);
     assert!(names.iter().any(|n| n == "tap-then-up"), "{names:?}");
 }
+
+const TWO_SWIPES: &str = r#"
+[settings]
+draw_activation = { mode = "fingers", count = 3 }
+
+[[gesture]]
+name = "up"
+type = "swipe"
+fingers = 3
+direction = "up"
+action = { type = "notify", message = "up" }
+
+[[gesture]]
+name = "down"
+type = "swipe"
+fingers = 3
+direction = "down"
+action = { type = "notify", message = "down" }
+
+[[gesture]]
+name = "up-then-down"
+type = "sequence"
+steps = [{ type = "swipe", fingers = 3, direction = "up" }, { type = "swipe", fingers = 3, direction = "down" }]
+within_ms = 800
+action = { type = "notify", message = "seq" }
+"#;
+
+#[test]
+fn drawn_steps_closer_than_the_stroke_gap_are_still_two_gestures() {
+    // Two three-finger swipes with a short pause: the draw mode groups them
+    // into one two-stroke drawing (a V), which is no configured symbol, so
+    // each stroke is judged on its own and the sequence can fire.
+    for pause in [50u64, 150, 300, 600] {
+        let config = crate::config::parse(TWO_SWIPES).unwrap().config;
+        let mut pad = Pad::new();
+        pad.stroke(3, (40.0, 90.0), (0.0, -40.0), 200);
+        pad.wait_ms(pause);
+        pad.stroke(3, (40.0, 50.0), (0.0, 40.0), 200);
+        let names = dispatched_names(&config, &pad);
+        assert!(
+            names.iter().any(|n| n == "up-then-down"),
+            "pause of {pause} ms: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn a_pause_longer_than_the_window_leaves_two_gestures() {
+    let config = crate::config::parse(TWO_SWIPES).unwrap().config;
+    let mut pad = Pad::new();
+    pad.stroke(3, (40.0, 90.0), (0.0, -40.0), 200);
+    pad.wait_ms(1200);
+    pad.stroke(3, (40.0, 50.0), (0.0, 40.0), 200);
+    let names: Vec<String> = dispatched_names(&config, &pad)
+        .into_iter()
+        .filter(|n| !n.starts_with("-("))
+        .collect();
+    assert_eq!(names, ["up", "down"]);
+}
+
+const TAP_WITH_DOUBLE: &str = r#"
+[[gesture]]
+name = "single"
+type = "tap"
+fingers = 1
+action = { type = "notify", message = "single" }
+
+[[gesture]]
+name = "double"
+type = "tap"
+fingers = 1
+taps = 2
+action = { type = "notify", message = "double" }
+"#;
+
+/// Recognitions of a pad, with the times the engine stamped on them.
+fn recognitions(engine: &mut Engine, pad: &Pad) -> Vec<Recognition> {
+    let events: Vec<DeviceEvent> = pad
+        .frames
+        .iter()
+        .map(|f| DeviceEvent::Frame {
+            device: DeviceId(1),
+            frame: f.clone(),
+        })
+        .collect();
+    engine.process_all(&events)
+}
+
+#[test]
+fn a_tap_is_confirmed_as_soon_as_the_next_touch_cannot_be_one() {
+    // A tap waiting for a possible double, followed by a long drag: the tap
+    // must not wait for the drag to end, and its times are its own.
+    let spec = spec_with(TAP_WITH_DOUBLE);
+    let mut e = engine(spec);
+    let mut pad = Pad::new();
+    pad.tap(1);
+    let lift_us = pad.frames.last().map(|f| f.timestamp_us).unwrap();
+    pad.wait_ms(50);
+    pad.stroke(1, (60.0, 40.0), (30.0, 0.0), 1_500);
+    let out = recognitions(&mut e, &pad);
+    let tap = out
+        .iter()
+        .find(|r| matches!(r.observation, Observation::Tap { .. }))
+        .unwrap_or_else(|| panic!("no tap in {out:?}"));
+    assert_eq!(tap.ended_us, lift_us, "the tap ended at its lift");
+    // Confirmed once the drag moved past a tap's limit, not at its end.
+    let drag_end = pad.frames.last().map(|f| f.timestamp_us).unwrap();
+    assert!(
+        tap.at_us < drag_end - 1_000_000,
+        "confirmed at {} µs, the drag ended at {drag_end} µs",
+        tap.at_us
+    );
+}
