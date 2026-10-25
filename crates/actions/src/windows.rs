@@ -468,14 +468,16 @@ fn key_input(key: Key, up: bool) -> INPUT {
 /// reverse order, in one `SendInput` call so no real keystroke can land in
 /// between.
 fn send_combo(combo: &KeyCombo) -> Result<(), ActionError> {
-    let mut inputs: Vec<INPUT> = combo
-        .modifiers
-        .iter()
-        .map(|&m| key_input(m, false))
-        .collect();
+    let mut modifiers = combo.modifiers.clone();
+    // The plus key shares its virtual key with `=`: without Shift a
+    // `Ctrl+Plus` would arrive as `Ctrl+=`.
+    if combo.key == Key::Plus && !modifiers.contains(&Key::Shift) {
+        modifiers.push(Key::Shift);
+    }
+    let mut inputs: Vec<INPUT> = modifiers.iter().map(|&m| key_input(m, false)).collect();
     inputs.push(key_input(combo.key, false));
     inputs.push(key_input(combo.key, true));
-    inputs.extend(combo.modifiers.iter().rev().map(|&m| key_input(m, true)));
+    inputs.extend(modifiers.iter().rev().map(|&m| key_input(m, true)));
     // SAFETY: `inputs` is a valid slice of keyboard INPUTs with the matching size.
     let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
