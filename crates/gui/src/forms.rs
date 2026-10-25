@@ -604,9 +604,20 @@ fn shortcut_field(ui: &mut egui::Ui, id: Id, combo: &mut Option<KeyCombo>) {
     let p = pal(ui);
     let text_id = id.with("text");
     let capture_id = id.with("capture");
+    let seen_id = id.with("seen");
+    let current = combo.as_ref().map(ToString::to_string).unwrap_or_default();
     let mut text: String = ui
         .data_mut(|d| d.get_temp(text_id))
-        .unwrap_or_else(|| combo.as_ref().map(ToString::to_string).unwrap_or_default());
+        .unwrap_or_else(|| current.clone());
+    // The shortcut can change without this field (undo, another gesture
+    // replacing the action, an import): follow it, unless the text already
+    // says the same thing (the user may be typing an incomplete one).
+    let seen: Option<String> = ui.data_mut(|d| d.get_temp(seen_id));
+    if seen.as_deref() != Some(current.as_str())
+        && text.parse::<KeyCombo>().ok().as_ref() != combo.as_ref()
+    {
+        text = current.clone();
+    }
     let mut capturing: bool = ui.data_mut(|d| d.get_temp(capture_id)).unwrap_or(false);
     ui.horizontal(|ui| {
         let edit = w::text_field(ui, &mut text, "e.g. Ctrl+Shift+T", 170.0);
@@ -694,9 +705,11 @@ fn shortcut_field(ui: &mut egui::Ui, id: Id, combo: &mut Option<KeyCombo>) {
         ui,
         "The Windows key and some system shortcuts are taken by Windows before GlyphPad sees them: type those.",
     );
+    let final_text = combo.as_ref().map(ToString::to_string).unwrap_or_default();
     ui.data_mut(|d| {
         d.insert_temp(text_id, text);
         d.insert_temp(capture_id, capturing);
+        d.insert_temp(seen_id, final_text);
     });
 }
 

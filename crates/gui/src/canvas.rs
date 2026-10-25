@@ -300,7 +300,9 @@ impl Playback {
                     self.playing = false;
                 }
             }
-            ctx.request_repaint();
+            // 30 frames a second are enough for a trace and half the work of
+            // redrawing the window for every vsync.
+            ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
         self.last = Some(now);
     }

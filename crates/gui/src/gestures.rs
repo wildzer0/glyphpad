@@ -30,8 +30,10 @@ pub struct State {
     state: StateFilter,
     selected: Option<u64>,
     confirm_delete: Option<u64>,
-    /// Conflicts of the draft, recomputed when it changes.
+    /// Conflicts of the draft, recomputed a moment after it changes.
     conflicts: Option<(u64, Vec<Conflict>)>,
+    /// When the draft last changed in a way that needs a new check.
+    conflicts_at: Option<std::time::Instant>,
     profile_dialog: bool,
     new_profile: String,
     rename: Option<(String, String)>,
@@ -61,10 +63,29 @@ pub fn describe(def: &GestureDef) -> String {
         .unwrap_or_else(|e| format!("{} {}", crate::i18n::tr("incomplete:"), e[0].1))
 }
 
+/// How long the draft must rest before conflicts are looked for again:
+/// looking for them compares every pair of symbols, which is far too slow to
+/// do on every keystroke.
+const CONFLICT_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Hash of what conflict detection depends on: the gestures' names,
+/// conditions and triggers. Hashing only this keeps the per-frame cost small
+/// (the actions and the rest of the draft do not matter).
 fn draft_hash(e: &Editor) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    format!("{:?}", e.draft.gestures).hash(&mut h);
+    for g in &e.draft.gestures {
+        let d = &g.def;
+        d.name.hash(&mut h);
+        d.enabled.hash(&mut h);
+        d.profile.hash(&mut h);
+        d.when
+            .as_ref()
+            .and_then(|w| w.app.as_ref())
+            .map(|a| a.to_vec())
+            .hash(&mut h);
+        format!("{:?}{:?}", d.trigger_def(), d.steps).hash(&mut h);
+    }
     h.finish()
 }
 
@@ -101,13 +122,20 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
         },
     );
 
-    // Conflicts of the draft (SPEC §13).
+    // Conflicts of the draft (SPEC §13), once it stops changing.
     let hash = draft_hash(ed);
-    if st.conflicts.as_ref().is_none_or(|c| c.0 != hash)
-        && let Some(config) = ed.draft_config()
-    {
-        let found = glyphpad_core::conflicts::find(&config, &cx.shared.effective);
-        st.conflicts = Some((hash, found));
+    if st.conflicts.as_ref().is_some_and(|c| c.0 == hash) {
+        st.conflicts_at = None;
+    } else {
+        let waiting = st.conflicts_at.get_or_insert_with(std::time::Instant::now);
+        let ready = st.conflicts.is_none() || waiting.elapsed() >= CONFLICT_DELAY;
+        if ready && let Some(config) = ed.draft_config() {
+            let found = glyphpad_core::conflicts::find(&config, &cx.shared.effective);
+            st.conflicts = Some((hash, found));
+            st.conflicts_at = None;
+        } else {
+            ui.ctx().request_repaint_after(CONFLICT_DELAY);
+        }
     }
 
     if st.selected.is_some_and(|u| ed.index_of(u).is_none()) {
@@ -707,6 +735,9 @@ fn profiles_dialog(ctx: &egui::Context, ed: &mut Editor, st: &mut State) {
                 }
             }
             ed.draft.settings.profiles.retain(|x| *x != p);
+            // A rule naming a profile that no longer exists would keep it
+            // alive and silently apply nothing.
+            ed.draft.settings.profile_rules.retain(|r| r.profile != p);
             if ed.draft.settings.active_profile == p {
                 ed.draft.settings.active_profile = "default".into();
             }
@@ -729,6 +760,11 @@ fn profiles_dialog(ctx: &egui::Context, ed: &mut Editor, st: &mut State) {
                 for p in &mut ed.draft.settings.profiles {
                     if *p == old {
                         *p = new.clone();
+                    }
+                }
+                for rule in &mut ed.draft.settings.profile_rules {
+                    if rule.profile == old {
+                        rule.profile = new.clone();
                     }
                 }
                 if ed.draft.settings.active_profile == old {

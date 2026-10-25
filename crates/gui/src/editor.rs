@@ -471,7 +471,7 @@ impl Editor {
 pub fn line_diff(a: &str, b: &str) -> Vec<(char, String)> {
     let (a, b): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
     let (n, m) = (a.len(), b.len());
-    let mut lcs = vec![vec![0u16; m + 1]; n + 1];
+    let mut lcs = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
             lcs[i][j] = if a[i] == b[j] {
