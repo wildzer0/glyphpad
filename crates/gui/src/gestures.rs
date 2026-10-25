@@ -34,6 +34,10 @@ pub struct State {
     conflicts: Option<(u64, Vec<Conflict>)>,
     /// When the draft last changed in a way that needs a new check.
     conflicts_at: Option<std::time::Instant>,
+    /// The expensive half of the conflict check — do two symbols look alike —
+    /// with the key it was computed for: it depends only on the symbols in
+    /// use, their confidence and the templates.
+    symbol_conflicts: Option<(u64, Vec<Conflict>)>,
     profile_dialog: bool,
     new_profile: String,
     rename: Option<(String, String)>,
@@ -73,24 +77,18 @@ pub fn describe(def: &GestureDef) -> String {
 /// do on every keystroke.
 const CONFLICT_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 
-/// Hash of what conflict detection depends on: the gestures' names,
-/// conditions and triggers. Hashing only this keeps the per-frame cost small
-/// (the actions and the rest of the draft do not matter).
-fn draft_hash(e: &Editor) -> u64 {
+/// What the expensive half of the conflict check depends on: the symbols in
+/// use with their confidence, and the templates (by the address of the
+/// published map, which changes whenever they are reloaded).
+fn symbol_key(config: &glyphpad_core::config::Config, cx: &Ctx) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    for g in &e.draft.gestures {
-        let d = &g.def;
-        d.name.hash(&mut h);
-        d.enabled.hash(&mut h);
-        d.profile.hash(&mut h);
-        d.when
-            .as_ref()
-            .and_then(|w| w.app.as_ref())
-            .map(|a| a.to_vec())
-            .hash(&mut h);
-        format!("{:?}{:?}", d.trigger_def(), d.steps).hash(&mut h);
+    for g in &config.gestures {
+        if let Some(t @ glyphpad_core::trigger::Trigger::Symbol { .. }) = &g.trigger {
+            format!("{t:?}").hash(&mut h);
+        }
     }
+    (std::sync::Arc::as_ptr(&cx.shared.effective) as usize).hash(&mut h);
     h.finish()
 }
 
@@ -127,16 +125,32 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
         },
     );
 
-    // Conflicts of the draft (SPEC §13), once it stops changing.
-    let hash = draft_hash(ed);
-    if st.conflicts.as_ref().is_some_and(|c| c.0 == hash) {
+    // Conflicts of the draft (SPEC §13), once it stops changing. Comparing
+    // every pair of symbols takes hundreds of milliseconds on a real
+    // configuration, so that half is cached and the rest waits for the user
+    // to stop typing or dragging.
+    let revision = ed.draft_revision();
+    if st.conflicts.as_ref().is_some_and(|c| c.0 == revision) {
         st.conflicts_at = None;
+    } else if ui.ctx().egui_wants_keyboard_input() || ui.input(|i| i.pointer.any_down()) {
+        st.conflicts_at = Some(std::time::Instant::now());
+        ui.ctx().request_repaint_after(CONFLICT_DELAY);
     } else {
         let waiting = st.conflicts_at.get_or_insert_with(std::time::Instant::now);
         let ready = st.conflicts.is_none() || waiting.elapsed() >= CONFLICT_DELAY;
         if ready && let Some(config) = ed.draft_config() {
-            let found = glyphpad_core::conflicts::find(&config, &cx.shared.effective);
-            st.conflicts = Some((hash, found));
+            let key = symbol_key(&config, cx);
+            let symbols = match &st.symbol_conflicts {
+                Some((cached, list)) if *cached == key => list.clone(),
+                _ => {
+                    let list = glyphpad_core::conflicts::symbols(&config, &cx.shared.effective);
+                    st.symbol_conflicts = Some((key, list.clone()));
+                    list
+                }
+            };
+            let mut found = glyphpad_core::conflicts::movements(&config);
+            found.extend(symbols);
+            st.conflicts = Some((revision, found));
             st.conflicts_at = None;
         } else {
             ui.ctx().request_repaint_after(CONFLICT_DELAY);

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The gestures page no longer re-checks lookalike symbols on every edit: on a real configuration
+  that check measured over 200 ms (a debug build) and ran shortly after each change, which is
+  what made typing a name or dragging the zone map stutter. It now depends on the symbols in use
+  and is cached; the rest of the conflict check costs microseconds.
+- A draft is validated only once it has been left alone, not on every keystroke or every frame of
+  a drag, and the "not saved yet" banner no longer appears and disappears while a name is half
+  typed.
+
 ## [1.4.0] - 2026-10-25
 
 ### Added

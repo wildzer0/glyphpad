@@ -147,6 +147,9 @@ pub struct Editor {
     failed: Option<(Draft, String)>,
     /// The draft as of the last frame, to notice edits.
     observed: Draft,
+    /// Counts the changes of the draft: the Gestures page keys its conflict
+    /// check on it, instead of hashing the whole draft every frame.
+    draft_revision: u64,
     changed_at: Instant,
     state: SaveState,
 }
@@ -161,6 +164,7 @@ impl Editor {
             base_origin: origin,
             committed: d.clone(),
             observed: d.clone(),
+            draft_revision: 0,
             draft: d,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -176,6 +180,11 @@ impl Editor {
 
     pub fn dirty(&self) -> bool {
         self.draft != self.base
+    }
+
+    /// Changes every time the draft does: what a cache can be keyed on.
+    pub fn draft_revision(&self) -> u64 {
+        self.draft_revision
     }
 
     pub fn state(&self) -> &SaveState {
@@ -259,6 +268,7 @@ impl Editor {
     ) -> (Option<Command>, Option<Duration>) {
         if self.draft != self.observed {
             self.observed = self.draft.clone();
+            self.draft_revision += 1;
             self.changed_at = now;
         }
         if pointer_down && self.dirty() {
@@ -273,14 +283,7 @@ impl Editor {
             self.state = SaveState::Conflict;
             return (None, None);
         }
-        if typing {
-            self.state = SaveState::Waiting;
-            return (None, Some(DEBOUNCE));
-        }
-        if let Err(e) = self.check() {
-            self.state = SaveState::Invalid(e);
-            return (None, None);
-        }
+        // A save still on its way is watched whatever the user does next.
         if let Some(sent) = self
             .sent
             .take_if(|s| now.duration_since(s.at) >= SAVE_TIMEOUT)
@@ -298,6 +301,18 @@ impl Editor {
                 Some(SAVE_TIMEOUT.saturating_sub(now.duration_since(sent.at))),
             );
         }
+        if typing || pointer_down {
+            // Mid-keystroke or mid-drag: the draft is not at rest, and
+            // validating now would write and re-parse the whole file for
+            // nothing — a stutter on every letter and every frame of a drag.
+            self.state = SaveState::Waiting;
+            return (None, Some(DEBOUNCE));
+        }
+        let settled = now.duration_since(self.changed_at);
+        if settled < DEBOUNCE {
+            self.state = SaveState::Waiting;
+            return (None, Some(DEBOUNCE - settled));
+        }
         if let Some((d, why)) = &self.failed {
             if *d == self.draft {
                 self.state = SaveState::Failed(why.clone());
@@ -305,10 +320,12 @@ impl Editor {
             }
             self.failed = None;
         }
-        let settled = now.duration_since(self.changed_at);
-        if settled < DEBOUNCE {
-            self.state = SaveState::Waiting;
-            return (None, Some(DEBOUNCE - settled));
+        // Only now, with the draft at rest, is it worth validating. A name
+        // half typed is not an error to shout about either: the banner would
+        // appear and disappear under the cursor.
+        if let Err(e) = self.check() {
+            self.state = SaveState::Invalid(e);
+            return (None, None);
         }
         self.state = SaveState::Saving;
         (self.save(shared, now), Some(SAVE_TIMEOUT))
@@ -590,6 +607,27 @@ mod tests {
         assert_eq!(e.state(), &SaveState::Saving);
         // Nothing is sent twice while the save is on its way.
         assert!(step(&mut e, &s1, 11).is_none());
+    }
+
+    #[test]
+    fn a_draft_is_not_validated_while_typing_or_dragging() {
+        let s1 = shared(FILE, 1);
+        let mut e = Editor::new(&s1);
+        // A name half typed is not an error yet: no banner, no file work.
+        e.draft.gestures[0].def.name = String::new();
+        assert!(e.autosave(&s1, Instant::now(), false, true).0.is_none());
+        assert_eq!(e.state(), &SaveState::Waiting);
+        // Nor is a drag: a slider or the zone map changes the draft every
+        // frame, and validating each frame is what made them stutter.
+        assert!(e.autosave(&s1, later(1), true, false).0.is_none());
+        assert_eq!(e.state(), &SaveState::Waiting);
+        // At rest it is validated, and then it is reported.
+        let _ = e.autosave(&s1, later(5), false, false);
+        assert!(
+            matches!(e.state(), SaveState::Invalid(_)),
+            "{:?}",
+            e.state()
+        );
     }
 
     #[test]

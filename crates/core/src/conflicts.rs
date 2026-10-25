@@ -65,11 +65,17 @@ fn same_movement(a: &Trigger, b: &Trigger) -> bool {
     }
 }
 
+/// How many examples of each symbol are compared: the first few are enough to
+/// see whether two symbols look alike, and each comparison costs a
+/// recognition against every template of the other symbol.
+const SAMPLES_COMPARED: usize = 3;
+
 /// Mean best score of `a`'s samples against `b`'s templates.
 fn resemblance(a: &[Sample], b: &[Sample], b_name: &str) -> f32 {
     let r = SymbolRecognizer::new(&BTreeMap::from([(b_name.to_string(), b.to_vec())]), 0.0);
     let scores: Vec<f32> = a
         .iter()
+        .take(SAMPLES_COMPARED)
         .filter_map(|s| r.recognize(&s.xy_strokes()).first().map(|c| c.score))
         .collect();
     if scores.is_empty() {
@@ -84,7 +90,17 @@ fn resemblance(a: &[Sample], b: &[Sample], b_name: &str) -> f32 {
 /// threshold means some drawings will cross it.
 const SIMILARITY_MARGIN: f32 = 0.05;
 
+/// Every conflict: [`movements`] and [`symbols`].
 pub fn find(config: &Config, templates: &BTreeMap<String, Vec<Sample>>) -> Vec<Conflict> {
+    let mut out = movements(config);
+    out.extend(symbols(config, templates));
+    out
+}
+
+/// The conflicts that do not look at the templates: two gestures the same
+/// movement can set off. Cheap — microseconds — so the window can run it
+/// whenever the draft changes.
+pub fn movements(config: &Config) -> Vec<Conflict> {
     let mut out = Vec::new();
     let gestures: Vec<&Gesture> = config.gestures.iter().filter(|g| g.def.enabled).collect();
     for (i, a) in gestures.iter().enumerate() {
@@ -135,6 +151,15 @@ pub fn find(config: &Config, templates: &BTreeMap<String, Vec<Sample>>) -> Vec<C
         }
     }
 
+    out
+}
+
+/// Lookalike symbols: the expensive half, since every pair needs the
+/// recognizer run over the examples. It changes only when the symbols in use,
+/// their confidence or the templates do, so the window caches it.
+pub fn symbols(config: &Config, templates: &BTreeMap<String, Vec<Sample>>) -> Vec<Conflict> {
+    let mut out = Vec::new();
+    let gestures: Vec<&Gesture> = config.gestures.iter().filter(|g| g.def.enabled).collect();
     // Symbols used by gestures, with the lowest confidence asked for each.
     let mut used: BTreeMap<String, f32> = BTreeMap::new();
     for g in &gestures {
@@ -201,6 +226,18 @@ mod tests {
             "[[gesture]]\nname = \"a\"\n{TAP3}\nprofile = \"p\"\n[[gesture]]\nname = \"b\"\n{TAP3}\nprofile = \"q\"\n"
         ));
         assert!(c.is_empty());
+    }
+
+    #[test]
+    fn the_two_halves_split_the_conflicts() {
+        let config = parse(&format!(
+            "[[gesture]]\nname = \"a\"\n{TAP3}\n[[gesture]]\nname = \"b\"\n{TAP3}\n"
+        ))
+        .unwrap()
+        .config;
+        assert_eq!(movements(&config).len(), 1);
+        assert!(symbols(&config, &defaults()).is_empty());
+        assert_eq!(find(&config, &defaults()).len(), 1);
     }
 
     #[test]
