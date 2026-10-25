@@ -34,14 +34,33 @@ struct Template {
 /// Matches traces against every template of every symbol.
 pub struct SymbolRecognizer {
     templates: Vec<Template>,
-    /// Candidate rotations, in degrees, tried within the configured tolerance.
-    rotations: Vec<f32>,
+    /// Rotations tried first, in degrees, symmetric around 0.
+    coarse: Vec<f32>,
+    /// Spacing of `coarse`, used to refine around the best one.
+    step: f32,
+    /// How far the trace may be turned, in degrees.
+    tolerance: f32,
+}
+
+/// Coarse rotations: 15° apart for the usual tolerances, wider (at most 7 a
+/// side) when the tolerance is large, so the search stays bounded. Matching
+/// a rotated cloud against every template costs milliseconds, so trying all
+/// 5° steps up to 180° would take a tenth of a second per drawing.
+fn coarse_rotations(tolerance: f32) -> (Vec<f32>, f32) {
+    if tolerance <= 0.0 {
+        return (vec![0.0], 0.0);
+    }
+    let step = (tolerance / 6.0).clamp(15.0_f32.min(tolerance), 180.0);
+    let n = (tolerance / step).ceil().max(1.0) as i32;
+    let step = tolerance / n as f32;
+    ((-n..=n).map(|i| step * i as f32).collect(), step)
 }
 
 impl SymbolRecognizer {
     /// `rotation_tolerance_deg` of 0 keeps symbols orientation-sensitive (a
     /// rotated L is not an L); a positive value also tries the trace rotated
-    /// by up to that many degrees either way, in steps of at most 5°.
+    /// by up to that many degrees either way, in steps of at most 5° near the
+    /// best angle.
     pub fn new(symbols: &BTreeMap<String, Vec<Sample>>, rotation_tolerance_deg: f32) -> Self {
         let templates = symbols
             .iter()
@@ -54,20 +73,13 @@ impl SymbolRecognizer {
                 })
             })
             .collect();
-        let tol = rotation_tolerance_deg.abs().min(180.0);
-        let steps = (tol / 5.0).ceil() as i32;
-        let rotations = (-steps..=steps)
-            .map(|i| {
-                if steps == 0 {
-                    0.0
-                } else {
-                    tol * i as f32 / steps as f32
-                }
-            })
-            .collect();
+        let tolerance = rotation_tolerance_deg.abs().min(180.0);
+        let (coarse, step) = coarse_rotations(tolerance);
         Self {
             templates,
-            rotations,
+            coarse,
+            step,
+            tolerance,
         }
     }
 
@@ -75,22 +87,68 @@ impl SymbolRecognizer {
         self.templates.is_empty()
     }
 
+    /// Scores one rotation of the trace against every template, keeping the
+    /// best distance of each symbol and the closest (distance, rotation).
+    fn score(
+        &self,
+        cloud: &Cloud,
+        rotation: f32,
+        best: &mut BTreeMap<&str, f32>,
+        nearest: &mut Option<(f32, f32)>,
+    ) {
+        for t in &self.templates {
+            let Some(entry) = best.get_mut(t.symbol.as_str()) else {
+                continue;
+            };
+            let d = dollar_q::distance(cloud, &t.cloud, *entry);
+            if d < *entry {
+                *entry = d;
+            }
+            if nearest.is_none_or(|(b, _)| d < b) {
+                *nearest = Some((d, rotation));
+            }
+        }
+    }
+
     /// The best score of each symbol, best first. Empty when the trace has
     /// no extent.
     pub fn recognize(&self, strokes: &[Vec<(f32, f32)>]) -> Vec<Candidate> {
-        let clouds: Vec<Cloud> = self
-            .rotations
-            .iter()
-            .filter_map(|&r| Cloud::new(strokes, r))
-            .collect();
-        if clouds.is_empty() {
+        let Some(cloud) = Cloud::new(strokes, 0.0) else {
             return Vec::new();
+        };
+        let mut best: BTreeMap<&str, f32> = self
+            .templates
+            .iter()
+            .map(|t| (t.symbol.as_str(), f32::MAX))
+            .collect();
+        let mut nearest: Option<(f32, f32)> = None;
+        for &rotation in &self.coarse {
+            let cloud = if rotation == 0.0 {
+                cloud.clone()
+            } else {
+                let Some(c) = Cloud::new(strokes, rotation) else {
+                    continue;
+                };
+                c
+            };
+            self.score(&cloud, rotation, &mut best, &mut nearest);
         }
-        let mut best: BTreeMap<&str, f32> = BTreeMap::new();
-        for t in &self.templates {
-            let entry = best.entry(&t.symbol).or_insert(f32::MAX);
-            for c in &clouds {
-                *entry = dollar_q::distance(c, &t.cloud, *entry);
+        // The true angle lies between two coarse ones, so the winner is
+        // refined at 5° around it.
+        if let Some((_, rotation)) = nearest
+            && self.step > 5.0
+        {
+            let n = (self.step / 2.0 / 5.0).ceil() as i32;
+            for i in -n..=n {
+                if i == 0 {
+                    continue;
+                }
+                let angle = (rotation + self.step / 2.0 * i as f32 / n as f32)
+                    .clamp(-self.tolerance, self.tolerance);
+                let Some(c) = Cloud::new(strokes, angle) else {
+                    continue;
+                };
+                self.score(&c, angle, &mut best, &mut nearest);
             }
         }
         let mut out: Vec<Candidate> = best
