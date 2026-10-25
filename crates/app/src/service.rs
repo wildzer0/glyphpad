@@ -356,14 +356,16 @@ impl Service {
             if let Some(f) = &mut self.freezer {
                 f.update(self.engine.drawing_now());
             }
+            let mut dispatched = Vec::new();
             for r in recognitions {
-                self.on_recognition(r);
+                dispatched.extend(self.on_recognition(r));
             }
             let now = self.now_us();
             self.dispatcher.observe(self.engine.busy_since(), now);
             self.sync_trail();
             let config = self.config.clone();
-            for d in self.dispatcher.tick(&config, now) {
+            dispatched.extend(self.dispatcher.tick(&config, now));
+            for d in Self::without_explained_drawings(dispatched) {
                 self.on_dispatched(d);
             }
         }
@@ -457,7 +459,7 @@ impl Service {
             .map_or((100.0, 70.0), |d| (d.width_mm, d.height_mm))
     }
 
-    fn on_recognition(&mut self, r: Recognition) {
+    fn on_recognition(&mut self, r: Recognition) -> Vec<Dispatched> {
         let (width_mm, height_mm) = self.pad_size(r.device);
         match self.mode {
             EngineMode::RecordSymbol => {
@@ -471,7 +473,7 @@ impl Service {
                     });
                     self.ui.wake();
                 }
-                return;
+                return Vec::new();
             }
             EngineMode::RecordDemonstration => {
                 if !matches!(
@@ -488,15 +490,41 @@ impl Service {
                     });
                     self.ui.wake();
                 }
-                return;
+                return Vec::new();
             }
             EngineMode::Normal | EngineMode::Test => {}
         }
         let app = self.foreground.foreground_app();
         let config = self.config.clone();
-        for d in self.dispatcher.on_recognition(&config, r, app) {
-            self.on_dispatched(d);
-        }
+        self.dispatcher.on_recognition(&config, r, app)
+    }
+
+    /// Drops the "drawing not recognized" diagnostics that the same stroke
+    /// explains. A step drawn with the drawing finger count — the
+    /// three-finger swipe that closes a sequence, say — is judged as a
+    /// drawing first: the diagnostic would be a second history entry, without
+    /// a gesture, for one movement that did run one.
+    fn without_explained_drawings(dispatched: Vec<Dispatched>) -> Vec<Dispatched> {
+        let spans: Vec<(u64, u64)> = dispatched
+            .iter()
+            .filter(|d| d.gesture.is_some())
+            .map(|d| (d.recognition.started_us, d.recognition.ended_us))
+            .collect();
+        dispatched
+            .into_iter()
+            .filter(|d| {
+                if !matches!(
+                    d.recognition.observation,
+                    Observation::UnrecognizedSymbol { .. }
+                ) {
+                    return true;
+                }
+                // The gesture came from a stroke inside this drawing.
+                !spans.iter().any(|&(start, end)| {
+                    start >= d.recognition.started_us && end <= d.recognition.ended_us
+                })
+            })
+            .collect()
     }
 
     /// A recognition and the gesture it triggers, sequences resolved.
@@ -1298,5 +1326,71 @@ fn run_action(executor: &dyn ActionExecutor, feedback: &Feedback, action: &Actio
                 feedback.message(format!("{} failed", other.kind()), e.to_string(), false);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dispatched(
+        observation: Observation,
+        start_ms: u64,
+        end_ms: u64,
+        gesture: Option<usize>,
+    ) -> Dispatched {
+        Dispatched {
+            gesture,
+            recognition: Recognition {
+                device: glyphpad_core::DeviceId(1),
+                observation,
+                at_us: end_ms * 1000,
+                ended_us: end_ms * 1000,
+                started_us: start_ms * 1000,
+                trace: Default::default(),
+            },
+            app: None,
+        }
+    }
+
+    fn drawing() -> Observation {
+        Observation::UnrecognizedSymbol {
+            candidates: Vec::new(),
+            strokes: Vec::new(),
+        }
+    }
+
+    fn swipe() -> Observation {
+        Observation::Swipe {
+            fingers: 3,
+            direction: glyphpad_core::config::Direction::Down,
+            distance_mm: 40.0,
+            speed_mm_s: 200.0,
+        }
+    }
+
+    #[test]
+    fn a_drawing_whose_own_stroke_ran_a_gesture_is_not_reported_twice() {
+        // The three-finger swipe that closed a sequence: the drawing spans
+        // 1.0–2.0 s, the stroke inside it 1.8–2.0 s.
+        let kept = Service::without_explained_drawings(vec![
+            dispatched(drawing(), 1_000, 2_000, None),
+            dispatched(swipe(), 1_800, 2_000, Some(0)),
+        ]);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert!(matches!(
+            kept[0].recognition.observation,
+            Observation::Swipe { .. }
+        ));
+    }
+
+    #[test]
+    fn a_drawing_nothing_explains_stays_in_the_history() {
+        let kept = Service::without_explained_drawings(vec![
+            dispatched(drawing(), 1_000, 2_000, None),
+            // A gesture from another movement, outside the drawing.
+            dispatched(swipe(), 3_000, 3_200, Some(0)),
+        ]);
+        assert_eq!(kept.len(), 2, "{kept:?}");
     }
 }

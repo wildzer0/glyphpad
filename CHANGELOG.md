@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The history no longer records a second entry, without a gesture, for a drawing whose own stroke
+  ran one: a sequence's closing swipe is drawn with the drawing finger count, so it was first
+  reported as an unrecognized drawing and then as the gesture that completed the sequence. The
+  "not recognized" message and the unrecognized counter were affected the same way.
+
 ## [1.2.0] - 2026-10-25
 
 ### Fixed
