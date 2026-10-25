@@ -89,6 +89,9 @@ pub struct Host {
     /// Activates the window given its native handle, past the system's
     /// focus-stealing prevention.
     pub bring_to_front: Box<dyn Fn(isize)>,
+    /// Runs once, as soon as the window's event loop is alive: the updater
+    /// uses it to tell the version it replaced that it came up.
+    pub on_started: Box<dyn Fn() + Send + Sync>,
 }
 
 pub fn run(options: Options, host: Host) -> Result<(), String> {
@@ -115,6 +118,7 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
         open_folder,
         open_url,
         bring_to_front,
+        on_started,
     } = host;
     eframe::run_native(
         "GlyphPad",
@@ -143,6 +147,7 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
                 open_url,
                 dismissed_failure: None,
                 bring_to_front,
+                on_started: Some(on_started),
                 hwnd: None,
                 tab: options.tab,
                 visible: !options.start_hidden,
@@ -177,6 +182,8 @@ struct App {
     /// The update failure the user closed, so it is not shown again.
     dismissed_failure: Option<String>,
     bring_to_front: Box<dyn Fn(isize)>,
+    /// Runs on the first pass of the event loop, then dropped.
+    on_started: Option<Box<dyn Fn() + Send + Sync>>,
     /// Native handle of the window, once known.
     hwnd: Option<isize>,
     tab: Tab,
@@ -290,6 +297,13 @@ impl eframe::App for App {
             if close_to_tray && self.tray.is_some() {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
                 self.hide_window(ctx);
+                // The wizard records through the engine: hiding the window
+                // would leave it recording (and gestures paused) for good.
+                let recording = self.shared.lock().is_ok_and(|s| s.mode.is_recording());
+                if recording {
+                    let _ = self.commands.send(Command::SetMode(EngineMode::Normal));
+                    self.wizard = None;
+                }
             }
         }
 
@@ -309,6 +323,10 @@ impl eframe::App for App {
                 t.set_enabled(enabled);
             }
             self.tray_enabled = Some(enabled);
+        }
+        // The event loop is running: whoever started us can be told so.
+        if let Some(started) = self.on_started.take() {
+            started();
         }
     }
 

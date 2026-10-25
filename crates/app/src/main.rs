@@ -5,6 +5,7 @@
 mod config_file;
 mod engine_loop;
 mod live;
+mod logging;
 mod print;
 mod service;
 #[cfg(windows)]
@@ -113,15 +114,12 @@ fn main() {
     #[cfg(windows)]
     glyphpad_platform::windows::console::attach_parent_console();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    let cli = Cli::parse();
+    // The log file lives next to the configuration, which needs the command
+    // line: a portable GlyphPad leaves its diagnostics beside itself.
+    logging::init(config_file::locate(cli.config.as_deref()).ok().as_ref());
 
-    if let Err(e) = run(Cli::parse()) {
+    if let Err(e) = run(cli) {
         eprintln!("error: {e:#}");
         std::process::exit(1);
     }
@@ -232,7 +230,7 @@ fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool, extra: GuiEx
         },
     )?;
     let _ = link.set(svc.ui.clone());
-    after_update_housekeeping(&svc, &extra);
+    let on_started = after_update_housekeeping(&svc, &extra);
     // A development build must not replace itself with a release.
     if !debug && (!cfg!(debug_assertions) || extra.update_source.is_some()) {
         update::spawn(
@@ -301,6 +299,7 @@ fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool, extra: GuiEx
                 #[cfg(windows)]
                 glyphpad_platform::windows::foreground::bring_to_front(_hwnd);
             }),
+            on_started,
         },
     )
     .map_err(|e| anyhow::anyhow!("the window failed: {e}"))
@@ -308,36 +307,46 @@ fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool, extra: GuiEx
 
 /// A started-by-update process tells the old one it came up and says so on
 /// screen; any other start tidies up after an earlier update (SPEC §12.2).
-fn after_update_housekeeping(svc: &service::ServiceHandle, extra: &GuiExtra) {
+///
+/// The "I am up" marker is written only from the returned closure, which runs
+/// once the window's event loop is alive: a version that dies while creating
+/// its window must not stop the old one from rolling back.
+fn after_update_housekeeping(
+    svc: &service::ServiceHandle,
+    extra: &GuiExtra,
+) -> Box<dyn Fn() + Send + Sync> {
     let Ok(exe) = glyphpad_updater::install::current_exe() else {
-        return;
+        return Box::new(|| {});
     };
-    if extra.post_update {
-        // The configuration is loaded and the engine runs: tell the old process.
-        let marker = glyphpad_updater::install::marker_path(&exe);
-        if let Err(e) = std::fs::write(&marker, VERSION) {
-            tracing::warn!("cannot write the update marker: {e}");
-        }
-        let _ = svc
-            .commands
-            .send(glyphpad_core::service::Command::RunAction(
-                glyphpad_core::action::Action::Notify {
-                    title: Some("GlyphPad updated".into()),
-                    message: format!("Now running version {VERSION}"),
-                },
-            ));
-    }
     // The old executable can only be deleted once its process has exited,
     // which after a fresh update takes a few seconds.
+    let cleanup_exe = exe.clone();
     std::thread::spawn(move || {
         for _ in 0..30 {
-            glyphpad_updater::install::cleanup(&exe);
-            if !glyphpad_updater::install::old_path(&exe).exists() {
+            glyphpad_updater::install::cleanup(&cleanup_exe);
+            if !glyphpad_updater::install::old_path(&cleanup_exe).exists() {
                 break;
             }
             std::thread::sleep(Duration::from_secs(2));
         }
     });
+    if !extra.post_update {
+        return Box::new(|| {});
+    }
+    let marker = glyphpad_updater::install::marker_path(&exe);
+    let commands = svc.commands.clone();
+    Box::new(move || {
+        // The configuration is loaded, the engine runs and the window is up.
+        if let Err(e) = std::fs::write(&marker, VERSION) {
+            tracing::warn!("cannot write the update marker: {e}");
+        }
+        let _ = commands.send(glyphpad_core::service::Command::RunAction(
+            glyphpad_core::action::Action::Notify {
+                title: Some("GlyphPad updated".into()),
+                message: format!("Now running version {VERSION}"),
+            },
+        ));
+    })
 }
 
 /// `glyphpad update [--check]`: look for a newer version and, without
@@ -540,8 +549,9 @@ fn capture(
             None => " until Ctrl+C".to_string(),
         }
     );
+    // The frames go to the file as they arrive: only the summary is kept, so
+    // a long recording costs neither memory nor a second pass over everything.
     let mut stats = SessionStats::default();
-    let mut events = Vec::new();
     let mut last_report = Instant::now();
     loop {
         let timeout = deadline.map_or(Duration::from_millis(500), |d| {
@@ -554,7 +564,7 @@ fn capture(
                 if verbose {
                     print::event(&event);
                 }
-                events.push(event);
+                stats.add(&event);
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -562,7 +572,6 @@ fn capture(
             }
         }
         if last_report.elapsed() >= Duration::from_secs(1) {
-            stats = SessionStats::from_events(&events);
             eprintln!(
                 "  {} frames, max {} fingers",
                 stats.frames, stats.max_touching
@@ -573,9 +582,7 @@ fn capture(
             break;
         }
     }
-    if stats.frames != events.len() {
-        stats = SessionStats::from_events(&events);
-    }
+    stats.finish();
     eprintln!("\nSaved {}.\n{stats}", path.display());
     Ok(())
 }
