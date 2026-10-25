@@ -42,6 +42,8 @@ struct Import {
     choices: Vec<Choice>,
     /// Symbols whose examples are brought in.
     symbols: Vec<(String, bool)>,
+    /// The user has read that the pack starts programs.
+    trusted: bool,
 }
 
 impl State {
@@ -115,6 +117,7 @@ impl State {
                     pack,
                     choices,
                     symbols,
+                    trusted: false,
                 });
             }
             Err(e) => self.problem = Some(format!("{}: {e}", path.display())),
@@ -322,9 +325,43 @@ impl State {
                         }
                     });
                 ui.add_space(space::M);
+                // A pack arrives from wherever the file came from: a gesture
+                // that starts a program can run anything, so it is not
+                // imported on a click alone.
+                let runs: Vec<String> = import
+                    .pack
+                    .gestures
+                    .iter()
+                    .zip(&import.choices)
+                    .filter(|(_, c)| **c != Choice::Skip)
+                    .filter(|(g, _)| g.action.runs_a_program())
+                    .map(|(g, _)| g.name.clone())
+                    .collect();
+                let mut trusted = import.trusted;
+                if !runs.is_empty() {
+                    let names = runs.join(", ");
+                    w::banner_raw(
+                        ui,
+                        Tone::Warn,
+                        "This pack starts programs",
+                        &crate::i18n::tf(
+                            "These gestures run a command: {}. Only import them if you know where the pack came from.",
+                            &[&names],
+                        ),
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                w::switch(ui, &mut trusted);
+                                ui.label(crate::i18n::tr("I trust this pack"));
+                            });
+                        },
+                    );
+                }
+                import.trusted = trusted;
+                ui.add_space(space::S);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let any = import.choices.iter().any(|c| *c != Choice::Skip)
-                        || import.symbols.iter().any(|(_, on)| *on);
+                    let any = (import.choices.iter().any(|c| *c != Choice::Skip)
+                        || import.symbols.iter().any(|(_, on)| *on))
+                        && (runs.is_empty() || import.trusted);
                     if w::primary_button_enabled(ui, icons::DOWNLOAD_SIMPLE, "Import", any)
                         .clicked()
                     {

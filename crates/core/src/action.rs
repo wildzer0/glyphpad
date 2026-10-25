@@ -229,6 +229,17 @@ impl Action {
         }
     }
 
+    /// Whether the action starts a program (`run`, `focus_or_launch`), which
+    /// a pack from someone else could use to do anything at all: the import
+    /// asks first.
+    pub fn runs_a_program(&self) -> bool {
+        match self {
+            Action::Run { .. } | Action::FocusOrLaunch { .. } => true,
+            Action::Chain { actions } => actions.iter().any(Action::runs_a_program),
+            _ => false,
+        }
+    }
+
     /// A short name for the kind of action, for lists.
     pub fn short_label(kind: &str) -> &'static str {
         match kind {
@@ -562,6 +573,36 @@ mod tests {
             action: Action,
         }
         toml::from_str::<W>(s).map(|w| w.action)
+    }
+
+    #[test]
+    fn a_program_is_recognized_inside_a_chain_too() {
+        let plain = parse(r#"action = { type = "keys", combo = "Ctrl+C" }"#).unwrap();
+        assert!(!plain.runs_a_program());
+        let run = parse(r#"action = { type = "run", command = "notepad" }"#).unwrap();
+        assert!(run.runs_a_program());
+        let focus =
+            parse(r#"action = { type = "focus_or_launch", app = "code.exe", command = "code" }"#)
+                .unwrap();
+        assert!(focus.runs_a_program());
+        let chain = Action::Chain {
+            actions: vec![
+                Action::Minimize,
+                Action::Chain {
+                    actions: vec![Action::Run {
+                        command: "cmd".into(),
+                        args: Vec::new(),
+                        hidden: true,
+                        cwd: None,
+                        shell: false,
+                        env: Default::default(),
+                        wait: false,
+                        timeout_ms: 30_000,
+                    }],
+                },
+            ],
+        };
+        assert!(chain.runs_a_program());
     }
 
     #[test]

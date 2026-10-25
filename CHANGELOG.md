@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Importing a pack warns when a gesture starts a program and will not import it until the box is
+  ticked: a pack can come from anywhere, and a `run` action can do anything.
 - Releases can be signed with minisign: the workflow signs `SHA256SUMS`
   (`SHA256SUMS.minisig`), the public key is compiled into the executable, and an update whose
   signature does not verify is refused and logged. A build without a key says so.

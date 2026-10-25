@@ -334,6 +334,15 @@ pub const TABLE: &[(&str, &str)] = &[
         "The part of the touchpad, in millimetres from its top-left corner.",
         "La parte del touchpad, in millimetri dall'angolo in alto a sinistra.",
     ),
+    (
+        "This pack starts programs",
+        "Questo pacchetto avvia programmi",
+    ),
+    ("I trust this pack", "Mi fido di questo pacchetto"),
+    (
+        "These gestures run a command: {}. Only import them if you know where the pack came from.",
+        "Queste gesture eseguono un comando: {}. Importale solo se sai da dove viene il pacchetto.",
+    ),
     ("Turn the mouse wheel", "Gira la rotella del mouse"),
     ("Click a mouse button", "Clicca un pulsante del mouse"),
     ("Drag the pointer", "Trascina il puntatore"),
