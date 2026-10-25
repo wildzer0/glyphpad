@@ -34,6 +34,8 @@ pub struct State {
     conflicts: Option<(u64, Vec<Conflict>)>,
     /// When the draft last changed in a way that needs a new check.
     conflicts_at: Option<std::time::Instant>,
+    /// Which profile the overview of the zones shows; `None` is all of them.
+    zone_profile: Option<String>,
     /// The expensive half of the conflict check — do two symbols look alike —
     /// with the key it was computed for: it depends only on the symbols in
     /// use, their confidence and the templates.
@@ -553,6 +555,103 @@ fn duplicate_at(ed: &mut Editor, st: &mut State, i: usize) {
     st.selected = Some(uid);
 }
 
+/// A zone gesture as the overview draws it.
+struct ZoneOnPad {
+    uid: u64,
+    name: String,
+    regions: Vec<glyphpad_core::trigger::Region>,
+    /// Another gesture's zone overlaps this one: a tap there could go either way.
+    conflict: bool,
+}
+
+/// Every zone of the draft, for the overview: what the page shows all at once
+/// instead of one gesture at a time.
+fn zones_on_pad(st: &State, ed: &Editor, filter: Option<&str>) -> Vec<ZoneOnPad> {
+    let conflicting: Vec<String> = st
+        .conflicts
+        .as_ref()
+        .map(|(_, c)| c.iter().flat_map(|c| c.gestures.clone()).collect())
+        .unwrap_or_default();
+    ed.draft
+        .gestures
+        .iter()
+        .filter(|s| s.def.enabled)
+        .filter(|s| match filter {
+            None => true,
+            Some(p) => s.def.profile.as_deref().is_none_or(|g| g == p),
+        })
+        .filter_map(|s| {
+            let trigger = s.def.trigger_def().build().ok()?;
+            let glyphpad_core::trigger::Trigger::Zone { regions, .. } = trigger else {
+                return None;
+            };
+            Some(ZoneOnPad {
+                uid: s.uid,
+                name: s.def.name.clone(),
+                regions,
+                conflict: conflicting.contains(&s.def.name),
+            })
+        })
+        .collect()
+}
+
+/// The pad with every zone on it, the selected gesture's ones brighter.
+/// Returns the gesture whose zone was clicked.
+fn draw_zone_overview(
+    ui: &mut egui::Ui,
+    pad: (f32, f32),
+    zones: &[ZoneOnPad],
+    selected: u64,
+) -> Option<u64> {
+    let p = pal(ui);
+    let width = ui.available_width().clamp(180.0, 380.0);
+    let scale = width / pad.0.max(1.0);
+    let size = egui::vec2(pad.0 * scale, pad.1 * scale);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, radius::CARD, p.surface);
+    painter.rect_stroke(
+        rect,
+        radius::CARD,
+        egui::Stroke::new(1.0, p.border_strong),
+        egui::StrokeKind::Inside,
+    );
+    for (i, zone) in zones.iter().enumerate() {
+        // One colour per gesture, red where two overlap.
+        let colour = if zone.conflict {
+            p.bad
+        } else {
+            p.series[i % p.series.len()]
+        };
+        let on = zone.uid == selected;
+        for r in &zone.regions {
+            let area = egui::Rect::from_two_pos(
+                egui::pos2(rect.left() + r.x[0] * scale, rect.top() + r.y[0] * scale),
+                egui::pos2(rect.left() + r.x[1] * scale, rect.top() + r.y[1] * scale),
+            );
+            painter.rect_filled(area, 3, colour.gamma_multiply(if on { 0.35 } else { 0.18 }));
+            painter.rect_stroke(
+                area,
+                3,
+                egui::Stroke::new(if on { 2.0 } else { 1.0 }, colour),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let (mx, my) = ((pos.x - rect.left()) / scale, (pos.y - rect.top()) / scale);
+        // The last drawn is on top: pick what the user sees.
+        return zones
+            .iter()
+            .rev()
+            .find(|z| z.regions.iter().any(|r| r.contains(mx, my)))
+            .map(|z| z.uid);
+    }
+    None
+}
+
 fn detail(
     ui: &mut egui::Ui,
     cx: &Ctx,
@@ -576,6 +675,15 @@ fn detail(
         .collect();
     let mut duplicate = false;
     let mut delete = None;
+    // Read before the editor borrows the gesture itself: the overview shows
+    // the zones of every gesture, this one included.
+    let kind = ed.draft.gestures[i].def.kind;
+    let zones = if kind == GestureKind::Zone {
+        zones_on_pad(st, ed, st.zone_profile.as_deref())
+    } else {
+        Vec::new()
+    };
+    let mut select_zone: Option<u64> = None;
     {
         let uid = ed.draft.gestures[i].uid;
         let def = &mut ed.draft.gestures[i].def;
@@ -663,6 +771,47 @@ fn detail(
                         |_| {},
                     );
                 }
+                if kind == GestureKind::Zone {
+                    w::section(
+                        ui,
+                        "All zones",
+                        "Every zone together, so overlaps show: click one to edit its gesture.",
+                        |ui| {
+                            let mut filter = st.zone_profile.clone();
+                            let mut options: Vec<(Option<String>, std::borrow::Cow<'static, str>)> =
+                                vec![(None, "All profiles".into())];
+                            for profile in profiles {
+                                options.push((Some(profile.clone()), profile.clone().into()));
+                            }
+                            ui.horizontal(|ui| {
+                                w::dropdown(ui, "zone-profile", &mut filter, &options, 170.0);
+                            });
+                            st.zone_profile = filter;
+                            ui.add_space(space::XS);
+                            if let Some(clicked) = draw_zone_overview(ui, pad, &zones, uid) {
+                                select_zone = Some(clicked);
+                            }
+                            ui.add_space(space::XS);
+                            if zones.is_empty() {
+                                ui.label(w::faint(ui, "No zones yet."));
+                            }
+                            ui.horizontal_wrapped(|ui| {
+                                let p = pal(ui);
+                                for (i, z) in zones.iter().enumerate() {
+                                    let colour = if z.conflict {
+                                        p.bad
+                                    } else {
+                                        p.series[i % p.series.len()]
+                                    };
+                                    ui.label(egui::RichText::new("●").color(colour).size(10.0));
+                                    if ui.selectable_label(z.uid == uid, &z.name).clicked() {
+                                        select_zone = Some(z.uid);
+                                    }
+                                }
+                            });
+                        },
+                    );
+                }
                 w::section(ui, "When", "What you do on the touchpad.", |ui| {
                     let mut t = def.trigger_def();
                     forms::trigger_form(
@@ -721,6 +870,9 @@ fn detail(
                     forms::conditions_form(ui, cx, id.with("when"), def, profiles)
                 });
             });
+    }
+    if let Some(clicked) = select_zone {
+        st.selected = Some(clicked);
     }
     if duplicate {
         duplicate_at(ed, st, i);

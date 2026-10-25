@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.0] - 2026-10-25
 
 ### Added
+- The gestures page shows every zone on one map of the pad, the overlapping ones in red and a
+  filter for the profile: clicking a zone opens the gesture that uses it, which is what makes a
+  tangle of corner zones understandable.
 - A `zone` gesture can fire on the physical click as well as a tap (`click = true`), which is
   what one wants for a corner button: press it rather than tap it.
 - A `zone` gesture can have several regions (`regions = [...]`, up to 8) — one gesture for "any

@@ -356,6 +356,12 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("Region", "Regione"),
     ("Regions", "Regioni"),
+    ("All zones", "Tutte le zone"),
+    (
+        "Every zone together, so overlaps show: click one to edit its gesture.",
+        "Tutte le zone insieme, così si vedono le sovrapposizioni: cliccane una per modificarne la gesture.",
+    ),
+    ("No zones yet.", "Ancora nessuna zona."),
     ("Physical click", "Click fisico"),
     (
         "The button under the touchpad fires the gesture too, not only a tap.",
