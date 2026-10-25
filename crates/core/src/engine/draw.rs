@@ -34,6 +34,8 @@ enum State {
         /// Lift of the last stroke plus the stroke gap; `None` while another
         /// touch is in progress.
         deadline_us: Option<u64>,
+        /// Lift of the last stroke.
+        ended_us: u64,
     },
 }
 
@@ -67,6 +69,8 @@ impl Arming {
 pub struct Finished {
     pub strokes: Vec<Stroke>,
     pub fallback: Option<Box<Session>>,
+    /// Lift of the last stroke.
+    pub ended_us: u64,
 }
 
 impl DrawRecognizer {
@@ -195,6 +199,7 @@ impl DrawRecognizer {
                     fingers: session.max_fingers,
                     fallback: Some(Box::new(session)),
                     deadline_us: Some(end + p.stroke_gap_us),
+                    ended_us: end,
                 };
             }
             State::Collecting {
@@ -202,10 +207,12 @@ impl DrawRecognizer {
                 origin_us,
                 fallback,
                 deadline_us,
+                ended_us,
                 ..
             } => {
                 strokes.push(to_stroke(&samples, *origin_us));
                 *fallback = None;
+                *ended_us = end;
                 *deadline_us = Some(end + p.stroke_gap_us);
             }
         }
@@ -223,8 +230,15 @@ impl DrawRecognizer {
     pub fn finish(&mut self) -> Option<Finished> {
         match std::mem::replace(&mut self.state, State::Idle) {
             State::Collecting {
-                strokes, fallback, ..
-            } => Some(Finished { strokes, fallback }),
+                strokes,
+                fallback,
+                ended_us,
+                ..
+            } => Some(Finished {
+                strokes,
+                fallback,
+                ended_us,
+            }),
             State::Idle => None,
         }
     }

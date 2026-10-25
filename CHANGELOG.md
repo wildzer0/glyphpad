@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Sequences whose later step is a swipe made with the drawing finger count (e.g. a 3-finger tap, then a 3-finger swipe up) now work at a normal pace: the `within_ms` window is counted to the end of the movement, not to when it was recognized (a stroke is only recognized `stroke_gap_ms` after the fingers lift).
 - Starting a just-installed version on Linux no longer fails with "text file busy" (it is tried again).
 
 ## [1.0.0] - 2026-10-25

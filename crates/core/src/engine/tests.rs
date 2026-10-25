@@ -993,3 +993,65 @@ fn chords() {
         }
     );
 }
+
+const SEQUENCE_CONFIG: &str = r#"
+[settings]
+draw_activation = { mode = "fingers", count = 3 }
+
+[[gesture]]
+name = "tap-then-up"
+type = "sequence"
+steps = [{ type = "tap", fingers = 3 }, { type = "swipe", fingers = 3, direction = "up" }]
+within_ms = 800
+action = { type = "notify", message = "seq" }
+
+[[gesture]]
+name = "tap-3"
+type = "tap"
+fingers = 3
+action = { type = "notify", message = "tap" }
+"#;
+
+fn dispatched_names(config: &Config, pad: &Pad) -> Vec<String> {
+    let events: Vec<DeviceEvent> = pad
+        .frames
+        .iter()
+        .map(|f| DeviceEvent::Frame {
+            device: DeviceId(1),
+            frame: f.clone(),
+        })
+        .collect();
+    let mut e = Engine::new(Spec::from_config(config), Thresholds::default());
+    crate::dispatch::run_all(&mut e, config, &events)
+        .iter()
+        .map(|d| {
+            d.gesture
+                .map_or(format!("-({:?})", d.recognition.observation), |i| {
+                    config.gestures[i].def.name.clone()
+                })
+        })
+        .collect()
+}
+
+#[test]
+fn sequence_tap_then_three_finger_swipe_with_three_finger_drawing() {
+    let config = crate::config::parse(SEQUENCE_CONFIG).unwrap().config;
+    let mut pad = Pad::new();
+    pad.tap(3);
+    pad.wait_ms(150);
+    pad.stroke(3, (40.0, 70.0), (0.0, -40.0), 200);
+    let names = dispatched_names(&config, &pad);
+    assert!(names.iter().any(|n| n == "tap-then-up"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "tap-3"), "{names:?}");
+}
+
+#[test]
+fn sequence_at_a_relaxed_pace() {
+    let config = crate::config::parse(SEQUENCE_CONFIG).unwrap().config;
+    let mut pad = Pad::new();
+    pad.tap(3);
+    pad.wait_ms(300);
+    pad.stroke(3, (40.0, 70.0), (0.0, -40.0), 300);
+    let names = dispatched_names(&config, &pad);
+    assert!(names.iter().any(|n| n == "tap-then-up"), "{names:?}");
+}

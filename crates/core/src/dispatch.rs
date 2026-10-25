@@ -8,9 +8,10 @@
 //! sequence breaks or times out, they fire in order after all.
 
 use crate::action::AppInfo;
-use crate::config::Config;
+use crate::config::{Config, DrawActivation};
 use crate::engine::{Engine, Observation, Recognition, resolve};
 use crate::model::DeviceEvent;
+use crate::trigger::Trigger;
 
 /// A recognition and the gesture it triggers (index into `config.gestures`).
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +28,11 @@ struct Pending {
     candidates: Vec<usize>,
     /// Index of the step each candidate expects next.
     next_step: usize,
+    /// Latest end of the next step for the sequence to go on.
+    step_deadline_us: u64,
+    /// When the held gestures fire after all: the step deadline, plus the
+    /// stroke gap if the next step may be drawn as a stroke, which is only
+    /// recognized that long after the fingers lift.
     deadline_us: u64,
     held: Vec<(Recognition, Option<AppInfo>)>,
 }
@@ -47,6 +53,40 @@ fn is_diagnostic(o: &Observation) -> bool {
         o,
         Observation::UnrecognizedSymbol { .. } | Observation::Sample { .. }
     )
+}
+
+/// Whether the touch for `step` may be taken for a stroke of a symbol, and
+/// so recognized only once the stroke gap has passed.
+fn may_be_stroke(config: &Config, step: &Trigger) -> bool {
+    let fingers = step.fingers();
+    matches!(step, Trigger::Swipe { .. } | Trigger::EdgeSwipe { .. })
+        && match config.settings.draw_activation {
+            DrawActivation::Fingers { count } => fingers == count || fingers == 1,
+            DrawActivation::Edge { .. } | DrawActivation::Hold { .. } => fingers == 1,
+            DrawActivation::Toggle { .. } => fingers == 1,
+        }
+}
+
+/// Deadlines of a sequence waiting for step `step` of `candidates` after
+/// the previous one ended at `ended_us`: the step must end by the first,
+/// the held gestures fire at the second.
+fn deadlines(config: &Config, candidates: &[usize], step: usize, ended_us: u64) -> (u64, u64) {
+    let within = candidates
+        .iter()
+        .map(|&i| config.gestures[i].within_ms)
+        .max()
+        .unwrap_or(0);
+    let by = ended_us + within * 1000;
+    let stroke = candidates
+        .iter()
+        .filter_map(|&i| config.gestures[i].steps.get(step))
+        .any(|t| may_be_stroke(config, t));
+    let grace = if stroke {
+        config.settings.stroke_gap_ms * 1000
+    } else {
+        0
+    };
+    (by, by + grace)
 }
 
 impl Dispatcher {
@@ -111,7 +151,9 @@ impl Dispatcher {
                 .copied()
                 .filter(|&i| matches_step(i, p.next_step))
                 .collect();
-            if !advanced.is_empty() {
+            // The window counts to the end of the movement, not to the
+            // moment it was recognized.
+            if !advanced.is_empty() && r.ended_us <= p.step_deadline_us {
                 // Candidates are in priority order, so the first complete one wins.
                 if let Some(&done) = advanced
                     .iter()
@@ -126,13 +168,8 @@ impl Dispatcher {
                     return out;
                 }
                 p.next_step += 1;
-                p.deadline_us = r.at_us
-                    + advanced
-                        .iter()
-                        .map(|&i| config.gestures[i].within_ms)
-                        .max()
-                        .unwrap_or(0)
-                        * 1000;
+                (p.step_deadline_us, p.deadline_us) =
+                    deadlines(config, &advanced, p.next_step, r.ended_us);
                 p.candidates = advanced;
                 p.held.push((r, app));
                 return out;
@@ -160,15 +197,12 @@ impl Dispatcher {
                 app,
             });
         } else {
-            let within = starts
-                .iter()
-                .map(|&i| config.gestures[i].within_ms)
-                .max()
-                .unwrap_or(0);
+            let (step_deadline_us, deadline_us) = deadlines(config, &starts, 1, r.ended_us);
             self.pending = Some(Pending {
                 candidates: starts,
                 next_step: 1,
-                deadline_us: r.at_us + within * 1000,
+                step_deadline_us,
+                deadline_us,
                 held: vec![(r, app)],
             });
         }
@@ -256,6 +290,7 @@ action = { type = "minimize" }
             device: DeviceId(1),
             observation,
             at_us: at_ms * 1000,
+            ended_us: at_ms * 1000,
             trace: Arc::default(),
         }
     }
@@ -290,7 +325,9 @@ action = { type = "minimize" }
         let c = config();
         let mut d = Dispatcher::default();
         assert!(d.on_recognition(&c, rec(tap(), 100), None).is_empty());
-        assert_eq!(d.deadline(), Some(600_000));
+        // 500 ms window plus the 400 ms stroke gap: the 3-finger swipe may
+        // be drawn as a stroke, which is recognized that much later.
+        assert_eq!(d.deadline(), Some(1_000_000));
         let out = d.on_recognition(&c, rec(up(), 400), None);
         assert_eq!(names(&c, &out), ["tap-then-up"]);
         assert!(d.deadline().is_none());
@@ -301,11 +338,11 @@ action = { type = "minimize" }
         let c = config();
         let mut d = Dispatcher::default();
         assert!(d.on_recognition(&c, rec(tap(), 100), None).is_empty());
-        assert!(d.tick(&c, 500_000).is_empty());
-        assert_eq!(names(&c, &d.tick(&c, 600_000)), ["tap3"]);
+        assert!(d.tick(&c, 900_000).is_empty());
+        assert_eq!(names(&c, &d.tick(&c, 1_000_000)), ["tap3"]);
         // A late second step is just a swipe.
         assert_eq!(
-            names(&c, &d.on_recognition(&c, rec(up(), 900), None)),
+            names(&c, &d.on_recognition(&c, rec(up(), 1_300), None)),
             ["up3"]
         );
     }

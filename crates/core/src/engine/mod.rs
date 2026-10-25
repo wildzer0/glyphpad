@@ -411,6 +411,10 @@ pub struct Recognition {
     pub observation: Observation,
     /// Timestamp, in the frame time base, of the moment of recognition.
     pub at_us: u64,
+    /// When the movement itself ended. Later than `at_us` never; earlier for
+    /// a swipe drawn as a stroke, which is only recognized once the stroke
+    /// gap has passed. Sequences measure their window from here.
+    pub ended_us: u64,
     /// What the fingers drew, for the history and its playback.
     pub trace: Arc<GestureTrace>,
 }
@@ -452,8 +456,19 @@ struct DeviceState {
     chord: chord::ChordRecognizer,
     draw: draw::DrawRecognizer,
     last_frame_us: u64,
+    /// Where the movement of the symbol finished last ended, until used.
+    symbol_ended_us: Option<u64>,
     /// Trace of the last finished session, for taps confirmed later.
     last_trace: Arc<GestureTrace>,
+}
+
+/// End of the movement behind an observation: the lift of the last stroke
+/// for what came out of a symbol in progress, else the moment itself.
+fn ended_of(observation: &Observation, symbol_ended_us: Option<u64>, at_us: u64) -> u64 {
+    match observation {
+        Observation::Tap { .. } | Observation::Hold { .. } => at_us,
+        _ => symbol_ended_us.map_or(at_us, |e| e.min(at_us)),
+    }
 }
 
 impl DeviceState {
@@ -673,10 +688,12 @@ impl Engine {
                 }
             }
         }
+        let ended = st.symbol_ended_us.take();
         let out: Vec<Recognition> = out
             .into_iter()
             .map(|(observation, trace)| Recognition {
                 device,
+                ended_us: ended_of(&observation, ended, ts),
                 observation,
                 at_us: ts,
                 trace,
@@ -706,6 +723,7 @@ impl Engine {
         let Some(done) = st.draw.finish() else {
             return Vec::new();
         };
+        st.symbol_ended_us = Some(done.ended_us);
         let trace = Arc::new(GestureTrace {
             fingers: BTreeMap::new(),
             strokes: done.strokes.clone(),
@@ -792,8 +810,10 @@ impl Engine {
             {
                 Self::consume(st, &mut out, hold);
             }
+            let ended = st.symbol_ended_us.take();
             all.extend(out.into_iter().map(|(observation, trace)| Recognition {
                 device,
+                ended_us: ended_of(&observation, ended, now_us),
                 observation,
                 at_us: now_us,
                 trace,
