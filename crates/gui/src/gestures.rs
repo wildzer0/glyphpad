@@ -623,14 +623,22 @@ fn detail(
                             );
                             egui::Popup::menu(&more).show(|ui| {
                                 ui.set_min_width(150.0);
-                                if ui.button(format!("{}  {}", icons::COPY, crate::i18n::tr("Duplicate"))).clicked() {
+                                if ui
+                                    .add(egui::Button::new(w::label_job_sized(
+                                        icons::COPY,
+                                        crate::i18n::tr("Duplicate"),
+                                        14.0,
+                                        13.0,
+                                        pal(ui).text,
+                                    )))
+                                    .clicked()
+                                {
                                     duplicate = true;
                                 }
                                 if ui
-                                    .button(
-                                        egui::RichText::new(format!("{}  {}", icons::TRASH, crate::i18n::tr("Delete")))
-                                            .color(pal(ui).bad),
-                                    )
+                                    .button(egui::RichText::new(
+                                        crate::i18n::tr("Delete"),
+                                    ).color(pal(ui).bad))
                                     .clicked()
                                 {
                                     delete = Some(uid);

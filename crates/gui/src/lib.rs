@@ -633,11 +633,13 @@ impl App {
                     S::Conflict => (icons::WARNING, "Not saved: file changed", p.warn),
                     S::Failed(_) => (icons::WARNING_CIRCLE, "Could not save", p.bad),
                 };
-                ui.label(
-                    egui::RichText::new(format!("{icon}  {}", i18n::tr(text)))
-                        .size(theme::size::SMALL)
-                        .color(color),
-                );
+                ui.label(widgets::label_job_sized(
+                    icon,
+                    i18n::tr(text),
+                    theme::size::SMALL,
+                    theme::size::SMALL,
+                    color,
+                ));
                 ui.add_space(theme::space::S);
                 if widgets::icon_button(ui, icons::ARROW_CLOCKWISE, "Redo (Ctrl+Y)").clicked()
                     && self.editor.can_redo()

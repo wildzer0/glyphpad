@@ -106,13 +106,47 @@ pub fn icon_text(icon: &str, size: f32, color: Color32) -> RichText {
     RichText::new(icon).font(fonts::icon(size)).color(color)
 }
 
-/// An icon followed by a label, as one string for a button.
-fn labeled(icon: &str, label: &str) -> String {
-    if label.is_empty() {
-        icon.to_string()
-    } else {
-        format!("{icon}  {label}")
+/// The content of a button: the icon in the icon font and the label in the
+/// text font, as two sections of one line laid out together.
+///
+/// Concatenating them into one string put the icon glyph through the text
+/// font, which lacks it: the glyph came out as a box of a different width and
+/// the words were pushed off the button's centre.
+pub fn label_job(icon: &str, label: &str, color: Color32) -> egui::text::LayoutJob {
+    label_job_sized(icon, label, size::ICON, size::BODY, color)
+}
+
+/// The same, with the two sizes given: a status line or a menu entry with
+/// smaller type.
+pub fn label_job_sized(
+    icon: &str,
+    label: &str,
+    icon_size: f32,
+    text_size: f32,
+    color: Color32,
+) -> egui::text::LayoutJob {
+    let icon_format = egui::TextFormat {
+        font_id: fonts::icon(icon_size),
+        color,
+        ..Default::default()
+    };
+    let text_format = egui::TextFormat {
+        font_id: fonts::text(text_size),
+        color,
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = f32::INFINITY;
+    if !icon.is_empty() {
+        job.append(icon, 0.0, icon_format);
     }
+    if !label.is_empty() {
+        if !icon.is_empty() {
+            job.append("  ", 0.0, text_format.clone());
+        }
+        job.append(label, 0.0, text_format);
+    }
+    job
 }
 
 // ------------------------------------------------------------ layout
@@ -142,7 +176,9 @@ pub fn page_header_raw(
                 ui.add(egui::Label::new(dim_raw(ui, subtitle)).selectable(false));
             }
         });
-        ui.with_layout(Layout::right_to_left(Align::Min), actions);
+        // Centred against the title block: with the buttons at the top they
+        // looked adrift next to a two-line heading.
+        ui.with_layout(Layout::right_to_left(Align::Center), actions);
     });
     ui.add_space(space::L);
 }
@@ -402,9 +438,8 @@ pub fn segmented_with_icons<T: PartialEq + Copy>(
             ui.horizontal(|ui| {
                 for (v, icon, label) in ordered {
                     let selected = *value == *v;
-                    let text = labeled(icon, tr(label));
                     let galley_color = if selected { p.text } else { p.text_dim };
-                    let button = egui::Button::new(RichText::new(text).color(galley_color))
+                    let button = egui::Button::new(label_job(icon, tr(label), galley_color))
                         .fill(if selected {
                             p.surface
                         } else {
@@ -490,7 +525,7 @@ pub fn primary_button_enabled(
     enabled: bool,
 ) -> Response {
     let p = pal(ui);
-    let button = egui::Button::new(RichText::new(labeled(icon, tr(label))).color(p.on_accent))
+    let button = egui::Button::new(label_job(icon, tr(label), p.on_accent))
         .fill(p.accent)
         .stroke(Stroke::NONE)
         .min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT));
@@ -498,15 +533,19 @@ pub fn primary_button_enabled(
 }
 
 pub fn button(ui: &mut Ui, icon: &str, label: &'static str) -> Response {
+    let p = pal(ui);
     ui.add(
-        egui::Button::new(labeled(icon, tr(label))).min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT)),
+        egui::Button::new(label_job(icon, tr(label), p.text))
+            .min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT)),
     )
 }
 
 pub fn button_enabled(ui: &mut Ui, icon: &str, label: &'static str, enabled: bool) -> Response {
+    let p = pal(ui);
     ui.add_enabled(
         enabled,
-        egui::Button::new(labeled(icon, tr(label))).min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT)),
+        egui::Button::new(label_job(icon, tr(label), p.text))
+            .min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT)),
     )
 }
 
@@ -514,7 +553,7 @@ pub fn button_enabled(ui: &mut Ui, icon: &str, label: &'static str, enabled: boo
 pub fn danger_button(ui: &mut Ui, icon: &str, label: &'static str) -> Response {
     let p = pal(ui);
     ui.add(
-        egui::Button::new(RichText::new(labeled(icon, tr(label))).color(p.bad))
+        egui::Button::new(label_job(icon, tr(label), p.bad))
             .min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT)),
     )
 }
@@ -1111,4 +1150,29 @@ pub fn slider(ui: &mut Ui, slider: egui::Slider<'_>) -> Response {
         ui.add(slider)
     })
     .inner
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_button_label_puts_the_icon_in_the_icon_font() {
+        let job = label_job("\u{EC90}", "Record a gesture", Color32::WHITE);
+        // The icon one way, the gap and the words the other: the layout joins
+        // the sections that share a font.
+        assert_eq!(job.sections.len(), 2, "icon, then the gap and the words");
+        assert_eq!(job.sections[0].format.font_id, fonts::icon(size::ICON));
+        assert_eq!(job.sections[1].format.font_id, fonts::text(size::BODY));
+        assert!(job.text.ends_with("Record a gesture"), "{}", job.text);
+        // One line, as wide as it needs: a button does not wrap.
+        assert_eq!(job.wrap.max_width, f32::INFINITY);
+        // An icon-only button is one section; a label-only one has none of the
+        // icon font in it.
+        assert_eq!(label_job("\u{EC90}", "", Color32::WHITE).sections.len(), 1);
+        let words = label_job("", "Save", Color32::WHITE);
+        assert_eq!(words.sections.len(), 1);
+        assert_eq!(words.sections[0].format.font_id, fonts::text(size::BODY));
+        assert_eq!(words.text, "Save");
+    }
 }
