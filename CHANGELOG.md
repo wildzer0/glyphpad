@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.0] - 2026-10-25
 
 ### Added
+- A single gesture can be exported from its own menu, which writes the same kind of pack as
+  "Share" (it holds that gesture and the examples of its symbols).
 - Review can merge two examples of a symbol into one (the two halves of an X recorded apart) and
   divide one example into its strokes.
 - `scroll_hold` scrolls continuously after a hold: the gesture fires once and the wheel turns as

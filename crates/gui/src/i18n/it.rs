@@ -374,6 +374,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Edit this zone", "Modifica questa zona"),
     ("All four corners", "Tutti e quattro gli angoli"),
     ("Merge the chosen ones", "Unisci quelli scelti"),
+    ("Export this gesture…", "Esporta questa gesture…"),
     (
         "The two halves of an X recorded apart become one example.",
         "Le due metà di una X registrate separatamente diventano un solo esempio.",

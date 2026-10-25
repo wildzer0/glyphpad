@@ -46,7 +46,47 @@ struct Import {
     trusted: bool,
 }
 
+/// Writes a pack holding a single gesture, from its own menu: the quickest
+/// way to keep a copy of one, or to send one to someone else. A file that
+/// cannot be written comes back as a message.
+pub fn export_single(cx: &Ctx, ed: &Editor, name: &str) -> Option<String> {
+    let def = ed
+        .draft
+        .gestures
+        .iter()
+        .find(|g| g.def.name == name)?
+        .def
+        .clone();
+    let file_name = format!(
+        "{}.{}",
+        name.trim().replace(['/', '\\'], "-"),
+        pack::EXTENSION
+    );
+    let path = rfd::FileDialog::new()
+        .add_filter("GlyphPad pack", &[pack::EXTENSION])
+        .set_file_name(file_name)
+        .save_file()?;
+    let result = File::create(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|f| {
+            pack::write(
+                f,
+                name.trim(),
+                cx.version,
+                &[def],
+                &cx.shared.templates.symbols,
+            )
+            .map_err(|e| e.to_string())
+        });
+    result.err().map(|e| format!("{}: {e}", path.display()))
+}
+
 impl State {
+    /// Shows a problem with a file in the page's banner.
+    pub fn report(&mut self, problem: String) {
+        self.problem = Some(problem);
+    }
+
     /// The "Share" menu of the Gestures page.
     pub fn menu(&mut self, ui: &mut egui::Ui, ed: &Editor) {
         let button = w::button(ui, icons::EXPORT, "Share");

@@ -675,6 +675,7 @@ fn detail(
         .collect();
     let mut duplicate = false;
     let mut delete = None;
+    let mut export_one = false;
     // Read before the editor borrows the gesture itself: the overview shows
     // the zones of every gesture, this one included.
     let kind = ed.draft.gestures[i].def.kind;
@@ -742,6 +743,18 @@ fn detail(
                                     .clicked()
                                 {
                                     duplicate = true;
+                                }
+                                if ui
+                                    .add(egui::Button::new(w::label_job_sized(
+                                        icons::EXPORT,
+                                        crate::i18n::tr("Export this gesture…"),
+                                        14.0,
+                                        13.0,
+                                        pal(ui).text,
+                                    )))
+                                    .clicked()
+                                {
+                                    export_one = true;
                                 }
                                 if ui
                                     .button(egui::RichText::new(
@@ -870,6 +883,12 @@ fn detail(
                     forms::conditions_form(ui, cx, id.with("when"), def, profiles)
                 });
             });
+    }
+    if export_one {
+        let name = ed.draft.gestures[i].def.name.clone();
+        if let Some(problem) = crate::packs::export_single(cx, ed, &name) {
+            st.packs.report(problem);
+        }
     }
     if let Some(clicked) = select_zone {
         st.selected = Some(clicked);
