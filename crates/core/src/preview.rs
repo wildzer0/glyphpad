@@ -119,6 +119,7 @@ pub fn of(trigger: &Trigger, templates: &BTreeMap<String, Vec<Sample>>) -> Picto
             fingers,
             direction,
             modifiers,
+            ..
         } => {
             let d = unit(*direction);
             let (from, to) = (
@@ -136,6 +137,7 @@ pub fn of(trigger: &Trigger, templates: &BTreeMap<String, Vec<Sample>>) -> Picto
             edge,
             fingers,
             direction,
+            ..
         } => {
             let d = unit(*direction);
             let (from, rail) = match edge {

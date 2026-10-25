@@ -78,11 +78,12 @@ fn is_diagnostic(o: &Observation) -> bool {
     )
 }
 
-/// The pause a sequence allows between one step ending and the next
-/// starting: what `within_ms` limits, not the time the next step itself
-/// takes.
-fn within_us(config: &Config, index: usize) -> u64 {
-    config.gestures[index].within_ms * 1000
+/// The pause a sequence allows after step `step` (0-based) before the next
+/// one starts: what the step's own `within_ms`, or the sequence's, limits —
+/// not the time the next step itself takes.
+fn within_us(config: &Config, index: usize, step: usize) -> u64 {
+    let g = &config.gestures[index];
+    g.step_within_ms.get(step).copied().unwrap_or(g.within_ms) * 1000
 }
 
 /// The candidates' names, quoted, for a log line.
@@ -253,8 +254,14 @@ impl Dispatcher {
                     });
                     return out;
                 }
+                // The window that now matters is the one after the step just
+                // completed.
+                let done_step = p.next_step;
                 p.next_step += 1;
-                p.candidates = advanced;
+                p.candidates = advanced
+                    .iter()
+                    .map(|&(i, _)| (i, within_us(config, i, done_step)))
+                    .collect();
                 p.step_end_us = r.ended_us;
                 tracing::debug!(
                     "sequence {}: step {} done, waiting for step {} within {} ms",
@@ -280,7 +287,7 @@ impl Dispatcher {
                     && !g.steps.is_empty()
                     && matches_step(*i, 0)
             })
-            .map(|(i, _)| (i, within_us(config, i)))
+            .map(|(i, _)| (i, within_us(config, i, 0)))
             .collect();
         if starts.is_empty() {
             let gesture = index_of(config, &r.observation, app.as_ref());
@@ -525,6 +532,37 @@ action = { type = "minimize" }
         assert!(hint.contains("swipe up with 3 fingers"), "{hint}");
         // A finger count the configuration never uses has nothing to suggest.
         assert_eq!(near_miss(&c, &Observation::Hold { fingers: 5 }), None);
+    }
+
+    #[test]
+    fn a_step_may_have_its_own_window() {
+        let c = parse(
+            r#"
+[[gesture]]
+name = "quick-then-up"
+type = "sequence"
+steps = [
+    { type = "tap", fingers = 3, within_ms = 300 },
+    { type = "swipe", fingers = 3, direction = "up" },
+]
+within_ms = 1500
+action = { type = "minimize" }
+"#,
+        )
+        .unwrap()
+        .config;
+        // Up starts 200 ms after the tap ended: inside the step's own window.
+        let mut d = Dispatcher::default();
+        d.on_recognition(&c, rec(tap(), 100), None);
+        assert_eq!(
+            names(&c, &d.on_recognition(&c, span(up(), 300, 500), None)),
+            ["quick-then-up"]
+        );
+        // 400 ms later: inside the sequence's 1500, but past the step's 300.
+        let mut d = Dispatcher::default();
+        d.on_recognition(&c, rec(tap(), 100), None);
+        let out = names(&c, &d.on_recognition(&c, span(up(), 500, 700), None));
+        assert!(!out.iter().any(|n| n == "quick-then-up"), "{out:?}");
     }
 
     #[test]

@@ -141,16 +141,18 @@ impl MotionRecognizer {
         let m = motion(s);
         let swipe_like = spec.has_swipe(fingers) || spec.has_edge_swipe(fingers);
         let ratio = |enabled: bool, value: f32, min: f32| if enabled { value / min } else { 0.0 };
-        let swipe = if m.speed_mm_s >= t.swipe_min_speed_mm_s {
-            ratio(swipe_like, m.distance_mm, t.swipe_min_distance_mm)
+        // The loosest threshold any gesture asks for: a stricter one is
+        // checked against the gesture that matched.
+        let swipe = if m.speed_mm_s >= spec.swipe_speed_mm_s(t) {
+            ratio(swipe_like, m.distance_mm, spec.swipe_distance_mm(t))
         } else {
             0.0
         };
-        let pinch = ratio(spec.has_pinch(fingers), m.spread_mm.abs(), t.pinch_min_mm);
+        let pinch = ratio(spec.has_pinch(fingers), m.spread_mm.abs(), spec.pinch_mm(t));
         let rotate = ratio(
             spec.has_rotation(fingers),
             m.turn_deg.abs(),
-            t.rotate_min_deg,
+            spec.rotate_deg(t),
         );
         let best = swipe.max(pinch).max(rotate);
         if best < 1.0 {

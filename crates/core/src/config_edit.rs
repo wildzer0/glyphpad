@@ -287,6 +287,10 @@ action = { type = "lock_screen" }
             rotation: None,
             symbol: None,
             confidence: None,
+            min_distance_mm: None,
+            min_speed_mm_s: None,
+            min_change_mm: None,
+            min_deg: None,
             steps: None,
             within_ms: None,
             action: Action::Chain {

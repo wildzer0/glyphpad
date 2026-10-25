@@ -1113,6 +1113,46 @@ within_ms = 600
 action = { type = "notify", message = "seq" }
 "#;
 
+const SHORT_SWIPE: &str = r#"
+[[gesture]]
+name = "short"
+type = "swipe"
+fingers = 1
+direction = "up"
+min_distance_mm = 8.0
+action = { type = "notify", message = "short" }
+"#;
+
+const LONG_SWIPE: &str = r#"
+[[gesture]]
+name = "long"
+type = "swipe"
+fingers = 1
+direction = "up"
+min_distance_mm = 40.0
+action = { type = "notify", message = "long" }
+"#;
+
+#[test]
+fn a_gesture_may_ask_for_a_shorter_swipe_than_the_setting() {
+    // The setting wants 18 mm; this gesture accepts 8, so the engine has to
+    // report a 12 mm swipe for it.
+    let config = crate::config::parse(SHORT_SWIPE).unwrap().config;
+    let mut pad = Pad::new();
+    pad.stroke(1, (40.0, 90.0), (0.0, -12.0), 150);
+    let names = dispatched_names(&config, &pad);
+    assert!(names.iter().any(|n| n == "short"), "{names:?}");
+}
+
+#[test]
+fn a_gesture_may_ask_for_a_longer_swipe_than_the_setting() {
+    let config = crate::config::parse(LONG_SWIPE).unwrap().config;
+    let mut pad = Pad::new();
+    pad.stroke(1, (40.0, 90.0), (0.0, -25.0), 200);
+    let names = dispatched_names(&config, &pad);
+    assert!(!names.iter().any(|n| n == "long"), "{names:?}");
+}
+
 #[test]
 fn a_hold_step_starts_its_window_when_the_fingers_lift() {
     // The hold fires 600 ms into a two-second rest, so measuring the pause

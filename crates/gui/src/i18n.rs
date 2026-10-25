@@ -135,6 +135,7 @@ pub fn describe_trigger(t: &glyphpad_core::trigger::Trigger) -> String {
             fingers,
             direction: d,
             modifiers,
+            ..
         } => {
             format!(
                 "scorri {} con {}{}",
@@ -147,13 +148,14 @@ pub fn describe_trigger(t: &glyphpad_core::trigger::Trigger) -> String {
             edge: e,
             fingers,
             direction: d,
+            ..
         } => format!(
             "scorri {} dal bordo {} con {}",
             direction(*d),
             edge(*e),
             dita(*fingers)
         ),
-        Trigger::Pinch { fingers, zoom } => format!(
+        Trigger::Pinch { fingers, zoom, .. } => format!(
             "{} con {}",
             if *zoom == Zoom::In {
                 "pizzica per stringere"
@@ -162,7 +164,7 @@ pub fn describe_trigger(t: &glyphpad_core::trigger::Trigger) -> String {
             },
             dita(*fingers)
         ),
-        Trigger::Rotate { fingers, turn } => format!(
+        Trigger::Rotate { fingers, turn, .. } => format!(
             "ruota {} con {}",
             if *turn == Turn::Clockwise {
                 "in senso orario"

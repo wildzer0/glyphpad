@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A gesture can set its own thresholds — `min_distance_mm` and `min_speed_mm_s` for swipes,
+  `min_change_mm` for pinches, `min_deg` for rotations — stricter or looser than the settings, so
+  two gestures on the same movement can ask for different lengths. The engine recognizes the
+  loosest of them and each gesture checks its own.
+- Each step of a sequence can set its own `within_ms`, the pause allowed after that step.
 - `focus_or_launch`: brings the first window of a program to the front, or starts it when it is
   not running — what "open my editor" means, without a script.
 - `copy` puts a text on the clipboard; `paste_text` puts it there and sends `Ctrl+V`, which is

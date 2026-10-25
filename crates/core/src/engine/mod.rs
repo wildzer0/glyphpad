@@ -247,6 +247,13 @@ pub struct Spec {
     pub chords: bool,
     /// Draw mode; `None` disables symbols.
     pub draw: Option<DrawParams>,
+    /// Loosest threshold overrides among the configured gestures: the engine
+    /// must recognize what any gesture asks for, and the matched gesture's own
+    /// threshold is checked afterwards, in `Trigger::specificity`.
+    loose_swipe_distance_mm: Option<f32>,
+    loose_swipe_speed_mm_s: Option<f32>,
+    loose_pinch_mm: Option<f32>,
+    loose_rotate_deg: Option<f32>,
     /// Lowest confidence of the gestures using each symbol. `None` accepts
     /// every symbol at `default_confidence` (diagnostics).
     symbol_thresholds: Option<BTreeMap<String, f32>>,
@@ -266,6 +273,10 @@ impl Default for Spec {
             clicks: [false; MAX_CONTACTS + 1],
             chords: false,
             draw: None,
+            loose_swipe_distance_mm: None,
+            loose_swipe_speed_mm_s: None,
+            loose_pinch_mm: None,
+            loose_rotate_deg: None,
             symbol_thresholds: Some(BTreeMap::new()),
             default_confidence: Settings::default().default_confidence,
         }
@@ -281,7 +292,39 @@ fn draw_params(s: &Settings) -> DrawParams {
     }
 }
 
+/// The looser of two optional thresholds.
+fn loosen(current: Option<f32>, candidate: Option<f32>) -> Option<f32> {
+    match (current, candidate) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
 impl Spec {
+    /// Smallest swipe distance to recognize: the setting, relaxed by any
+    /// gesture that asks for less.
+    pub fn swipe_distance_mm(&self, t: &Thresholds) -> f32 {
+        self.loose_swipe_distance_mm
+            .map_or(t.swipe_min_distance_mm, |v| v.min(t.swipe_min_distance_mm))
+    }
+
+    /// Same for the smallest speed.
+    pub fn swipe_speed_mm_s(&self, t: &Thresholds) -> f32 {
+        self.loose_swipe_speed_mm_s
+            .map_or(t.swipe_min_speed_mm_s, |v| v.min(t.swipe_min_speed_mm_s))
+    }
+
+    /// Same for a pinch's spread and a rotation's degrees.
+    pub fn pinch_mm(&self, t: &Thresholds) -> f32 {
+        self.loose_pinch_mm
+            .map_or(t.pinch_min_mm, |v| v.min(t.pinch_min_mm))
+    }
+
+    pub fn rotate_deg(&self, t: &Thresholds) -> f32 {
+        self.loose_rotate_deg
+            .map_or(t.rotate_min_deg, |v| v.min(t.rotate_min_deg))
+    }
+
     pub fn from_config(config: &Config) -> Self {
         let s = &config.settings;
         let mut spec = Self {
@@ -309,18 +352,36 @@ impl Spec {
                 Trigger::Swipe {
                     direction,
                     modifiers,
+                    min_distance_mm,
+                    min_speed_mm_s,
                     ..
                 } => {
                     spec.swipes[n] = true;
                     spec.eight_way[n] |= direction.is_diagonal();
                     spec.chords |= *modifiers > 0;
+                    spec.loose_swipe_distance_mm =
+                        loosen(spec.loose_swipe_distance_mm, *min_distance_mm);
+                    spec.loose_swipe_speed_mm_s =
+                        loosen(spec.loose_swipe_speed_mm_s, *min_speed_mm_s);
                 }
-                Trigger::EdgeSwipe { direction, .. } => {
+                Trigger::EdgeSwipe {
+                    direction,
+                    min_distance_mm,
+                    ..
+                } => {
                     spec.edge_swipes[n] = true;
                     spec.eight_way[n] |= direction.is_diagonal();
+                    spec.loose_swipe_distance_mm =
+                        loosen(spec.loose_swipe_distance_mm, *min_distance_mm);
                 }
-                Trigger::Pinch { .. } => spec.pinches[n] = true,
-                Trigger::Rotate { .. } => spec.rotations[n] = true,
+                Trigger::Pinch { min_change_mm, .. } => {
+                    spec.pinches[n] = true;
+                    spec.loose_pinch_mm = loosen(spec.loose_pinch_mm, *min_change_mm);
+                }
+                Trigger::Rotate { min_deg, .. } => {
+                    spec.rotations[n] = true;
+                    spec.loose_rotate_deg = loosen(spec.loose_rotate_deg, *min_deg);
+                }
                 Trigger::Click { direction, .. } => {
                     spec.clicks[n] = true;
                     spec.eight_way[n] |= direction.is_some_and(Direction::is_diagonal);
@@ -354,6 +415,10 @@ impl Spec {
             clicks: [true; MAX_CONTACTS + 1],
             chords: true,
             draw: Some(draw_params(&Settings::default())),
+            loose_swipe_distance_mm: None,
+            loose_swipe_speed_mm_s: None,
+            loose_pinch_mm: None,
+            loose_rotate_deg: None,
             symbol_thresholds: None,
             default_confidence: Settings::default().default_confidence,
         }

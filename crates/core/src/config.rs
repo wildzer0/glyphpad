@@ -455,6 +455,17 @@ pub struct GestureDef {
     pub symbol: Option<OneOrMany>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
+    /// Threshold overrides for this gesture alone (swipe distance and speed,
+    /// pinch spread, rotation degrees); the global ones still apply when
+    /// these are absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_distance_mm: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_speed_mm_s: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_change_mm: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_deg: Option<f32>,
     /// The gestures of a sequence, in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steps: Option<Vec<TriggerDef>>,
@@ -503,6 +514,9 @@ pub struct Gesture {
     pub trigger: Option<Trigger>,
     /// The steps of a sequence.
     pub steps: Vec<Trigger>,
+    /// Pause allowed after each step, in milliseconds: the step's own
+    /// `within_ms`, else the sequence's.
+    pub step_within_ms: Vec<u64>,
     pub within_ms: u64,
     title_regex: Option<Regex>,
     apps: Vec<String>,
@@ -525,6 +539,11 @@ impl GestureDef {
             modifier_fingers: self.modifier_fingers,
             symbol: self.symbol.clone(),
             confidence: self.confidence,
+            min_distance_mm: self.min_distance_mm,
+            min_speed_mm_s: self.min_speed_mm_s,
+            min_change_mm: self.min_change_mm,
+            min_deg: self.min_deg,
+            within_ms: None,
         }
     }
 
@@ -542,6 +561,10 @@ impl GestureDef {
             rotation: trigger.rotation,
             symbol: trigger.symbol,
             confidence: trigger.confidence,
+            min_distance_mm: trigger.min_distance_mm,
+            min_speed_mm_s: trigger.min_speed_mm_s,
+            min_change_mm: trigger.min_change_mm,
+            min_deg: trigger.min_deg,
             steps: None,
             within_ms: None,
             action,
@@ -875,6 +898,7 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
 
         let mut trigger = None;
         let mut steps = Vec::new();
+        let mut step_within_ms = Vec::new();
         let within_ms = def.within_ms.unwrap_or(DEFAULT_SEQUENCE_WITHIN_MS);
         if def.kind == GestureKind::Sequence {
             let mut stray = def.trigger_def();
@@ -892,6 +916,9 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
                 }
                 Some(list) => {
                     for (i, step) in list.iter().enumerate() {
+                        // The pause after a step is what its own `within_ms`
+                        // says, or the sequence's for all of them.
+                        step_within_ms.push(step.within_ms.unwrap_or(within_ms));
                         match step.build() {
                             Ok(t) => steps.push(t),
                             Err(es) => {
@@ -961,6 +988,7 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
                 line,
                 trigger,
                 steps,
+                step_within_ms,
                 within_ms,
                 title_regex,
                 apps,
@@ -1168,7 +1196,8 @@ action = { type = "lock_screen" }
             g[0].trigger,
             Some(Trigger::Pinch {
                 fingers: 2,
-                zoom: Zoom::Out
+                zoom: Zoom::Out,
+                min_change_mm: None
             })
         );
         assert_eq!(
@@ -1176,7 +1205,9 @@ action = { type = "lock_screen" }
             Some(Trigger::Swipe {
                 fingers: 2,
                 direction: Direction::Up,
-                modifiers: 1
+                modifiers: 1,
+                min_distance_mm: None,
+                min_speed_mm_s: None
             })
         );
         assert!(g[5].trigger.is_none());

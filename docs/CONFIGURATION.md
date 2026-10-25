@@ -199,6 +199,27 @@ swipes a sequence.
 A step is over when its touch is: a `hold` is recognized `hold_duration_ms` into the touch, but its
 window starts when the fingers lift, so how long they rest on afterwards does not matter.
 
+A step may set its own window: `within_ms` inside a step is the pause allowed after *that* step,
+overriding the sequence's — handy when a quick tap has to be followed at once while a drawn step
+may take longer.
+
+```toml
+[[gesture]]
+name = "tap-then-down"
+type = "sequence"
+within_ms = 1500
+steps = [
+    { type = "tap", fingers = 3, within_ms = 300 },   # the swipe has to follow at once
+    { type = "swipe", fingers = 3, direction = "down" },
+]
+action = { type = "maximize" }
+```
+
+**Per-gesture thresholds.** `min_distance_mm` (swipe, edge_swipe), `min_speed_mm_s` (swipe),
+`min_change_mm` (pinch) and `min_deg` (rotate) make one gesture stricter — or looser — than the
+global setting, so two gestures on the same movement can ask for different lengths. The engine
+reports the loosest of them and each gesture then checks its own.
+
 When a sequence does not fire, the log says which of the two it was: `sequence "name" not
 completed: no next step began within its within_ms` (too slow — raise `within_ms` or do it faster)
 or `... the next gesture was not its next step` (the pad saw something else: check the steps with

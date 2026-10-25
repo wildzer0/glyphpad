@@ -328,6 +328,29 @@ pub const TABLE: &[(&str, &str)] = &[
         "Apri un file, una cartella o un indirizzo",
     ),
     ("Type a text", "Digita un testo"),
+    ("Minimum distance", "Distanza minima"),
+    (
+        "How far the fingers must travel for this gesture.",
+        "Quanto devono spostarsi le dita per questa gesture.",
+    ),
+    ("Minimum speed", "Velocità minima"),
+    (
+        "How fast they must move for this gesture.",
+        "Quanto veloci devono muoversi per questa gesture.",
+    ),
+    ("Minimum spread", "Apertura minima"),
+    (
+        "How much the fingers must spread or close for this gesture.",
+        "Quanto devono aprirsi o chiudersi le dita per questa gesture.",
+    ),
+    ("Minimum rotation", "Rotazione minima"),
+    (
+        "How far the fingers must turn for this gesture.",
+        "Quanto devono ruotare le dita per questa gesture.",
+    ),
+    ("from the settings", "dalle impostazioni"),
+    ("Pause after this step", "Pausa dopo questo passo"),
+    ("the sequence's", "quella della sequenza"),
     (
         "Copy a text to the clipboard",
         "Copia un testo negli appunti",

@@ -314,7 +314,93 @@ pub fn trigger_form(
         }
         GestureKind::Sequence => {}
     }
+    // Threshold overrides: only the measurements the recognizer reports, so
+    // the gesture can be stricter (or looser) than the global setting.
+    match kind {
+        GestureKind::Swipe => {
+            threshold_row(
+                ui,
+                "Minimum distance",
+                "How far the fingers must travel for this gesture.",
+                "mm",
+                &mut t.min_distance_mm,
+                18.0,
+                1.0..=200.0,
+            );
+            threshold_row(
+                ui,
+                "Minimum speed",
+                "How fast they must move for this gesture.",
+                "mm/s",
+                &mut t.min_speed_mm_s,
+                60.0,
+                0.0..=10_000.0,
+            );
+        }
+        GestureKind::EdgeSwipe => threshold_row(
+            ui,
+            "Minimum distance",
+            "How far the fingers must travel for this gesture.",
+            "mm",
+            &mut t.min_distance_mm,
+            18.0,
+            1.0..=200.0,
+        ),
+        GestureKind::Pinch => threshold_row(
+            ui,
+            "Minimum spread",
+            "How much the fingers must spread or close for this gesture.",
+            "mm",
+            &mut t.min_change_mm,
+            8.0,
+            1.0..=100.0,
+        ),
+        GestureKind::Rotate => threshold_row(
+            ui,
+            "Minimum rotation",
+            "How far the fingers must turn for this gesture.",
+            "deg",
+            &mut t.min_deg,
+            25.0,
+            1.0..=180.0,
+        ),
+        _ => {}
+    }
     let _ = id;
+}
+
+/// An optional threshold for this gesture alone; the setting's value applies
+/// when it is off.
+fn threshold_row(
+    ui: &mut egui::Ui,
+    label: &'static str,
+    hint: &'static str,
+    unit: &'static str,
+    value: &mut Option<f32>,
+    start: f32,
+    range: std::ops::RangeInclusive<f32>,
+) {
+    w::row(ui, label, hint, |ui| {
+        ui.horizontal(|ui| {
+            let mut on = value.is_some();
+            if w::switch(ui, &mut on).clicked() {
+                *value = on.then_some(start);
+            }
+            match value {
+                Some(v) => {
+                    ui.add(
+                        egui::DragValue::new(v)
+                            .range(range)
+                            .speed(0.5)
+                            .suffix(format!(" {unit}")),
+                    );
+                }
+                None => {
+                    ui.label(w::faint(ui, "from the settings"));
+                }
+            }
+        });
+    });
 }
 
 fn chord(ui: &mut egui::Ui, t: &mut TriggerDef) {
@@ -413,6 +499,24 @@ pub fn sequence_form(
                     default_confidence,
                     false,
                 );
+                if i + 1 < n {
+                    // Only the pause before the next step matters.
+                    ui.horizontal(|ui| {
+                        ui.label(w::dim(ui, "Pause after this step"));
+                        let mut on = step.within_ms.is_some();
+                        if w::switch(ui, &mut on).clicked() {
+                            step.within_ms = on.then_some(800);
+                        }
+                        match &mut step.within_ms {
+                            Some(ms) => {
+                                ui.add(egui::DragValue::new(ms).range(100..=5_000).suffix(" ms"));
+                            }
+                            None => {
+                                ui.label(w::faint(ui, "the sequence's"));
+                            }
+                        }
+                    });
+                }
             });
         ui.add_space(space::S);
     }

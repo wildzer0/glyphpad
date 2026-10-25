@@ -47,6 +47,22 @@ pub struct TriggerDef {
     pub symbol: Option<OneOrMany>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
+    /// Overrides of the global threshold, for this gesture alone: a swipe has
+    /// to be longer (or shorter) than the setting says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_distance_mm: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_speed_mm_s: Option<f32>,
+    /// A pinch has to change the fingers' spread by this many millimetres.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_change_mm: Option<f32>,
+    /// A rotation has to turn this many degrees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_deg: Option<f32>,
+    /// In a sequence step: the pause allowed after this step before the next
+    /// one starts, overriding the sequence's own `within_ms`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,20 +80,26 @@ pub enum Trigger {
         fingers: u8,
         direction: Direction,
         modifiers: u8,
+        min_distance_mm: Option<f32>,
+        min_speed_mm_s: Option<f32>,
     },
     /// A swipe starting at an edge of the touchpad.
     EdgeSwipe {
         edge: Edge,
         fingers: u8,
         direction: Direction,
+        min_distance_mm: Option<f32>,
+        min_speed_mm_s: Option<f32>,
     },
     Pinch {
         fingers: u8,
         zoom: Zoom,
+        min_change_mm: Option<f32>,
     },
     Rotate {
         fingers: u8,
         turn: Turn,
+        min_deg: Option<f32>,
     },
     /// A physical click with `fingers` fingers, or a click-and-drag in `direction`.
     Click {
@@ -128,14 +150,21 @@ impl TriggerDef {
             }
             GestureKind::Swipe => {
                 need("direction", self.direction.is_some(), &mut errors);
-                allowed.push("modifier_fingers");
+                allowed.extend(["modifier_fingers", "min_distance_mm", "min_speed_mm_s"]);
             }
             GestureKind::EdgeSwipe => {
                 need("edge", self.edge.is_some(), &mut errors);
                 need("direction", self.direction.is_some(), &mut errors);
+                allowed.extend(["min_distance_mm", "min_speed_mm_s"]);
             }
-            GestureKind::Pinch => need("zoom", self.zoom.is_some(), &mut errors),
-            GestureKind::Rotate => need("rotation", self.rotation.is_some(), &mut errors),
+            GestureKind::Pinch => {
+                need("zoom", self.zoom.is_some(), &mut errors);
+                allowed.push("min_change_mm");
+            }
+            GestureKind::Rotate => {
+                need("rotation", self.rotation.is_some(), &mut errors);
+                allowed.push("min_deg");
+            }
             GestureKind::Click => allowed.push("direction"),
             GestureKind::Symbol => {
                 need("symbol", self.symbol.is_some(), &mut errors);
@@ -153,6 +182,10 @@ impl TriggerDef {
             ("modifier_fingers", self.modifier_fingers.is_some()),
             ("symbol", self.symbol.is_some()),
             ("confidence", self.confidence.is_some()),
+            ("min_distance_mm", self.min_distance_mm.is_some()),
+            ("min_speed_mm_s", self.min_speed_mm_s.is_some()),
+            ("min_change_mm", self.min_change_mm.is_some()),
+            ("min_deg", self.min_deg.is_some()),
         ] {
             if present && !allowed.contains(&field) {
                 errors.push((
@@ -183,6 +216,31 @@ impl TriggerDef {
         {
             errors.push(("confidence", "must be between 0 and 1".into()));
         }
+        if let Some(d) = self.min_distance_mm
+            && !(1.0..=200.0).contains(&d)
+        {
+            errors.push(("min_distance_mm", "must be between 1 and 200".into()));
+        }
+        if let Some(v) = self.min_speed_mm_s
+            && !(0.0..=10_000.0).contains(&v)
+        {
+            errors.push(("min_speed_mm_s", "must be between 0 and 10000".into()));
+        }
+        if let Some(c) = self.min_change_mm
+            && !(1.0..=100.0).contains(&c)
+        {
+            errors.push(("min_change_mm", "must be between 1 and 100".into()));
+        }
+        if let Some(d) = self.min_deg
+            && !(1.0..=180.0).contains(&d)
+        {
+            errors.push(("min_deg", "must be between 1 and 180".into()));
+        }
+        if let Some(w) = self.within_ms
+            && !(100..=5_000).contains(&w)
+        {
+            errors.push(("within_ms", "must be between 100 and 5000".into()));
+        }
         let names = self
             .symbol
             .as_ref()
@@ -206,19 +264,25 @@ impl TriggerDef {
                 fingers,
                 direction: self.direction.unwrap_or(Direction::Up),
                 modifiers,
+                min_distance_mm: self.min_distance_mm,
+                min_speed_mm_s: self.min_speed_mm_s,
             },
             GestureKind::EdgeSwipe => Trigger::EdgeSwipe {
                 edge: self.edge.unwrap_or_default(),
                 fingers,
                 direction: self.direction.unwrap_or(Direction::Up),
+                min_distance_mm: self.min_distance_mm,
+                min_speed_mm_s: self.min_speed_mm_s,
             },
             GestureKind::Pinch => Trigger::Pinch {
                 fingers,
                 zoom: self.zoom.unwrap_or(Zoom::In),
+                min_change_mm: self.min_change_mm,
             },
             GestureKind::Rotate => Trigger::Rotate {
                 fingers,
                 turn: self.rotation.unwrap_or(Turn::Clockwise),
+                min_deg: self.min_deg,
             },
             GestureKind::Click => Trigger::Click {
                 fingers,
@@ -275,66 +339,106 @@ impl Trigger {
                     fingers,
                     direction,
                     modifiers: 0,
+                    min_distance_mm,
+                    min_speed_mm_s,
                 },
                 Observation::Swipe {
                     fingers: f,
                     direction: d,
-                    ..
+                    distance_mm,
+                    speed_mm_s,
                 },
-            ) => yes(f == fingers && d == direction),
+            ) => yes(f == fingers
+                && d == direction
+                && min_distance_mm.is_none_or(|min| *distance_mm >= min)
+                && min_speed_mm_s.is_none_or(|min| *speed_mm_s >= min)),
             (
                 Trigger::Swipe {
                     fingers,
                     direction,
                     modifiers: 0,
+                    min_distance_mm,
+                    ..
                 },
                 Observation::EdgeSwipe {
                     fingers: f,
                     direction: d,
+                    distance_mm,
                     ..
                 },
-            ) => u8::from(f == fingers && d == direction),
+            ) => u8::from(
+                f == fingers
+                    && d == direction
+                    && min_distance_mm.is_none_or(|min| *distance_mm >= min),
+            ),
             (
                 Trigger::Swipe {
                     fingers,
                     direction,
                     modifiers,
+                    min_distance_mm,
+                    min_speed_mm_s,
                 },
                 Observation::Chord {
                     modifiers: m,
                     gesture,
                 },
             ) if *modifiers > 0 => yes(m == modifiers
-                && matches!(**gesture, Observation::Swipe { fingers: f, direction: d, .. } if f == *fingers && d == *direction)),
+                && matches!(
+                    **gesture,
+                    Observation::Swipe { fingers: f, direction: d, distance_mm, speed_mm_s }
+                        if f == *fingers
+                            && d == *direction
+                            && min_distance_mm.is_none_or(|min| distance_mm >= min)
+                            && min_speed_mm_s.is_none_or(|min| speed_mm_s >= min)
+                )),
             (
                 Trigger::EdgeSwipe {
                     edge,
                     fingers,
                     direction,
+                    min_distance_mm,
+                    min_speed_mm_s,
                 },
                 Observation::EdgeSwipe {
                     edge: e,
                     fingers: f,
                     direction: d,
-                    ..
+                    distance_mm,
                 },
-            ) => yes(e == edge && f == fingers && d == direction),
+            ) => yes(e == edge
+                && f == fingers
+                && d == direction
+                && min_distance_mm.is_none_or(|min| *distance_mm >= min)
+                // The observation carries no speed; a gesture asking for a
+                // minimum speed cannot be matched from an edge swipe.
+                && min_speed_mm_s.is_none_or(|min| min <= 0.0)),
             (
-                Trigger::Pinch { fingers, zoom },
+                Trigger::Pinch {
+                    fingers,
+                    zoom,
+                    min_change_mm,
+                },
                 Observation::Pinch {
                     fingers: f,
                     zoom: z,
-                    ..
+                    change_mm,
                 },
-            ) => yes(f == fingers && z == zoom),
+            ) => yes(f == fingers
+                && z == zoom
+                && min_change_mm.is_none_or(|min| change_mm.abs() >= min)),
             (
-                Trigger::Rotate { fingers, turn },
+                Trigger::Rotate {
+                    fingers,
+                    turn,
+                    min_deg,
+                },
                 Observation::Rotate {
                     fingers: f,
                     turn: t,
-                    ..
+                    degrees,
                 },
-            ) => yes(f == fingers && t == turn),
+            ) => yes(f == fingers && t == turn && min_deg.is_none_or(|min| degrees.abs() >= min)),
             (
                 Trigger::Click { fingers, direction },
                 Observation::Click {
@@ -395,6 +499,7 @@ impl Trigger {
                 fingers,
                 direction,
                 modifiers,
+                ..
             } => {
                 format!(
                     "swipe {direction} with {}{}",
@@ -406,6 +511,7 @@ impl Trigger {
                 edge,
                 fingers,
                 direction,
+                ..
             } => {
                 format!(
                     "swipe {direction} from the {} edge with {}",
@@ -413,14 +519,14 @@ impl Trigger {
                     f(*fingers)
                 )
             }
-            Trigger::Pinch { fingers, zoom } => {
+            Trigger::Pinch { fingers, zoom, .. } => {
                 format!(
                     "pinch {} with {}",
                     if *zoom == Zoom::In { "in" } else { "out" },
                     f(*fingers)
                 )
             }
-            Trigger::Rotate { fingers, turn } => format!(
+            Trigger::Rotate { fingers, turn, .. } => format!(
                 "rotate {} with {}",
                 if *turn == Turn::Clockwise {
                     "clockwise"
