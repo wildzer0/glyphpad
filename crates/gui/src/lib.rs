@@ -32,6 +32,12 @@ use glyphpad_core::service::{Command, EngineMode, Shared, UiLink};
 pub use eframe::egui;
 pub use icon::icon_rgba;
 
+/// `text` in the language of the window, for what the application itself
+/// shows (the tray menu).
+pub fn tr(text: &'static str) -> &'static str {
+    i18n::tr(text)
+}
+
 /// What the tray menu asks for (SPEC §10.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayAction {

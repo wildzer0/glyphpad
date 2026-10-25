@@ -804,10 +804,20 @@ mod tests {
 
     #[test]
     fn backup_names_read_as_dates() {
-        assert_eq!(
-            backup_label("glyphpad-20261025-085103-001.toml"),
-            "25 Oct 2026, 08:51:03"
-        );
-        assert_eq!(backup_label("odd.toml"), "odd.toml");
+        use glyphpad_core::config::Language;
+        let label = |name| backup_label(name);
+        crate::i18n::with_language(Language::English, || {
+            assert_eq!(
+                label("glyphpad-20261025-085103-001.toml"),
+                "25 Oct 2026, 08:51:03"
+            );
+            assert_eq!(label("odd.toml"), "odd.toml");
+        });
+        crate::i18n::with_language(Language::Italian, || {
+            assert_eq!(
+                label("glyphpad-20261025-085103-001.toml"),
+                "25 ott 2026, 08:51:03"
+            );
+        });
     }
 }

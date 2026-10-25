@@ -84,6 +84,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Releases are not signed yet: `SHA256SUMS` protects against corrupt downloads, not
   against a compromised GitHub account.
 
+- More actions: `open` (file, folder or address), `type_text`, `window` (snap left/right, next
+  monitor, always on top), `virtual_desktop`, `screenshot`, `switch_profile`, `next_profile` and
+  `show_cheat_sheet`.
+- Profiles that switch by themselves (`profile_rules`), a profile switcher in the sidebar, the tray
+  menu and Settings, and the actions above to switch by gesture.
+- Cheat sheet: a list of the active gestures with a picture each, shown for a few seconds.
+- Local usage statistics (`stats.json`, off with `statistics = false`): runs per gesture,
+  unrecognized drawings, symbols with no gesture; Review → Statistics.
+- Gesture packs: *Share → Export / Import* a `.glyphpad` file with gestures and the symbol examples
+  they use, with a preview and a choice per gesture when names clash.
+- Italian and English interface (`language`, also in Settings → Appearance), following the system
+  by default.
+- User guide (English and Italian), configuration reference and screenshots in `docs/`.
+
 ### Changed
 - The window was rebuilt on a design system: light and dark themes (`theme = "system" |
   "light" | "dark"` in `[settings]`, also in Settings → Appearance), Phosphor icons, a

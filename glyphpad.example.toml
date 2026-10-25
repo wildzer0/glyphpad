@@ -39,8 +39,12 @@ rotation_tolerance_deg = 0.0 # 0: a rotated L is not an L
 # Window and tray.
 close_to_tray = true         # the window's X hides GlyphPad to the tray
 start_minimized = false
-history_size = 20            # recognitions kept in "Review gestures"
+theme = "system"             # system | light | dark
+language = "system"          # system | english | italian
+history_size = 20            # recognitions kept in "Review"
 save_history = false         # also write them to history.jsonl
+statistics = true            # count gesture uses in stats.json (this PC only)
+cheat_sheet_s = 8            # seconds the `show_cheat_sheet` list stays on screen
 
 # repeat_last re-runs the last gesture's action.
 repeat_same_app_only = true  # never into another application
@@ -55,6 +59,15 @@ pause_in_apps = []
 pause_when_fullscreen = true
 autostart = false            # start with Windows
 backup_count = 10            # earlier versions kept in backups/
+
+# Profiles: a gesture with `profile = "..."` only works while that profile is
+# active. `active_profile` is the one you chose; with `profile_rules` GlyphPad
+# switches by itself while a listed program is in front (first match wins).
+# profiles = ["work", "media"]
+# profile_rules = [
+#     { app = ["code.exe", "devenv.exe"], profile = "work" },
+#     { app = "vlc.exe", profile = "media" },
+# ]
 
 [update]
 mode = "notify"          # off | notify | auto
@@ -106,6 +119,12 @@ type = "tap"
 fingers = 3
 taps = 2
 action = { type = "repeat_last" }
+
+[[gesture]]
+name = "cheat-sheet"
+type = "hold"
+fingers = 4
+action = { type = "show_cheat_sheet" }
 
 # More examples (any of them can also be made in the window):
 #
@@ -164,3 +183,35 @@ action = { type = "repeat_last" }
 #     { type = "wait", ms = 100 },
 #     { type = "keys", combo = "Ctrl+V" },
 # ] }
+#
+# [[gesture]]
+# name = "snap-left"           # more actions: open, type_text, window,
+# type = "swipe"               # virtual_desktop, screenshot, switch_profile,
+# fingers = 3                  # next_profile, show_cheat_sheet
+# direction = "left"
+# action = { type = "window", op = "snap_left" }   # snap_right | next_monitor | toggle_always_on_top
+#
+# [[gesture]]
+# name = "open-notes"
+# type = "symbol"
+# symbol = "q"
+# action = { type = "open", target = "https://example.com/notes" }
+#
+# [[gesture]]
+# name = "sign-off"
+# type = "tap"
+# fingers = 5
+# action = { type = "type_text", text = "Best regards,\nYour name" }
+#
+# [[gesture]]
+# name = "next-desktop"
+# type = "swipe"
+# fingers = 4
+# direction = "right"
+# action = { type = "virtual_desktop", op = "next" }   # previous | next | new
+#
+# [[gesture]]
+# name = "snip"
+# type = "symbol"
+# symbol = "C"
+# action = { type = "screenshot", mode = "region" }   # region | screen

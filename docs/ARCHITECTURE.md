@@ -9,7 +9,7 @@ limitations as they are discovered.
 | Directory | Package | Role |
 |---|---|---|
 | `crates/core` | `glyphpad-core` | Normalized data model (`TouchFrame`, `Contact`, `DeviceInfo`), gesture engine, recognizer, config. No OS dependencies. |
-| `crates/platform` | `glyphpad-platform` | `TouchSource` / `ForegroundInfo` traits and the cfg-gated Windows (Raw Input + HID) and Linux (evdev) backends. |
+| `crates/platform` | `glyphpad-platform` | The Windows backend (Raw Input + HID, tray-less helpers: overlay, cheat sheet, single instance, autostart); the Linux (evdev) backend is still to come. |
 | `crates/actions` | `glyphpad-actions` | `ActionExecutor` implementations per platform. |
 | `crates/gui` | `glyphpad-gui` | egui/eframe window. |
 | `crates/updater` | `glyphpad-updater` | Update check, download, verification and executable replacement. Owns the only reference to the GitHub repository (`GITHUB_REPO`). |
@@ -92,7 +92,7 @@ file wins.
   templates takes about 2.5 ms in a release build.
 - `core::symbols::templates`: `templates.json` next to the configuration
   holds the user's samples, with the time of every point. A symbol's
-  recorded samples replace its built-in ones. Built-in shapes come in seven
+  recorded samples are added to its built-in ones (a symbol can be set to ignore them). Built-in shapes come in seven
   variants (proportions, slant) because uniform scaling keeps proportions.
 - `core::engine::draw`: decides which sessions are strokes, per draw mode,
   collects strokes until `stroke_gap_ms` passes, then recognizes. A symbol
@@ -158,6 +158,60 @@ single-instance (message-only window)
 - Writes to `glyphpad.toml` go through `core::config_edit` (`toml_edit`), are
   validated before writing and written atomically; templates likewise.
 
+## Window (`glyphpad-gui`)
+
+- **Design system.** `theme.rs` holds the two palettes (light, dark), the type scale, the spacing
+  and radii, the fonts (Segoe UI and its semibold on Windows, the Phosphor icon font subset in
+  `assets/`, regenerated with `assets/gen_icons.py` when icons are added) and builds
+  the egui style for both themes. `widgets.rs` is the only place that draws controls (rows,
+  sections, switches, segmented controls, banners, dialogs…); pages never pick a color or a size.
+  The theme follows the system unless `settings.theme` says otherwise.
+- **Autosave.** `editor.rs` keeps the *draft* (settings plus the gestures, each with a stable
+  `uid`). When the draft is valid and has been left alone for 700 ms (and no pointer button is
+  down) it is rendered onto the file's text with `core::config_edit` and sent as
+  `Command::WriteConfig` with the revision it started from. The engine refuses it if the file
+  changed meanwhile (the window then offers reload / keep mine / differences). The file position
+  of each gesture comes from the *saved* state through its `uid`, so the draft can keep changing
+  (even be reordered) while a save is on its way. Saves less than two minutes after the last
+  backup share it.
+- **Languages.** `i18n.rs` translates English literals through a table (`i18n/it.rs`). Widgets
+  take `&'static str` for what they show, so only literals of the program are translated; names
+  typed by the user go through the `*_raw` variants. A missing entry falls back to English.
+  `describe_trigger` writes the Italian sentence of a trigger.
+- **Layout.** `Panel`s for the sidebar and the bottom bar, master–detail on the Gestures and
+  Review pages, `widgets::grid` for responsive previews, `centered_column` (max 860 pt) for forms.
+
+## Updates (`glyphpad-updater`, `app::update`)
+
+- `UpdateSource` has two implementations: `GithubSource` (the releases API with ETag and rate
+  limit handling; asset URLs must start with this project's release URL) and `LocalSource` (a
+  folder with `releases.json`, used by the tests and by `--update-source` in debug builds).
+- `package::download` fetches `SHA256SUMS` and the package for this target, verifies the hash
+  while writing, extracts only the executable (by file name, never by path) and checks it looks
+  like an executable. `install::install` renames the running executable to `glyphpad.old[.exe]`
+  and the new one into its place (both renames work on a running Windows executable).
+- `install::handoff` gives up the single-instance lock, starts the new executable with the same
+  arguments plus `--post-update`, and waits up to 15 s for it to create `glyphpad-update.ok`
+  (written once its configuration is loaded and its engine runs). A new process that exits or
+  stays silent is killed, the old executable is renamed back and the lock is taken again.
+  `tests/update_flow.rs` runs this against a fake application, on every platform in CI.
+- `app::update` is the thread that checks at start and every interval, publishes
+  `Shared::update` for the banner, pauses gestures during the hand-off and, in `auto` mode, waits
+  until no finger is down. A development build (no `--update-source`) never replaces itself.
+- Releases are verified by `SHA256SUMS` only; signing with minisign (SPEC §12.3) is not done.
+
+## Profiles, statistics, packs, cheat sheet
+
+- `Config::profile_for` implements `profile_rules`; `app::service` keeps the *effective*
+  configuration (the loaded one with the rule's profile) separate from the loaded one that the
+  window edits, so a rule's temporary switch is never written to the file.
+- `core::usage` counts runs, unrecognized drawings and unmapped symbols; `app::service` writes
+  `stats.json` at most every 20 s.
+- `core::pack` reads and writes `.glyphpad` archives (zip with `manifest.json`, `gestures.toml`,
+  `templates.json`), validating the gestures with the configuration's own checks.
+- `core::preview` draws a gesture as dots and arrows in the unit square; `platform::windows::
+  cheatsheet` paints the list in a layered click-through window of its own.
+
 ## Known limitations
 
 - **Late palm detection.** The reference touchpad reports a palm as a
@@ -175,7 +229,14 @@ single-instance (message-only window)
   Windows scales it on high-DPI screens (slightly blurry).
 - **Binary size.** With the window and tray the release binary is about
   11.5 MB.
-- **Linux tray.** Not built yet (M7); on Linux the window runs without it.
+- **Linux.** Not built yet (M7): the code builds and its tests run on Linux, but there is no touch
+  source or action executor there yet.
+- **Updates are not signed.** `SHA256SUMS` guards against corruption, not against a compromised
+  account; minisign signing (SPEC §12.3) is not done.
+- **Tray language.** The tray menu takes the language at start; changing it in Settings applies to
+  the window at once and to the tray menu at the next start.
+- **Texts from the core.** Descriptions of recognized movements (history) and validation messages
+  come from the core in English.
 - **Per-gesture thresholds.** Distances, durations and speeds are global
   (Settings → Advanced); gestures only set their own symbol confidence.
 - **Clicks.** A click gesture cannot stop the click from reaching Windows.

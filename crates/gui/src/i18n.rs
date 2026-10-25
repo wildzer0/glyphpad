@@ -182,14 +182,21 @@ pub fn describe_trigger(t: &glyphpad_core::trigger::Trigger) -> String {
     }
 }
 
+/// Runs `f` in `language`, one test at a time: the language is global, and
+/// the machine running the tests may well be set to a different one.
+#[cfg(test)]
+pub fn with_language<R>(language: Language, f: impl FnOnce() -> R) -> R {
+    static LANGUAGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _turn = LANGUAGE.lock().unwrap_or_else(|e| e.into_inner());
+    set(language);
+    let result = f();
+    set(Language::English);
+    result
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use super::*;
-
-    /// The language is global: tests that change it take turns.
-    static LANGUAGE: Mutex<()> = Mutex::new(());
 
     #[test]
     fn locales_are_recognized() {
@@ -203,11 +210,11 @@ mod tests {
 
     #[test]
     fn templates_fill_in_order_and_plurals_follow_the_count() {
-        let _g = LANGUAGE.lock();
-        ITALIAN.store(false, Ordering::Relaxed);
-        assert_eq!(tf("{} of {} done", &["2", "5"]), "2 of 5 done");
-        assert_eq!(plural(1, "{} gesture", "{} gestures"), "1 gesture");
-        assert_eq!(plural(3, "{} gesture", "{} gestures"), "3 gestures");
+        with_language(Language::English, || {
+            assert_eq!(tf("{} of {} done", &["2", "5"]), "2 of 5 done");
+            assert_eq!(plural(1, "{} gesture", "{} gestures"), "1 gesture");
+            assert_eq!(plural(3, "{} gesture", "{} gestures"), "3 gestures");
+        });
     }
 
     #[test]
@@ -224,9 +231,7 @@ mod tests {
     #[test]
     fn italian_descriptions_cover_every_kind() {
         use glyphpad_core::trigger::TriggerDef;
-        let _g = LANGUAGE.lock();
-        ITALIAN.store(true, Ordering::Relaxed);
-        for text in [
+        let texts = [
             "type = \"tap\"\nfingers = 3\ntaps = 2",
             "type = \"hold\"\nfingers = 1",
             "type = \"swipe\"\nfingers = 2\ndirection = \"up\"",
@@ -235,11 +240,13 @@ mod tests {
             "type = \"rotate\"\nfingers = 2\nrotation = \"clockwise\"",
             "type = \"click\"\nfingers = 1",
             "type = \"symbol\"\nsymbol = [\"L\", \"q\"]",
-        ] {
-            let t = toml::from_str::<TriggerDef>(text).unwrap().build().unwrap();
-            let d = describe_trigger(&t);
-            assert!(!d.is_empty() && d != t.describe(), "{text}: {d}");
-        }
-        ITALIAN.store(false, Ordering::Relaxed);
+        ];
+        with_language(Language::Italian, || {
+            for text in texts {
+                let t = toml::from_str::<TriggerDef>(text).unwrap().build().unwrap();
+                let d = describe_trigger(&t);
+                assert!(!d.is_empty() && d != t.describe(), "{text}: {d}");
+            }
+        });
     }
 }

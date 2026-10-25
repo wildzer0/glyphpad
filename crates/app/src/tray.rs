@@ -39,14 +39,14 @@ fn send(tx: &Sender<TrayAction>, ctx: &Context, action: TrayAction) {
 }
 
 pub fn create(ctx: Context) -> Option<Box<dyn Tray>> {
-    let open = MenuItem::new("Open GlyphPad", true, None);
-    let enabled = CheckMenuItem::new("Gestures enabled", true, true, None);
-    let reload = MenuItem::new("Reload configuration", true, None);
-    let folder = MenuItem::new("Open configuration folder", true, None);
-    let updates = MenuItem::new("Check for updates", true, None);
-    let quit = MenuItem::new("Quit", true, None);
+    let open = MenuItem::new(glyphpad_gui::tr("Open GlyphPad"), true, None);
+    let enabled = CheckMenuItem::new(glyphpad_gui::tr("Gestures enabled"), true, true, None);
+    let reload = MenuItem::new(glyphpad_gui::tr("Reload configuration"), true, None);
+    let folder = MenuItem::new(glyphpad_gui::tr("Open configuration folder"), true, None);
+    let updates = MenuItem::new(glyphpad_gui::tr("Check for updates"), true, None);
+    let quit = MenuItem::new(glyphpad_gui::tr("Quit"), true, None);
     let menu = Menu::new();
-    let profiles = Submenu::new("Profile", true);
+    let profiles = Submenu::new(glyphpad_gui::tr("Profile"), true);
     let items: [&dyn tray_icon::menu::IsMenuItem; 9] = [
         &open,
         &enabled,
@@ -159,9 +159,9 @@ impl Tray for AppTray {
             self.paused.clone()
         }));
         let _ = self.icon.set_tooltip(Some(if enabled {
-            "GlyphPad"
+            "GlyphPad".to_string()
         } else {
-            "GlyphPad (paused)"
+            glyphpad_gui::tr("GlyphPad (paused)").to_string()
         }));
     }
 }
