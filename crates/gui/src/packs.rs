@@ -51,7 +51,11 @@ impl State {
         egui::Popup::menu(&button).show(|ui| {
             ui.set_min_width(190.0);
             if ui
-                .button(format!("{}  Export gestures…", icons::UPLOAD_SIMPLE))
+                .button(format!(
+                    "{}  {}",
+                    icons::UPLOAD_SIMPLE,
+                    crate::i18n::tr("Export gestures…")
+                ))
                 .clicked()
             {
                 self.export = Some(Export {
@@ -65,7 +69,11 @@ impl State {
                 });
             }
             if ui
-                .button(format!("{}  Import gestures…", icons::DOWNLOAD_SIMPLE))
+                .button(format!(
+                    "{}  {}",
+                    icons::DOWNLOAD_SIMPLE,
+                    crate::i18n::tr("Import gestures…")
+                ))
                 .clicked()
             {
                 self.pick_import(ed);
@@ -119,7 +127,7 @@ impl State {
         if let Some(why) = self.problem.clone() {
             let mut close = false;
             w::dialog(ctx, "pack-problem", "That did not work", 420.0, |ui| {
-                w::error_text(ui, &why);
+                w::error_text_raw(ui, &why);
                 ui.add_space(space::M);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if w::button(ui, "", "Close").clicked() {
@@ -140,9 +148,7 @@ impl State {
         let mut close = false;
         let mut save = false;
         w::dialog(ctx, "export-pack", "Export gestures", 460.0, |ui| {
-            ui.label(w::dim(
-                ui,
-                "The file holds the chosen gestures and the examples of the symbols they use. Share it, or keep it as a backup.",
+            ui.label(w::dim(ui, "The file holds the chosen gestures and the examples of the symbols they use. Share it, or keep it as a backup.",
             ));
             ui.add_space(space::S);
             w::text_field(
@@ -235,10 +241,10 @@ impl State {
                 )
             })
             .collect();
-        w::dialog(
+        w::dialog_raw(
             ctx,
             "import-pack",
-            &format!("Import “{}”", import.pack.name),
+            &crate::i18n::tf("Import “{}”", &[&import.pack.name]),
             560.0,
             |ui| {
                 ui.label(w::dim(
@@ -258,18 +264,22 @@ impl State {
                             ui.horizontal(|ui| {
                                 ui.vertical(|ui| {
                                     ui.set_width(250.0);
-                                    ui.label(w::strong(&g.name));
-                                    ui.label(w::caption(ui, super::gestures::describe(g)));
+                                    ui.label(w::strong_raw(&g.name));
+                                    ui.label(w::caption_raw(ui, super::gestures::describe(g)));
                                 });
-                                let options: Vec<(Choice, String)> = if same_name {
-                                    vec![
-                                        (Choice::KeepBoth, "Keep both".into()),
-                                        (Choice::Replace, "Replace mine".into()),
-                                        (Choice::Skip, "Skip".into()),
-                                    ]
-                                } else {
-                                    vec![(Choice::Add, "Add".into()), (Choice::Skip, "Skip".into())]
-                                };
+                                let options: Vec<(Choice, std::borrow::Cow<'static, str>)> =
+                                    if same_name {
+                                        vec![
+                                            (Choice::KeepBoth, "Keep both".into()),
+                                            (Choice::Replace, "Replace mine".into()),
+                                            (Choice::Skip, "Skip".into()),
+                                        ]
+                                    } else {
+                                        vec![
+                                            (Choice::Add, "Add".into()),
+                                            (Choice::Skip, "Skip".into()),
+                                        ]
+                                    };
                                 w::dropdown(
                                     ui,
                                     ("import-choice", &g.name),
@@ -282,9 +292,12 @@ impl State {
                                 }
                             });
                             if let Some((other, _)) = same_move {
-                                w::warn_text(
+                                w::warn_text_raw(
                                     ui,
-                                    &format!("Same movement as your “{other}”: both would fire."),
+                                    &crate::i18n::tf(
+                                        "Same movement as your “{}”: both would fire.",
+                                        &[other],
+                                    ),
                                 );
                             }
                             ui.add_space(space::XS);
@@ -298,8 +311,8 @@ impl State {
                                 ui.horizontal(|ui| {
                                     w::switch(ui, on);
                                     ui.label(format!(
-                                        "{symbol}: {count} example{}",
-                                        if count == 1 { "" } else { "s" }
+                                        "{symbol}: {}",
+                                        crate::i18n::plural(count, "{} example", "{} examples")
                                     ));
                                     if have {
                                         ui.label(w::faint(ui, "added to the ones you have"));

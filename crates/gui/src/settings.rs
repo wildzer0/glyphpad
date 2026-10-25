@@ -43,8 +43,8 @@ fn with_default<T: PartialEq + Copy>(
 
 fn ms(
     ui: &mut egui::Ui,
-    label: &str,
-    hint: &str,
+    label: &'static str,
+    hint: &'static str,
     v: &mut u64,
     default: u64,
     range: std::ops::RangeInclusive<u64>,
@@ -58,8 +58,8 @@ fn ms(
 
 fn mm(
     ui: &mut egui::Ui,
-    label: &str,
-    hint: &str,
+    label: &'static str,
+    hint: &'static str,
     v: &mut f32,
     default: f32,
     range: std::ops::RangeInclusive<f32>,
@@ -119,8 +119,9 @@ fn backup_label(name: &str) -> String {
         _ => return name.to_string(),
     };
     format!(
-        "{} {month} {}, {}:{}:{}",
+        "{} {} {}, {}:{}:{}",
         s[6..8].trim_start_matches('0'),
+        crate::i18n::tr(month),
         &s[..4],
         &s[9..11],
         &s[11..13],
@@ -156,9 +157,9 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) {
     if let Some(name) = st.restore.clone() {
         let mut close = false;
         w::dialog(ui.ctx(), "restore", "Restore this backup?", 400.0, |ui| {
-            ui.label(format!(
+            ui.label(crate::i18n::tf(
                 "The configuration will be replaced by the one saved on {}. The current one is backed up first.",
-                backup_label(&name)
+                &[&backup_label(&name)],
             ));
             ui.add_space(space::M);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -380,8 +381,10 @@ fn profile_section(ui: &mut egui::Ui, cx: &Ctx, s: &mut Settings, profiles: &[St
                 "Active profile",
                 "Also in the tray menu and the sidebar.",
                 |ui| {
-                    let options: Vec<(String, String)> =
-                        profiles.iter().map(|p| (p.clone(), p.clone())).collect();
+                    let options: Vec<(String, std::borrow::Cow<'static, str>)> = profiles
+                        .iter()
+                        .map(|p| (p.clone(), p.clone().into()))
+                        .collect();
                     w::dropdown(
                         ui,
                         "settings-profile",
@@ -413,8 +416,10 @@ fn profile_section(ui: &mut egui::Ui, cx: &Ctx, s: &mut Settings, profiles: &[St
                                     _ => OneOrMany::Many(apps),
                                 };
                             });
-                            let options: Vec<(String, String)> =
-                                profiles.iter().map(|p| (p.clone(), p.clone())).collect();
+                            let options: Vec<(String, std::borrow::Cow<'static, str>)> = profiles
+                                .iter()
+                                .map(|p| (p.clone(), p.clone().into()))
+                                .collect();
                             ui.label(w::dim(ui, "uses"));
                             w::dropdown(
                                 ui,
@@ -496,7 +501,7 @@ fn repeat_and_pause(ui: &mut egui::Ui, cx: &Ctx, s: &mut Settings) {
             w::row(ui, "Pause in these apps", "", |ui| {
                 forms::app_list(ui, cx, egui::Id::unique("pause-apps"), &mut s.pause_in_apps);
                 if let Some(r) = &cx.shared.auto_paused {
-                    w::badge(ui, &format!("Paused now: {r}"), Tone::Warn);
+                    w::badge_raw(ui, &crate::i18n::tf("Paused now: {}", &[r]), Tone::Warn);
                 }
             });
         },
@@ -568,7 +573,7 @@ fn overlay(ui: &mut egui::Ui, s: &mut Settings) {
 fn updates(ui: &mut egui::Ui, cx: &Ctx, u: &mut glyphpad_core::config::UpdateSettings) {
     w::section(ui, "Updates", "", |ui| {
         w::row(ui, "Installed version", "", |ui| {
-            ui.label(w::strong(format!("v{}", cx.version)));
+            ui.label(w::strong_raw(format!("v{}", cx.version)));
         });
         w::row(ui, "Check for updates", "", |ui| {
             w::segmented(
@@ -609,10 +614,13 @@ fn updates(ui: &mut egui::Ui, cx: &Ctx, u: &mut glyphpad_core::config::UpdateSet
                     cx.send(Command::CheckUpdates { manual: true });
                 }
                 let (text, tone) = match &cx.shared.update {
-                    U::Checking => ("Checking…".to_string(), None),
-                    U::UpToDate => ("You have the latest version.".into(), Some(Tone::Ok)),
+                    U::Checking => (crate::i18n::tr("Checking…").to_string(), None),
+                    U::UpToDate => (
+                        crate::i18n::tr("You have the latest version.").to_string(),
+                        Some(Tone::Ok),
+                    ),
                     U::Available(a) => (
-                        format!("Version {} is available.", a.version),
+                        crate::i18n::tf("Version {} is available.", &[&a.version]),
                         Some(Tone::Accent),
                     ),
                     U::Failed(why) => (why.clone(), Some(Tone::Bad)),
@@ -624,13 +632,16 @@ fn updates(ui: &mut egui::Ui, cx: &Ctx, u: &mut glyphpad_core::config::UpdateSet
                             ui.label(egui::RichText::new(text).color(t.fg(ui)));
                         }
                         None => {
-                            ui.label(w::dim(ui, text));
+                            ui.label(w::dim_raw(ui, text));
                         }
                     }
                 }
             });
             if let Some(when) = &cx.shared.last_update_check {
-                ui.label(w::caption(ui, format!("Last checked {when}.")));
+                ui.label(w::caption_raw(
+                    ui,
+                    crate::i18n::tf("Last checked {}.", &[when]),
+                ));
             }
         });
     });
@@ -655,7 +666,7 @@ fn backups(ui: &mut egui::Ui, cx: &Ctx, s: &mut Settings, st: &mut State) {
                 });
             }
             for b in cx.shared.backups.iter().take(8) {
-                w::row(ui, &backup_label(b), "", |ui| {
+                w::row_raw(ui, &backup_label(b), "", |ui| {
                     if w::small_button(ui, "Restore…").clicked() {
                         st.restore = Some(b.clone());
                     }
@@ -674,7 +685,7 @@ fn advanced(ui: &mut egui::Ui, s: &mut Settings, d: &Settings, st: &mut State) {
             icons::CARET_RIGHT
         };
         let r = ui.add(
-            egui::Button::new(format!("{icon}  Advanced"))
+            egui::Button::new(format!("{icon}  {}", crate::i18n::tr("Advanced")))
                 .frame(false)
                 .min_size(egui::vec2(0.0, theme::CONTROL_HEIGHT)),
         );

@@ -88,12 +88,12 @@ impl Wizard {
 
     pub fn show(&mut self, ui: &mut egui::Ui, cx: &Ctx) -> Outcome {
         let title = if self.templates_only {
-            format!("Record examples of “{}”", self.symbol)
+            crate::i18n::tf("Record examples of “{}”", &[&self.symbol])
         } else {
-            "New gesture".to_string()
+            crate::i18n::tr("New gesture").to_string()
         };
         let mut cancel = false;
-        w::page_header(ui, &title, "", |ui| {
+        w::page_header_raw(ui, &title, "", |ui| {
             if self.step != Step::Done && w::button(ui, icons::X, "Cancel").clicked() {
                 cancel = true;
             }
@@ -352,7 +352,7 @@ impl Wizard {
                 ui.label(w::strong("Recording"));
                 ui.label(w::dim(ui, "Gestures and actions are paused meanwhile."));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(w::strong(format!("{n} / {target}")));
+                    ui.label(w::strong_raw(format!("{n} / {target}")));
                 });
             });
             ui.add_space(space::XS);
@@ -395,12 +395,13 @@ impl Wizard {
                             Some(self.playback.t_us),
                         );
                         ui.add(
-                            egui::Label::new(w::caption(ui, observation.to_string())).truncate(),
+                            egui::Label::new(w::caption_raw(ui, observation.to_string()))
+                                .truncate(),
                         );
                     }
                 }
                 ui.horizontal(|ui| {
-                    ui.label(w::faint(ui, format!("#{}", i + 1)));
+                    ui.label(w::faint_raw(ui, format!("#{}", i + 1)));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if w::icon_button_tone(
                             ui,
@@ -421,7 +422,7 @@ impl Wizard {
         let mut next = n >= target;
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             next |= w::primary_button_enabled(ui, icons::ARROW_RIGHT, "Check", n >= min)
-                .on_disabled_hover_text(format!("Record at least {min}"))
+                .on_disabled_hover_text(crate::i18n::tf("Record at least {}", &[&min.to_string()]))
                 .clicked();
         });
         if next {
@@ -469,7 +470,10 @@ impl Wizard {
                             canvas::thumbnail(ui, 150.0, sample, Some(self.playback.t_us));
                             ui.vertical(|ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(w::strong(format!("Example {}", i + 1)));
+                                    ui.label(w::strong_raw(crate::i18n::tf(
+                                        "Example {}",
+                                        &[&(i + 1).to_string()],
+                                    )));
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                         if w::icon_button_tone(
                                             ui,
@@ -491,14 +495,18 @@ impl Wizard {
                                 }
                                 if let Some(n) = near {
                                     let confusing = n.score >= threshold;
-                                    let text = format!(
-                                        "Closest other symbol: {} ({:.2})",
-                                        n.symbol, n.score
+                                    let score = format!("{:.2}", n.score);
+                                    let text = crate::i18n::tf(
+                                        "Closest other symbol: {} ({})",
+                                        &[&n.symbol, &score],
                                     );
                                     if confusing {
-                                        w::error_text(ui, &format!("{text}: may be confused"));
+                                        w::error_text_raw(
+                                            ui,
+                                            &crate::i18n::tf("{}: may be confused", &[&text]),
+                                        );
                                     } else {
-                                        ui.label(w::caption(ui, text));
+                                        ui.label(w::caption_raw(ui, text));
                                     }
                                 }
                             });
@@ -509,7 +517,7 @@ impl Wizard {
                             {
                                 ui.vertical(|ui| {
                                     canvas::thumbnail(ui, 110.0, other, None);
-                                    ui.label(w::caption(ui, &n.symbol));
+                                    ui.label(w::caption_raw(ui, &n.symbol));
                                 });
                             }
                         });
@@ -527,21 +535,27 @@ impl Wizard {
                         ui.horizontal(|ui| {
                             ui.label(w::icon_text(icons::CHECK_CIRCLE, 24.0, p.ok));
                             ui.vertical(|ui| {
-                                ui.label(w::strong(format!("Recognized: {}", describe(&g))));
-                                ui.label(w::caption(
+                                ui.label(w::strong_raw(crate::i18n::tf(
+                                    "Recognized: {}",
+                                    &[&describe(&g)],
+                                )));
+                                ui.label(w::caption_raw(
                                     ui,
-                                    format!("{} of {} demonstrations agree.", g.agreeing, g.total),
+                                    crate::i18n::tf(
+                                        "{} of {} demonstrations agree.",
+                                        &[&g.agreeing.to_string(), &g.total.to_string()],
+                                    ),
                                 ));
                             });
                         });
                         let conflicts = infer::conflicts(&cx.shared.config, &g);
                         if !conflicts.is_empty() {
                             ui.add_space(space::S);
-                            w::warn_text(
+                            w::warn_text_raw(
                                 ui,
-                                &format!(
+                                &crate::i18n::tf(
                                     "The same movement already triggers: {}",
-                                    conflicts.join(", ")
+                                    &[&conflicts.join(", ")],
                                 ),
                             );
                         }
@@ -689,7 +703,7 @@ impl Wizard {
             .map(|v| v.1.clone())
             .unwrap_or(Ok(()));
         if let Err(e) = &valid {
-            w::error_text(ui, e);
+            w::error_text_raw(ui, e);
         }
         ui.horizontal(|ui| {
             if w::button(ui, icons::ARROW_LEFT, "Back").clicked() {
@@ -720,10 +734,12 @@ impl Wizard {
                 ui.label(w::icon_text(icons::CHECK_CIRCLE, 40.0, p.ok));
                 ui.label(w::strong("Saved"));
                 if let Some(s) = &cx.shared.status {
-                    ui.label(w::caption(ui, s));
+                    ui.label(w::caption_raw(ui, s));
                 }
                 ui.add_space(space::S);
-                ui.label("Try it a few times in test mode to check that it is recognized.");
+                ui.label(crate::i18n::tr(
+                    "Try it a few times in test mode to check that it is recognized.",
+                ));
                 ui.label(w::caption(ui, "No action runs in test mode."));
                 ui.add_space(space::M);
                 ui.horizontal(|ui| {
@@ -765,13 +781,20 @@ fn score_line(ui: &mut egui::Ui, v: f32, tone: Tone) {
 fn describe_draw_mode(cx: &Ctx) -> String {
     use glyphpad_core::config::DrawActivation as D;
     match cx.shared.config.settings.draw_activation {
-        D::Fingers { count } => format!("With {count} fingers"),
-        D::Edge { edge, .. } => format!(
+        D::Fingers { count } => crate::i18n::tf("With {} fingers", &[&count.to_string()]),
+        D::Edge { edge, .. } => crate::i18n::tf(
             "With one finger starting at the {} edge",
-            format!("{edge:?}").to_lowercase()
+            &[crate::i18n::tr(match edge {
+                glyphpad_core::config::Edge::Left => "left",
+                glyphpad_core::config::Edge::Right => "right",
+                glyphpad_core::config::Edge::Top => "top",
+                glyphpad_core::config::Edge::Bottom => "bottom",
+            })],
         ),
-        D::Hold { ms, .. } => format!("Rest one finger for {ms} ms, then draw"),
-        D::Toggle { .. } => "With one finger".into(),
+        D::Hold { ms, .. } => {
+            crate::i18n::tf("Rest one finger for {} ms, then draw", &[&ms.to_string()])
+        }
+        D::Toggle { .. } => crate::i18n::tr("With one finger").to_string(),
     }
 }
 
@@ -788,6 +811,6 @@ fn describe(g: &Inferred) -> String {
         ..Default::default()
     };
     t.build()
-        .map(|t| t.describe())
+        .map(|t| crate::i18n::describe_trigger(&t))
         .unwrap_or_else(|_| g.kind.label().to_string())
 }

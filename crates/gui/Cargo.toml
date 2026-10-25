@@ -20,3 +20,4 @@ toml.workspace = true
 serde.workspace = true
 raw-window-handle.workspace = true
 rfd.workspace = true
+sys-locale.workspace = true

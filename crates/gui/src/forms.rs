@@ -40,14 +40,10 @@ pub fn kind_icon(k: GestureKind) -> &'static str {
 }
 
 pub fn kind_label(k: GestureKind) -> String {
-    let l = k.label();
-    let mut c = l.chars();
-    c.next().map_or(String::new(), |f| {
-        f.to_uppercase().collect::<String>() + c.as_str()
-    })
+    crate::i18n::tr(tile_label(k)).to_string()
 }
 
-/// A label for the kinds in tiles: shorter than the list's.
+/// A label for the kinds in tiles and lists.
 fn tile_label(k: GestureKind) -> &'static str {
     match k {
         GestureKind::Tap => "Tap",
@@ -245,7 +241,7 @@ pub fn trigger_form(
                     let mut drag = t.direction.is_some();
                     ui.horizontal(|ui| {
                         w::switch(ui, &mut drag);
-                        ui.label("Click and drag");
+                        ui.label(crate::i18n::tr("Click and drag"));
                     });
                     if drag {
                         let mut d = t.direction.unwrap_or(Direction::Down);
@@ -276,9 +272,9 @@ pub fn trigger_form(
                     }
                 });
                 for s in chosen.iter().filter(|s| !symbols.contains(s)) {
-                    w::warn_text(
+                    w::warn_text_raw(
                         ui,
-                        &format!("“{s}” has no examples yet: record some in Review."),
+                        &crate::i18n::tf("“{}” has no examples yet: record some in Review.", &[s]),
                     );
                 }
             });
@@ -330,7 +326,7 @@ fn chord(ui: &mut egui::Ui, t: &mut TriggerDef) {
             let mut on = t.modifier_fingers.is_some();
             ui.horizontal(|ui| {
                 w::switch(ui, &mut on);
-                ui.label("With resting fingers");
+                ui.label(crate::i18n::tr("With resting fingers"));
             });
             if on {
                 let mut m = t.modifier_fingers.unwrap_or(1);
@@ -370,7 +366,11 @@ pub fn sequence_form(
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    w::badge(ui, &format!("Step {}", i + 1), Tone::Accent);
+                    w::badge_raw(
+                        ui,
+                        &crate::i18n::tf("Step {}", &[&(i + 1).to_string()]),
+                        Tone::Accent,
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if w::icon_button_tone(ui, icons::TRASH, "Remove this step", Tone::Bad)
                             .clicked()
@@ -387,7 +387,7 @@ pub fn sequence_form(
                                 ))
                                 .frame(false),
                             )
-                            .on_hover_text("Move down")
+                            .on_hover_text(crate::i18n::tr("Move down"))
                             .clicked()
                         {
                             swap = Some((i, i + 1));
@@ -398,7 +398,7 @@ pub fn sequence_form(
                                 egui::Button::new(w::icon_text(icons::ARROW_UP, 14.0, p.text_dim))
                                     .frame(false),
                             )
-                            .on_hover_text("Move up")
+                            .on_hover_text(crate::i18n::tr("Move up"))
                             .clicked()
                         {
                             swap = Some((i, i - 1));
@@ -615,11 +615,11 @@ fn shortcut_field(ui: &mut egui::Ui, id: Id, combo: &mut Option<KeyCombo>) {
         {
             *combo = Some(c);
         }
-        let label = if capturing {
+        let label = crate::i18n::tr(if capturing {
             "Press the keys…"
         } else {
             "Record"
-        };
+        });
         let btn = if capturing {
             egui::Button::new(
                 RichText::new(format!("{}  {label}", icons::RECORD)).color(p.on_accent),
@@ -631,7 +631,7 @@ fn shortcut_field(ui: &mut egui::Ui, id: Id, combo: &mut Option<KeyCombo>) {
         };
         if ui
             .add(btn.min_size(egui::vec2(0.0, theme::CONTROL_HEIGHT)))
-            .on_hover_text("Press the key combination to use")
+            .on_hover_text(crate::i18n::tr("Press the key combination to use"))
             .clicked()
         {
             capturing = !capturing;
@@ -702,7 +702,11 @@ fn shortcut_field(ui: &mut egui::Ui, id: Id, combo: &mut Option<KeyCombo>) {
 
 fn action_picker(ui: &mut egui::Ui, id: Id, action: &mut Action, nested: bool) {
     let kind = action.kind();
-    let current = format!("{}  {}", action_icon(kind), action_label(kind));
+    let current = format!(
+        "{}  {}",
+        action_icon(kind),
+        crate::i18n::tr(action_label(kind))
+    );
     egui::ComboBox::from_id_salt(id.with("kind"))
         .width(280.0)
         .selected_text(current)
@@ -712,7 +716,7 @@ fn action_picker(ui: &mut egui::Ui, id: Id, action: &mut Action, nested: bool) {
                     continue;
                 }
                 if ui
-                    .selectable_label(*k == kind, format!("{icon}  {label}"))
+                    .selectable_label(*k == kind, format!("{icon}  {}", crate::i18n::tr(label)))
                     .clicked()
                     && *k != kind
                 {
@@ -721,7 +725,10 @@ fn action_picker(ui: &mut egui::Ui, id: Id, action: &mut Action, nested: bool) {
             }
             if nested
                 && ui
-                    .selectable_label(kind == "wait", format!("{}  Pause", icons::TIMER))
+                    .selectable_label(
+                        kind == "wait",
+                        format!("{}  {}", icons::TIMER, crate::i18n::tr("Pause")),
+                    )
                     .clicked()
                 && kind != "wait"
             {
@@ -736,7 +743,7 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
         action_picker(ui, id, action, nested);
         if !nested
             && w::button(ui, icons::PLAY, "Try it")
-                .on_hover_text("Run this action now")
+                .on_hover_text(crate::i18n::tr("Run this action now"))
                 .clicked()
         {
             cx.send(Command::RunAction(action.clone()));
@@ -749,7 +756,8 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                 shortcut_field(ui, id.with("combo"), combo);
             } else {
                 ui.label(format!(
-                    "Sequence: {}",
+                    "{} {}",
+                    crate::i18n::tr("Sequence:"),
                     sequence
                         .iter()
                         .map(ToString::to_string)
@@ -765,7 +773,9 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
         Action::CloseWindow { force } => {
             ui.horizontal(|ui| {
                 w::switch(ui, force);
-                ui.label("Terminate the program instead of asking it to close");
+                ui.label(crate::i18n::tr(
+                    "Terminate the program instead of asking it to close",
+                ));
             });
         }
         Action::Run {
@@ -794,7 +804,7 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
             }
             ui.horizontal(|ui| {
                 w::switch(ui, hidden);
-                ui.label("Without a console window");
+                ui.label(crate::i18n::tr("Without a console window"));
             });
         }
         Action::Media { key } => {
@@ -844,7 +854,7 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
         Action::TypeText { text } => {
             ui.add(
                 egui::TextEdit::multiline(text)
-                    .hint_text("The text to type")
+                    .hint_text(crate::i18n::tr("The text to type"))
                     .desired_rows(3)
                     .desired_width(ui.available_width()),
             );
@@ -861,20 +871,14 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                 &[
                     (
                         WindowOp::SnapLeft,
-                        "Fill the left half of the screen".to_string(),
+                        "Fill the left half of the screen".into(),
                     ),
                     (
                         WindowOp::SnapRight,
-                        "Fill the right half of the screen".to_string(),
+                        "Fill the right half of the screen".into(),
                     ),
-                    (
-                        WindowOp::NextMonitor,
-                        "Move to the next monitor".to_string(),
-                    ),
-                    (
-                        WindowOp::ToggleAlwaysOnTop,
-                        "Keep on top, on or off".to_string(),
-                    ),
+                    (WindowOp::NextMonitor, "Move to the next monitor".into()),
+                    (WindowOp::ToggleAlwaysOnTop, "Keep on top, on or off".into()),
                 ],
                 300.0,
             );
@@ -905,12 +909,12 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
             );
         }
         Action::SwitchProfile { profile } => {
-            let names: Vec<(String, String)> = cx
+            let names: Vec<(String, std::borrow::Cow<'static, str>)> = cx
                 .shared
                 .config
                 .profile_names()
                 .into_iter()
-                .map(|p| (p.clone(), p))
+                .map(|p| (p.clone(), p.into()))
                 .collect();
             w::dropdown(ui, id.with("profile-pick"), profile, &names, 220.0);
             w::text_field(ui, profile, "or a profile name", 220.0);
@@ -918,7 +922,7 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
         _ => {}
     }
     if let Err(e) = action.validate() {
-        w::error_text(ui, &e);
+        w::error_text_raw(ui, &e);
     }
 }
 
@@ -946,7 +950,7 @@ fn chain_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, actions: &mut Vec<Action>) {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    w::badge(ui, &format!("{}", i + 1), Tone::Neutral);
+                    w::badge_raw(ui, &format!("{}", i + 1), Tone::Neutral);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if w::icon_button_tone(ui, icons::TRASH, "Remove", Tone::Bad).clicked() {
                             remove = Some(i);
@@ -961,7 +965,7 @@ fn chain_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, actions: &mut Vec<Action>) {
                                 ))
                                 .frame(false),
                             )
-                            .on_hover_text("Move down")
+                            .on_hover_text(crate::i18n::tr("Move down"))
                             .clicked()
                         {
                             swap = Some((i, i + 1));
@@ -972,7 +976,7 @@ fn chain_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, actions: &mut Vec<Action>) {
                                 egui::Button::new(w::icon_text(icons::ARROW_UP, 14.0, p.text_dim))
                                     .frame(false),
                             )
-                            .on_hover_text("Move up")
+                            .on_hover_text(crate::i18n::tr("Move up"))
                             .clicked()
                         {
                             swap = Some((i, i - 1));
@@ -1016,7 +1020,11 @@ pub fn app_list(ui: &mut egui::Ui, cx: &Ctx, id: Id, apps: &mut Vec<String>) {
     });
     ui.horizontal(|ui| {
         let add = egui::ComboBox::from_id_salt(id.with("pick-app"))
-            .selected_text(format!("{}  Add an open app", icons::PLUS))
+            .selected_text(format!(
+                "{}  {}",
+                icons::PLUS,
+                crate::i18n::tr("Add an open app")
+            ))
             .width(200.0)
             .show_ui(ui, |ui| {
                 let mut seen = std::collections::BTreeSet::new();
@@ -1087,7 +1095,7 @@ pub fn conditions_form(
             if let Some(t) = &when.title
                 && let Err(e) = regex_check(t)
             {
-                w::error_text(ui, &e);
+                w::error_text_raw(ui, &e);
             }
         },
     );

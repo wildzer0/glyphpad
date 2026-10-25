@@ -7,6 +7,9 @@ use eframe::egui::{
     Stroke, StrokeKind, Ui, Vec2,
 };
 
+use std::borrow::Cow;
+
+use crate::i18n::tr;
 use crate::theme::{self, fonts, pal, radius, size, space};
 
 /// How a message or a state is meant: it decides the color and the icon.
@@ -54,29 +57,46 @@ impl Tone {
 
 // ---------------------------------------------------------------- text
 
-pub fn title(text: impl Into<String>) -> RichText {
+pub fn title_raw(text: impl Into<String>) -> RichText {
     RichText::new(text).font(fonts::strong(size::TITLE))
 }
 
-pub fn section_title(text: impl Into<String>) -> RichText {
-    RichText::new(text).font(fonts::strong(size::SECTION))
+pub fn section_title(text: &'static str) -> RichText {
+    RichText::new(tr(text)).font(fonts::strong(size::SECTION))
 }
 
-pub fn strong(text: impl Into<String>) -> RichText {
+pub fn strong(text: &'static str) -> RichText {
+    strong_raw(tr(text))
+}
+
+/// Bold text that is not translated: names the user chose, numbers.
+pub fn strong_raw(text: impl Into<String>) -> RichText {
     RichText::new(text).font(fonts::strong(size::BODY))
 }
 
-pub fn dim(ui: &Ui, text: impl Into<String>) -> RichText {
+pub fn dim(ui: &Ui, text: &'static str) -> RichText {
+    dim_raw(ui, tr(text))
+}
+
+pub fn dim_raw(ui: &Ui, text: impl Into<String>) -> RichText {
     RichText::new(text).color(pal(ui).text_dim)
 }
 
-pub fn caption(ui: &Ui, text: impl Into<String>) -> RichText {
+pub fn caption(ui: &Ui, text: &'static str) -> RichText {
+    caption_raw(ui, tr(text))
+}
+
+pub fn caption_raw(ui: &Ui, text: impl Into<String>) -> RichText {
     RichText::new(text)
         .size(size::SMALL)
         .color(pal(ui).text_dim)
 }
 
-pub fn faint(ui: &Ui, text: impl Into<String>) -> RichText {
+pub fn faint(ui: &Ui, text: &'static str) -> RichText {
+    faint_raw(ui, tr(text))
+}
+
+pub fn faint_raw(ui: &Ui, text: impl Into<String>) -> RichText {
     RichText::new(text)
         .size(size::SMALL)
         .color(pal(ui).text_faint)
@@ -99,12 +119,27 @@ fn labeled(icon: &str, label: &str) -> String {
 
 /// A page's header: the title and what it is for on the left, the page's
 /// main actions on the right.
-pub fn page_header(ui: &mut Ui, title_text: &str, subtitle: &str, actions: impl FnOnce(&mut Ui)) {
+pub fn page_header(
+    ui: &mut Ui,
+    title_text: &'static str,
+    subtitle: &'static str,
+    actions: impl FnOnce(&mut Ui),
+) {
+    page_header_raw(ui, tr(title_text), tr(subtitle), actions);
+}
+
+/// A header whose texts are already in the right language.
+pub fn page_header_raw(
+    ui: &mut Ui,
+    title_text: &str,
+    subtitle: &str,
+    actions: impl FnOnce(&mut Ui),
+) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
-            ui.add(egui::Label::new(title(title_text)).selectable(false));
+            ui.add(egui::Label::new(title_raw(title_text)).selectable(false));
             if !subtitle.is_empty() {
-                ui.add(egui::Label::new(dim(ui, subtitle)).selectable(false));
+                ui.add(egui::Label::new(dim_raw(ui, subtitle)).selectable(false));
             }
         });
         ui.with_layout(Layout::right_to_left(Align::Min), actions);
@@ -157,8 +192,8 @@ pub fn card_frame(ui: &Ui) -> egui::Frame {
 /// A group of related controls: a title, what it does, then the rows.
 pub fn section<R>(
     ui: &mut Ui,
-    heading: &str,
-    description: &str,
+    heading: &'static str,
+    description: &'static str,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> R {
     let r = card_frame(ui)
@@ -195,7 +230,12 @@ fn label_width(ui: &Ui) -> f32 {
 
 /// One setting: its name and a hint on the left, the control on the right.
 /// Rows are separated by a hairline.
-pub fn row(ui: &mut Ui, label: &str, hint: &str, add: impl FnOnce(&mut Ui)) {
+pub fn row(ui: &mut Ui, label: &'static str, hint: &'static str, add: impl FnOnce(&mut Ui)) {
+    row_raw(ui, tr(label), hint, add);
+}
+
+/// A row whose label is not a literal of the program (a date, a name).
+pub fn row_raw(ui: &mut Ui, label: &str, hint: &'static str, add: impl FnOnce(&mut Ui)) {
     divider(ui);
     let label_w = label_width(ui);
     ui.horizontal_top(|ui| {
@@ -219,13 +259,18 @@ pub fn row(ui: &mut Ui, label: &str, hint: &str, add: impl FnOnce(&mut Ui)) {
 }
 
 /// Rows with a switch as their control: the label is the whole sentence.
-pub fn switch_row(ui: &mut Ui, label: &str, hint: &str, value: &mut bool) -> Response {
+pub fn switch_row(
+    ui: &mut Ui,
+    label: &'static str,
+    hint: &'static str,
+    value: &mut bool,
+) -> Response {
     divider(ui);
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(ui.available_width() - 56.0);
             ui.add_space(5.0);
-            ui.add(egui::Label::new(label).selectable(false));
+            ui.add(egui::Label::new(tr(label)).selectable(false));
             if !hint.is_empty() {
                 ui.add(egui::Label::new(caption(ui, hint)).selectable(false));
             }
@@ -320,7 +365,7 @@ pub fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
 pub fn segmented<T: PartialEq + Copy>(
     ui: &mut Ui,
     value: &mut T,
-    options: &[(T, &str)],
+    options: &[(T, &'static str)],
 ) -> Response {
     segmented_with_icons(
         ui,
@@ -335,7 +380,7 @@ pub fn segmented<T: PartialEq + Copy>(
 pub fn segmented_with_icons<T: PartialEq + Copy>(
     ui: &mut Ui,
     value: &mut T,
-    options: &[(T, &str, &str)],
+    options: &[(T, &str, &'static str)],
 ) -> Response {
     let p = pal(ui);
     let mut changed = false;
@@ -346,10 +391,18 @@ pub fn segmented_with_icons<T: PartialEq + Copy>(
         .inner_margin(Margin::same(2))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
+            // In a right-to-left row (page header actions) `horizontal` runs
+            // right to left too: list the options backwards to keep them in order.
+            let backwards = ui.layout().prefer_right_to_left();
+            let ordered: Vec<&(T, &str, &'static str)> = if backwards {
+                options.iter().rev().collect()
+            } else {
+                options.iter().collect()
+            };
             ui.horizontal(|ui| {
-                for (v, icon, label) in options {
+                for (v, icon, label) in ordered {
                     let selected = *value == *v;
-                    let text = labeled(icon, label);
+                    let text = labeled(icon, tr(label));
                     let galley_color = if selected { p.text } else { p.text_dim };
                     let button = egui::Button::new(RichText::new(text).color(galley_color))
                         .fill(if selected {
@@ -381,11 +434,11 @@ pub fn segmented_with_icons<T: PartialEq + Copy>(
 }
 
 /// A button that is only an icon, with a tooltip: row actions, toolbars.
-pub fn icon_button(ui: &mut Ui, icon: &str, tip: &str) -> Response {
+pub fn icon_button(ui: &mut Ui, icon: &str, tip: &'static str) -> Response {
     icon_button_tone(ui, icon, tip, Tone::Neutral)
 }
 
-pub fn icon_button_tone(ui: &mut Ui, icon: &str, tip: &str, tone: Tone) -> Response {
+pub fn icon_button_tone(ui: &mut Ui, icon: &str, tip: &'static str, tone: Tone) -> Response {
     let p = pal(ui);
     let size = Vec2::splat(30.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -422,50 +475,65 @@ pub fn icon_button_tone(ui: &mut Ui, icon: &str, tip: &str, tone: Tone) -> Respo
             StrokeKind::Inside,
         );
     }
-    response.on_hover_text(tip)
+    response.on_hover_text(tr(tip))
 }
 
 /// The one filled button of a view: what the user most likely wants next.
-pub fn primary_button(ui: &mut Ui, icon: &str, label: &str) -> Response {
+pub fn primary_button(ui: &mut Ui, icon: &str, label: &'static str) -> Response {
     primary_button_enabled(ui, icon, label, true)
 }
 
-pub fn primary_button_enabled(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {
+pub fn primary_button_enabled(
+    ui: &mut Ui,
+    icon: &str,
+    label: &'static str,
+    enabled: bool,
+) -> Response {
     let p = pal(ui);
-    let button = egui::Button::new(RichText::new(labeled(icon, label)).color(p.on_accent))
+    let button = egui::Button::new(RichText::new(labeled(icon, tr(label))).color(p.on_accent))
         .fill(p.accent)
         .stroke(Stroke::NONE)
         .min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT));
     ui.add_enabled(enabled, button)
 }
 
-pub fn button(ui: &mut Ui, icon: &str, label: &str) -> Response {
-    ui.add(egui::Button::new(labeled(icon, label)).min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT)))
+pub fn button(ui: &mut Ui, icon: &str, label: &'static str) -> Response {
+    ui.add(
+        egui::Button::new(labeled(icon, tr(label))).min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT)),
+    )
 }
 
-pub fn button_enabled(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {
+pub fn button_enabled(ui: &mut Ui, icon: &str, label: &'static str, enabled: bool) -> Response {
     ui.add_enabled(
         enabled,
-        egui::Button::new(labeled(icon, label)).min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT)),
+        egui::Button::new(labeled(icon, tr(label))).min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT)),
     )
 }
 
 /// A destructive action: red text, never filled.
-pub fn danger_button(ui: &mut Ui, icon: &str, label: &str) -> Response {
+pub fn danger_button(ui: &mut Ui, icon: &str, label: &'static str) -> Response {
     let p = pal(ui);
     ui.add(
-        egui::Button::new(RichText::new(labeled(icon, label)).color(p.bad))
+        egui::Button::new(RichText::new(labeled(icon, tr(label))).color(p.bad))
             .min_size(Vec2::new(0.0, theme::CONTROL_HEIGHT)),
     )
 }
 
 /// A compact button for inline use (inside rows of controls).
-pub fn small_button(ui: &mut Ui, label: &str) -> Response {
-    ui.add(egui::Button::new(RichText::new(label).size(size::SMALL)).min_size(Vec2::new(0.0, 24.0)))
+pub fn small_button(ui: &mut Ui, label: &'static str) -> Response {
+    ui.add(
+        egui::Button::new(RichText::new(tr(label)).size(size::SMALL))
+            .min_size(Vec2::new(0.0, 24.0)),
+    )
 }
 
 /// A small pill: a state, a count, a tag.
-pub fn badge(ui: &mut Ui, text: &str, tone: Tone) -> Response {
+pub fn badge(ui: &mut Ui, text: &'static str, tone: Tone) -> Response {
+    badge_raw(ui, tr(text), tone)
+}
+
+/// A badge whose text is already in the right language.
+pub fn badge_raw(ui: &mut Ui, text: &str, tone: Tone) -> Response {
     let p = pal(ui);
     let fg = match tone {
         Tone::Neutral => p.text_dim,
@@ -544,7 +612,24 @@ pub fn kbd(ui: &mut Ui, text: &str) {
 }
 
 /// A message about the state of things, with an icon and optional actions.
-pub fn banner(ui: &mut Ui, tone: Tone, heading: &str, body: &str, actions: impl FnOnce(&mut Ui)) {
+pub fn banner(
+    ui: &mut Ui,
+    tone: Tone,
+    heading: &'static str,
+    body: &'static str,
+    actions: impl FnOnce(&mut Ui),
+) {
+    banner_raw(ui, tone, tr(heading), tr(body), actions);
+}
+
+/// A banner whose texts are already in the right language.
+pub fn banner_raw(
+    ui: &mut Ui,
+    tone: Tone,
+    heading: &str,
+    body: &str,
+    actions: impl FnOnce(&mut Ui),
+) {
     let fg = tone.fg(ui);
     egui::Frame::new()
         .fill(tone.bg(ui))
@@ -577,8 +662,8 @@ pub fn banner(ui: &mut Ui, tone: Tone, heading: &str, body: &str, actions: impl 
 pub fn empty_state(
     ui: &mut Ui,
     icon: &str,
-    heading: &str,
-    body: &str,
+    heading: &'static str,
+    body: &'static str,
     actions: impl FnOnce(&mut Ui),
 ) {
     let p = pal(ui);
@@ -598,7 +683,7 @@ pub fn empty_state(
 }
 
 /// A search box with a magnifier, as one control.
-pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
+pub fn search_field(ui: &mut Ui, text: &mut String, hint: &'static str) -> Response {
     let p = pal(ui);
     let frame = egui::Frame::new()
         .fill(p.surface)
@@ -617,7 +702,7 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
                 let r = ui.add_sized(
                     [ui.available_width() - 28.0, theme::CONTROL_HEIGHT - 2.0],
                     egui::TextEdit::singleline(text)
-                        .hint_text(hint)
+                        .hint_text(tr(hint))
                         .frame(egui::Frame::new())
                         .margin(Margin::ZERO)
                         .align(Align2::LEFT_CENTER),
@@ -628,7 +713,7 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
                             egui::Button::new(icon_text(crate::icons::X, 13.0, p.text_dim))
                                 .frame(false),
                         )
-                        .on_hover_text("Clear")
+                        .on_hover_text(tr("Clear"))
                         .clicked()
                 {
                     text.clear();
@@ -641,17 +726,21 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
 }
 
 /// A text field that is an input like the others: bordered, fixed height.
-pub fn text_field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
+pub fn text_field(ui: &mut Ui, text: &mut String, hint: &'static str, width: f32) -> Response {
     ui.add_sized(
         [width, theme::CONTROL_HEIGHT],
         egui::TextEdit::singleline(text)
-            .hint_text(hint)
+            .hint_text(tr(hint))
             .align(Align2::LEFT_CENTER)
             .margin(Margin::symmetric(8, 0)),
     )
 }
 
-pub fn error_text(ui: &mut Ui, text: &str) {
+pub fn error_text(ui: &mut Ui, text: &'static str) {
+    error_text_raw(ui, tr(text));
+}
+
+pub fn error_text_raw(ui: &mut Ui, text: &str) {
     let p = pal(ui);
     ui.horizontal(|ui| {
         ui.label(icon_text(crate::icons::WARNING_CIRCLE, 15.0, p.bad));
@@ -661,7 +750,11 @@ pub fn error_text(ui: &mut Ui, text: &str) {
     });
 }
 
-pub fn warn_text(ui: &mut Ui, text: &str) {
+pub fn warn_text(ui: &mut Ui, text: &'static str) {
+    warn_text_raw(ui, tr(text));
+}
+
+pub fn warn_text_raw(ui: &mut Ui, text: &str) {
     let p = pal(ui);
     ui.horizontal(|ui| {
         ui.label(icon_text(crate::icons::WARNING, 15.0, p.warn));
@@ -671,14 +764,14 @@ pub fn warn_text(ui: &mut Ui, text: &str) {
     });
 }
 
-pub fn hint(ui: &mut Ui, text: &str) {
+pub fn hint(ui: &mut Ui, text: &'static str) {
     ui.add(egui::Label::new(caption(ui, text)));
 }
 
 // -------------------------------------------------------------- nav
 
 /// An entry of the sidebar.
-pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> Response {
+pub fn nav_item(ui: &mut Ui, icon: &str, label: &'static str, selected: bool) -> Response {
     let p = pal(ui);
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::click());
@@ -702,7 +795,7 @@ pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> Respons
     ui.painter().text(
         egui::pos2(rect.left() + 44.0, rect.center().y),
         Align2::LEFT_CENTER,
-        label,
+        tr(label),
         if selected {
             fonts::strong(size::BODY)
         } else {
@@ -860,7 +953,7 @@ pub fn direction_picker(
 }
 
 /// A selectable tile: an icon above a name (the kinds of gesture).
-pub fn tile(ui: &mut Ui, icon: &str, label: &str, selected: bool, size: Vec2) -> Response {
+pub fn tile(ui: &mut Ui, icon: &str, label: &'static str, selected: bool, size: Vec2) -> Response {
     let p = pal(ui);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let (fill, stroke, fg) = if selected {
@@ -887,7 +980,7 @@ pub fn tile(ui: &mut Ui, icon: &str, label: &str, selected: bool, size: Vec2) ->
     ui.painter().text(
         egui::pos2(rect.center().x, rect.bottom() - size.y * 0.24),
         Align2::CENTER_CENTER,
-        label,
+        tr(label),
         if selected {
             fonts::strong(size::SMALL)
         } else {
@@ -920,13 +1013,27 @@ pub fn elided(
 pub fn dialog<R>(
     ctx: &egui::Context,
     id: &str,
+    heading: &'static str,
+    width: f32,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::ModalResponse<R> {
+    dialog_raw(ctx, id, tr(heading), width, add)
+}
+
+/// A dialog whose title is already in the right language.
+pub fn dialog_raw<R>(
+    ctx: &egui::Context,
+    id: &str,
     heading: &str,
     width: f32,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> egui::ModalResponse<R> {
     egui::Modal::new(egui::Id::unique(id)).show(ctx, |ui| {
         ui.set_width(width);
-        ui.add(egui::Label::new(section_title(heading)).selectable(false));
+        ui.add(
+            egui::Label::new(RichText::new(heading).font(fonts::strong(size::SECTION)))
+                .selectable(false),
+        );
         ui.add_space(space::S);
         add(ui)
     })
@@ -937,21 +1044,26 @@ pub fn dropdown<T: PartialEq + Clone>(
     ui: &mut Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
     value: &mut T,
-    options: &[(T, String)],
+    options: &[(T, Cow<'static, str>)],
     width: f32,
 ) -> Response {
-    let shown = options
+    // A literal of the program is translated; a name the user chose is not.
+    let shown = |l: &Cow<'static, str>| match l {
+        Cow::Borrowed(s) => tr(s).to_string(),
+        Cow::Owned(s) => s.clone(),
+    };
+    let current = options
         .iter()
         .find(|(v, _)| v == value)
-        .map(|(_, l)| l.clone())
+        .map(|(_, l)| shown(l))
         .unwrap_or_default();
     let mut changed = false;
     let r = egui::ComboBox::from_id_salt(id)
         .width(width)
-        .selected_text(shown)
+        .selected_text(current)
         .show_ui(ui, |ui| {
             for (v, label) in options {
-                if ui.selectable_label(v == value, label).clicked() && v != value {
+                if ui.selectable_label(v == value, shown(label)).clicked() && v != value {
                     *value = v.clone();
                     changed = true;
                 }

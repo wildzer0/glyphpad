@@ -12,6 +12,7 @@ mod debug;
 mod editor;
 mod forms;
 mod gestures;
+mod i18n;
 mod icon;
 mod icons;
 mod packs;
@@ -116,6 +117,7 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
             let snapshot = shared.lock().map(|s| s.clone()).unwrap_or_default();
             let theme_choice = snapshot.config.settings.theme;
             theme::install(&cc.egui_ctx, theme_choice);
+            i18n::set(snapshot.config.settings.language);
             let ctx = cc.egui_ctx.clone();
             ui.set_repaint(move || ctx.request_repaint());
             ui.set_visible(!options.start_hidden);
@@ -125,6 +127,7 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
                 icon: None,
                 editor,
                 applied_theme: theme_choice,
+                applied_language: snapshot.config.settings.language,
                 pending_wizard: None,
                 shared,
                 commands,
@@ -155,6 +158,7 @@ struct App {
     icon: Option<(bool, egui::TextureHandle)>,
     editor: editor::Editor,
     applied_theme: glyphpad_core::config::ThemeChoice,
+    applied_language: glyphpad_core::config::Language,
     /// A wizard asked for while the draft has unsaved changes: it starts
     /// once they are saved, since the wizard writes to the same file.
     pending_wizard: Option<wizard::Start>,
@@ -315,6 +319,11 @@ impl eframe::App for App {
         if let Some(cmd) = self.editor.frame(ui.ctx(), &shared) {
             cx.send(cmd);
         }
+        let language = self.editor.draft.settings.language;
+        if language != self.applied_language {
+            i18n::set(language);
+            self.applied_language = language;
+        }
         let choice = self.editor.draft.settings.theme;
         if choice != self.applied_theme {
             theme::apply_choice(ui.ctx(), choice);
@@ -446,7 +455,7 @@ impl App {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 ui.label(egui::RichText::new("GlyphPad").font(theme::fonts::strong(17.0)));
-                ui.label(widgets::faint(ui, format!("v{}", self.version)));
+                ui.label(widgets::faint_raw(ui, format!("v{}", self.version)));
             });
         });
         ui.add_space(theme::space::XL);
@@ -506,7 +515,7 @@ impl App {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         ui.label(widgets::strong(label));
                         if let Some(why) = &s.auto_paused {
-                            ui.add(egui::Label::new(widgets::faint(ui, why)).truncate());
+                            ui.add(egui::Label::new(widgets::faint_raw(ui, why)).truncate());
                         }
                     });
                 });
@@ -516,8 +525,10 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(widgets::dim(ui, "Profile"));
                         let mut chosen = s.profile.clone();
-                        let options: Vec<(String, String)> =
-                            names.iter().map(|p| (p.clone(), p.clone())).collect();
+                        let options: Vec<(String, std::borrow::Cow<'static, str>)> = names
+                            .iter()
+                            .map(|p| (p.clone(), p.clone().into()))
+                            .collect();
                         if widgets::dropdown(ui, "sidebar-profile", &mut chosen, &options, 110.0)
                             .changed()
                         {
@@ -529,7 +540,7 @@ impl App {
                 let mut enabled = s.enabled;
                 ui.horizontal(|ui| {
                     if widgets::switch(ui, &mut enabled)
-                        .on_hover_text("Pause or resume every gesture")
+                        .on_hover_text(crate::i18n::tr("Pause or resume every gesture"))
                         .changed()
                     {
                         cx.send(Command::ToggleEnabled);
@@ -539,7 +550,9 @@ impl App {
                 let mut test = s.mode == EngineMode::Test;
                 ui.horizontal(|ui| {
                     if widgets::switch(ui, &mut test)
-                        .on_hover_text("Recognize gestures without running their actions")
+                        .on_hover_text(crate::i18n::tr(
+                            "Recognize gestures without running their actions",
+                        ))
                         .changed()
                     {
                         cx.send(Command::SetMode(if test {
@@ -563,19 +576,11 @@ impl App {
                 .status
                 .clone()
                 .unwrap_or_else(|| cx.shared.config_path.display().to_string());
-            ui.add(egui::Label::new(widgets::faint(ui, text)).truncate());
+            ui.add(egui::Label::new(widgets::faint_raw(ui, text)).truncate());
             if !cx.shared.warnings.is_empty() {
-                widgets::badge(
+                widgets::badge_raw(
                     ui,
-                    &format!(
-                        "{} warning{}",
-                        cx.shared.warnings.len(),
-                        if cx.shared.warnings.len() == 1 {
-                            ""
-                        } else {
-                            "s"
-                        }
-                    ),
+                    &i18n::plural(cx.shared.warnings.len(), "{} warning", "{} warnings"),
                     widgets::Tone::Warn,
                 )
                 .on_hover_text(cx.shared.warnings.join("\n"));
@@ -590,7 +595,7 @@ impl App {
                     S::Failed(_) => (icons::WARNING_CIRCLE, "Could not save", p.bad),
                 };
                 ui.label(
-                    egui::RichText::new(format!("{icon}  {text}"))
+                    egui::RichText::new(format!("{icon}  {}", i18n::tr(text)))
                         .size(theme::size::SMALL)
                         .color(color),
                 );
@@ -627,13 +632,15 @@ impl App {
         };
         match cx.shared.update.clone() {
             U::Available(u) => {
-                let heading = format!(
-                    "Version {} is available{} (you have {})",
-                    u.version,
-                    if u.prerelease { ", a pre-release" } else { "" },
-                    cx.version
+                let heading = i18n::tf(
+                    if u.prerelease {
+                        "Version {} is available, a pre-release (you have {})"
+                    } else {
+                        "Version {} is available (you have {})"
+                    },
+                    &[&u.version, cx.version],
                 );
-                widgets::banner(
+                widgets::banner_raw(
                     ui,
                     widgets::Tone::Accent,
                     &heading,
@@ -657,28 +664,33 @@ impl App {
                     },
                 );
             }
-            U::Downloading(v) => widgets::banner(
+            U::Downloading(v) => widgets::banner_raw(
                 ui,
                 widgets::Tone::Accent,
-                &format!("Downloading version {v}…"),
-                "GlyphPad keeps working; it restarts by itself when the download is verified.",
+                &i18n::tf("Downloading version {}…", &[&v]),
+                i18n::tr(
+                    "GlyphPad keeps working; it restarts by itself when the download is verified.",
+                ),
                 |_| {},
             ),
-            U::Installing(v) | U::Restarting(v) => widgets::banner(
+            U::Installing(v) | U::Restarting(v) => widgets::banner_raw(
                 ui,
                 widgets::Tone::Accent,
-                &format!("Starting version {v}…"),
-                "If it does not start, the current version is restored.",
+                &i18n::tf("Starting version {}…", &[&v]),
+                i18n::tr("If it does not start, the current version is restored."),
                 |_| {},
             ),
-            U::Manual(u, why) => widgets::banner(
+            U::Manual(u, why) => widgets::banner_raw(
                 ui,
                 widgets::Tone::Warn,
-                &format!(
+                &i18n::tf(
                     "Version {} is available, but GlyphPad cannot update itself here",
-                    u.version
+                    &[&u.version],
                 ),
-                &format!("{why}\nDownload it from the release page and replace this program."),
+                &format!(
+                    "{why}\n{}",
+                    i18n::tr("Download it from the release page and replace this program.")
+                ),
                 |ui| {
                     if widgets::primary_button(ui, icons::ARROW_SQUARE_OUT, "Open the release page")
                         .clicked()
@@ -688,10 +700,10 @@ impl App {
                 },
             ),
             U::Failed(why) if self.dismissed_failure.as_deref() != Some(&why) => {
-                widgets::banner(
+                widgets::banner_raw(
                     ui,
                     widgets::Tone::Bad,
-                    "The update did not work",
+                    i18n::tr("The update did not work"),
                     &why,
                     |ui| {
                         if widgets::button(ui, icons::X, "Dismiss").clicked() {
@@ -708,17 +720,17 @@ impl App {
     fn save_banner(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
         use editor::SaveState as S;
         match self.editor.state().clone() {
-            S::Invalid(why) => widgets::banner(
+            S::Invalid(why) => widgets::banner_raw(
                 ui,
                 widgets::Tone::Warn,
-                "These changes are not saved yet",
+                i18n::tr("These changes are not saved yet"),
                 &why,
                 |_| {},
             ),
-            S::Failed(why) => widgets::banner(
+            S::Failed(why) => widgets::banner_raw(
                 ui,
                 widgets::Tone::Bad,
-                "The configuration could not be saved",
+                i18n::tr("The configuration could not be saved"),
                 &why,
                 |ui| {
                     if widgets::button(ui, icons::ARROWS_CLOCKWISE, "Try again").clicked() {

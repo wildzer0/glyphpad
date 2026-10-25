@@ -49,7 +49,7 @@ pub fn describe(def: &GestureDef) -> String {
             .flatten()
             .map(|t| {
                 t.build()
-                    .map(|t| t.describe())
+                    .map(|t| crate::i18n::describe_trigger(&t))
                     .unwrap_or_else(|_| "?".into())
             })
             .collect();
@@ -57,8 +57,8 @@ pub fn describe(def: &GestureDef) -> String {
     }
     def.trigger_def()
         .build()
-        .map(|t| t.describe())
-        .unwrap_or_else(|e| format!("incomplete: {}", e[0].1))
+        .map(|t| crate::i18n::describe_trigger(&t))
+        .unwrap_or_else(|e| format!("{} {}", crate::i18n::tr("incomplete:"), e[0].1))
 }
 
 fn draft_hash(e: &Editor) -> u64 {
@@ -188,8 +188,13 @@ fn list_panel(ui: &mut egui::Ui, ed: &mut Editor, st: &mut State, profiles: &[St
                 (StateFilter::Disabled, "Off"),
             ],
         );
-        let mut kinds: Vec<(Option<GestureKind>, String)> = vec![(None, "All types".into())];
-        kinds.extend(KINDS.iter().map(|k| (Some(*k), forms::kind_label(*k))));
+        let mut kinds: Vec<(Option<GestureKind>, std::borrow::Cow<'static, str>)> =
+            vec![(None, "All types".into())];
+        kinds.extend(
+            KINDS
+                .iter()
+                .map(|k| (Some(*k), forms::kind_label(*k).into())),
+        );
         w::dropdown(ui, "filter-kind", &mut st.kind, &kinds, 118.0);
     });
     ui.add_space(space::XS);
@@ -202,10 +207,10 @@ fn list_panel(ui: &mut egui::Ui, ed: &mut Editor, st: &mut State, profiles: &[St
             .iter()
             .map(|c| format!("{}: {}", c.gestures.join(" / "), c.reason))
             .collect();
-        w::banner(
+        w::banner_raw(
             ui,
             Tone::Warn,
-            &format!("{n} possible conflict{}", if n == 1 { "" } else { "s" }),
+            &crate::i18n::plural(n, "{} possible conflict", "{} possible conflicts"),
             &text.join("\n"),
             |_| {},
         );
@@ -230,8 +235,10 @@ fn list_panel(ui: &mut egui::Ui, ed: &mut Editor, st: &mut State, profiles: &[St
     ui.horizontal(|ui| {
         ui.label(w::dim(ui, "Active profile"));
         let mut active = ed.draft.settings.active_profile.clone();
-        let options: Vec<(String, String)> =
-            profiles.iter().map(|p| (p.clone(), p.clone())).collect();
+        let options: Vec<(String, std::borrow::Cow<'static, str>)> = profiles
+            .iter()
+            .map(|p| (p.clone(), p.clone().into()))
+            .collect();
         w::dropdown(ui, "active-profile", &mut active, &options, 130.0);
         ed.draft.settings.active_profile = active;
         if w::small_button(ui, "Manage").clicked() {
@@ -333,7 +340,7 @@ fn rows(ui: &mut egui::Ui, ed: &mut Editor, st: &mut State) {
             let sub = format!(
                 "{}  →  {}",
                 describe(def),
-                forms::action_short(def.action.kind())
+                crate::i18n::tr(forms::action_short(def.action.kind()))
             );
             let sub = elided(
                 ui,
@@ -368,9 +375,9 @@ fn rows(ui: &mut egui::Ui, ed: &mut Editor, st: &mut State) {
         }
         ui.scope_builder(egui::UiBuilder::new().max_rect(switch_rect), |ui| {
             w::switch(ui, &mut def.enabled).on_hover_text(if def.enabled {
-                "On: click to disable"
+                crate::i18n::tr("On: click to disable")
             } else {
-                "Off: click to enable"
+                crate::i18n::tr("Off: click to enable")
             });
         });
         // The grip starts a drag.
@@ -511,11 +518,11 @@ fn detail(
                                 egui::TextEdit::singleline(&mut def.name)
                                     .font(fonts::strong(18.0))
                                     .frame(egui::Frame::new())
-                                    .hint_text("Name")
+                                    .hint_text(crate::i18n::tr("Name"))
                                     .desired_width(ui.available_width() - 120.0),
                             );
                             ui.add(
-                                egui::Label::new(w::caption(ui, describe(def))).truncate(),
+                                egui::Label::new(w::caption_raw(ui, describe(def))).truncate(),
                             );
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -526,12 +533,12 @@ fn detail(
                             );
                             egui::Popup::menu(&more).show(|ui| {
                                 ui.set_min_width(150.0);
-                                if ui.button(format!("{}  Duplicate", icons::COPY)).clicked() {
+                                if ui.button(format!("{}  {}", icons::COPY, crate::i18n::tr("Duplicate"))).clicked() {
                                     duplicate = true;
                                 }
                                 if ui
                                     .button(
-                                        egui::RichText::new(format!("{}  Delete", icons::TRASH))
+                                        egui::RichText::new(format!("{}  {}", icons::TRASH, crate::i18n::tr("Delete")))
                                             .color(pal(ui).bad),
                                     )
                                     .clicked()
@@ -540,7 +547,7 @@ fn detail(
                                 }
                             });
                             w::switch(ui, &mut def.enabled)
-                                .on_hover_text("Enabled");
+                                .on_hover_text(crate::i18n::tr("Enabled"));
                         });
                     });
                     if def.name.trim().is_empty() {
@@ -550,10 +557,10 @@ fn detail(
                     }
                 });
                 if !conflicts.is_empty() {
-                    w::banner(
+                    w::banner_raw(
                         ui,
                         Tone::Warn,
-                        "Could fire together with another gesture",
+                        crate::i18n::tr("Could fire together with another gesture"),
                         &conflicts.join("\n"),
                         |_| {},
                     );
@@ -591,7 +598,7 @@ fn detail(
                         def.within_ms = None;
                         if let Err(errors) = def.trigger_def().build() {
                             for (field, e) in errors {
-                                w::error_text(ui, &format!("{field}: {e}"));
+                                w::error_text_raw(ui, &format!("{field}: {e}"));
                             }
                         }
                     }
@@ -626,8 +633,9 @@ fn delete_dialog(ctx: &egui::Context, ed: &mut Editor, st: &mut State) {
     let name = ed.draft.gestures[i].def.name.clone();
     let mut close = false;
     w::dialog(ctx, "confirm-delete", "Delete this gesture?", 360.0, |ui| {
-        ui.label(format!(
-            "“{name}” will be removed. You can undo this with Ctrl+Z."
+        ui.label(crate::i18n::tf(
+            "“{}” will be removed. You can undo this with Ctrl+Z.",
+            &[&name],
         ));
         ui.add_space(space::M);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -667,10 +675,10 @@ fn profiles_dialog(ctx: &egui::Context, ed: &mut Editor, st: &mut State) {
                 .filter(|g| g.def.profile.as_ref() == Some(p))
                 .count();
             ui.horizontal(|ui| {
-                ui.label(w::strong(p));
-                ui.label(w::faint(
+                ui.label(w::strong_raw(p));
+                ui.label(w::faint_raw(
                     ui,
-                    format!("{used} gesture{}", if used == 1 { "" } else { "s" }),
+                    crate::i18n::plural(used, "{} gesture", "{} gestures"),
                 ));
                 if *p == ed.draft.settings.active_profile {
                     w::badge(ui, "active", Tone::Ok);
@@ -707,7 +715,7 @@ fn profiles_dialog(ctx: &egui::Context, ed: &mut Editor, st: &mut State) {
             let mut done = false;
             ui.add_space(space::S);
             ui.horizontal(|ui| {
-                ui.label(format!("Rename “{old}” to"));
+                ui.label(crate::i18n::tf("Rename “{}” to", &[old]));
                 w::text_field(ui, new, "", 140.0);
                 done = w::button_enabled(ui, "", "OK", !new.trim().is_empty()).clicked();
             });

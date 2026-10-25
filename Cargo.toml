@@ -61,6 +61,8 @@ tar = "0.4.46"
 # Scratch directories in the updater's tests.
 tempfile = "3.27.0"
 toml_edit = "0.25.17"
+# The system language, to pick the window's language when set to "system".
+sys-locale = "0.3.2"
 
 [workspace.lints.rust]
 # SPEC §2: no `unsafe` outside platform FFI modules, which opt in with `#[allow(unsafe_code)]`.

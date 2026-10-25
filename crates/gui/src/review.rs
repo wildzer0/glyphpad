@@ -36,7 +36,6 @@ pub struct State {
 
 /// Returns a symbol to record more templates for, when asked.
 pub fn show(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String> {
-    let history_label = format!("History ({})", cx.shared.history.len());
     w::page_header(
         ui,
         "Review",
@@ -47,11 +46,7 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String> {
                 &mut st.view,
                 &[
                     (View::Templates, icons::SCRIBBLE_LOOP, "Templates"),
-                    (
-                        View::History,
-                        icons::CLOCK_COUNTER_CLOCKWISE,
-                        &history_label,
-                    ),
+                    (View::History, icons::CLOCK_COUNTER_CLOCKWISE, "History"),
                     (View::Statistics, icons::CHART_BAR, "Statistics"),
                 ],
             );
@@ -90,14 +85,14 @@ fn statistics_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) {
                 "Counted on this computer only, in stats.json next to the configuration.",
                 |ui| {
                     w::row(ui, "Gestures run", "", |ui| {
-                        ui.label(w::strong(usage.total_runs().to_string()));
+                        ui.label(w::strong_raw(usage.total_runs().to_string()));
                     });
                     w::row(
                         ui,
                         "Drawings not recognized",
                         "They matched no symbol well enough: record more examples, or lower the minimum score.",
                         |ui| {
-                            ui.label(w::strong(usage.unrecognized.to_string()));
+                            ui.label(w::strong_raw(usage.unrecognized.to_string()));
                         },
                     );
                     w::row(
@@ -105,7 +100,7 @@ fn statistics_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) {
                         "Symbols with no gesture",
                         "Recognized, but nothing is set up for them in the active profile.",
                         |ui| {
-                            ui.label(w::strong(usage.unmapped.to_string()));
+                            ui.label(w::strong_raw(usage.unmapped.to_string()));
                         },
                     );
                     if let Some(since) = &usage.since {
@@ -135,7 +130,10 @@ fn statistics_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) {
                 }
                 for (name, count) in rows {
                     ui.horizontal(|ui| {
-                        ui.add_sized([180.0, 24.0], egui::Label::new(w::strong(name)).truncate());
+                        ui.add_sized(
+                            [180.0, 24.0],
+                            egui::Label::new(w::strong_raw(name)).truncate(),
+                        );
                         let (bar, _) = ui.allocate_exact_size(
                             Vec2::new((ui.available_width() - 70.0).max(40.0), 8.0),
                             Sense::hover(),
@@ -177,7 +175,7 @@ fn statistics_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) {
             "Reset the statistics?",
             360.0,
             |ui| {
-                ui.label("All counts go back to zero.");
+                ui.label(crate::i18n::tr("All counts go back to zero."));
                 ui.add_space(space::M);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if w::danger_button(ui, icons::TRASH, "Reset").clicked() {
@@ -305,10 +303,13 @@ fn templates_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String>
                     });
                     let selected = st.symbol.as_ref() == Some(name);
                     let note = format!(
-                        "{} example{}{}",
-                        samples.len(),
-                        if samples.len() == 1 { "" } else { "s" },
-                        if used { " · in use" } else { "" }
+                        "{}{}",
+                        crate::i18n::plural(samples.len(), "{} example", "{} examples"),
+                        if used {
+                            crate::i18n::tr(" · in use")
+                        } else {
+                            ""
+                        }
                     );
                     let lead: String = name.chars().next().map(String::from).unwrap_or_default();
                     if list_item(ui, selected, &lead, false, name, &note).clicked() {
@@ -352,7 +353,9 @@ fn templates_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String>
                     if builtin.contains_key(&symbol) {
                         let mut use_builtin = !hidden;
                         if w::switch(ui, &mut use_builtin)
-                            .on_hover_text("Use the examples that come with GlyphPad")
+                            .on_hover_text(crate::i18n::tr(
+                                "Use the examples that come with GlyphPad",
+                            ))
                             .changed()
                         {
                             cx.send(Command::HideBuiltins {
@@ -388,9 +391,9 @@ fn templates_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String>
             "Delete this example?",
             340.0,
             |ui| {
-                ui.label(format!(
-                    "Recorded example {} of “{sym}” will be removed.",
-                    index + 1
+                ui.label(crate::i18n::tf(
+                    "Recorded example {} of “{}” will be removed.",
+                    &[&(index + 1).to_string(), &sym],
                 ));
                 ui.add_space(space::M);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -433,10 +436,16 @@ fn sample_card(
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     if i < n_builtin {
-                        ui.label(w::faint(ui, format!("Built-in {}", i + 1)));
+                        ui.label(w::faint_raw(
+                            ui,
+                            crate::i18n::tf("Built-in {}", &[&(i + 1).to_string()]),
+                        ));
                     } else {
                         let user_index = i - n_builtin;
-                        ui.label(w::caption(ui, format!("Recorded {}", user_index + 1)));
+                        ui.label(w::caption_raw(
+                            ui,
+                            crate::i18n::tf("Recorded {}", &[&(user_index + 1).to_string()]),
+                        ));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if w::icon_button_tone(
                                 ui,
@@ -482,7 +491,9 @@ fn history_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) {
                     let title = format!(
                         "{}  {}",
                         e.time,
-                        e.gesture.clone().unwrap_or_else(|| "no gesture".into())
+                        e.gesture
+                            .clone()
+                            .unwrap_or_else(|| crate::i18n::tr("no gesture").into())
                     );
                     let mut note = e.recognized.clone();
                     if let Some(a) = &e.app {
@@ -530,9 +541,9 @@ fn entry_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State, e: &HistoryEntry) {
     let strokes = &e.trace.strokes;
     w::section(ui, "", "", |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label(w::strong(&e.recognized));
+            ui.label(w::strong_raw(&e.recognized));
             if let Some(a) = &e.action {
-                w::badge(ui, a, if e.executed { Tone::Ok } else { Tone::Neutral });
+                w::badge_raw(ui, a, if e.executed { Tone::Ok } else { Tone::Neutral });
             }
             if !e.executed {
                 w::badge(ui, "not run", Tone::Neutral);
@@ -583,22 +594,27 @@ fn entry_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State, e: &HistoryEntry) {
         "Useful when it was recognized as the wrong symbol.",
         |ui| {
             if let Some(symbol) = &e.symbol {
-                w::row(ui, &format!("Example of “{symbol}”"), "", |ui| {
-                    if w::button(ui, icons::PLUS, "Add it").clicked() {
-                        cx.send(Command::AddTemplate {
-                            symbol: symbol.clone(),
-                            sample: sample(),
-                        });
-                    }
-                });
+                w::row_raw(
+                    ui,
+                    &crate::i18n::tf("Example of “{}”", &[symbol]),
+                    "",
+                    |ui| {
+                        if w::button(ui, icons::PLUS, "Add it").clicked() {
+                            cx.send(Command::AddTemplate {
+                                symbol: symbol.clone(),
+                                sample: sample(),
+                            });
+                        }
+                    },
+                );
             }
             w::row(ui, "Example of another symbol", "", |ui| {
                 ui.horizontal(|ui| {
-                    let options: Vec<(String, String)> = cx
+                    let options: Vec<(String, std::borrow::Cow<'static, str>)> = cx
                         .shared
                         .effective
                         .keys()
-                        .map(|k| (k.clone(), k.clone()))
+                        .map(|k| (k.clone(), k.clone().into()))
                         .collect();
                     w::dropdown(ui, "assign", &mut st.assign_to, &options, 90.0);
                     w::text_field(ui, &mut st.assign_to, "or a new name", 130.0);

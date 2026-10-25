@@ -68,7 +68,7 @@ fn touchpad(ui: &mut egui::Ui, cx: &Ctx, width: f32) {
             .spacing(Vec2::new(18.0, 4.0))
             .show(ui, |ui| {
                 for h in ["id", "x mm", "y mm", "x", "y", "state"] {
-                    ui.label(w::faint(ui, h));
+                    ui.label(w::faint_raw(ui, h));
                 }
                 ui.end_row();
                 for c in &s.contacts {
@@ -167,7 +167,11 @@ fn side(ui: &mut egui::Ui, cx: &Ctx) {
                         .font(fonts::mono(12.5))
                         .color(pal(ui).text_dim),
                 );
-                ui.label(w::strong(e.gesture.as_deref().unwrap_or("no gesture")));
+                ui.label(w::strong_raw(
+                    e.gesture
+                        .as_deref()
+                        .unwrap_or(crate::i18n::tr("no gesture")),
+                ));
                 if !e.executed {
                     w::badge(ui, "not run", Tone::Neutral);
                 }
@@ -190,12 +194,20 @@ fn side(ui: &mut egui::Ui, cx: &Ctx) {
             ui.horizontal(|ui| {
                 ui.label(w::icon_text(icons::MOUSE_SIMPLE, 18.0, pal(ui).text_dim));
                 ui.vertical(|ui| {
-                    ui.label(w::strong(&d.name));
-                    ui.label(w::caption(
+                    ui.label(w::strong_raw(&d.name));
+                    ui.label(w::caption_raw(
                         ui,
                         format!(
-                            "{:04X}:{:04X}  ·  {:.1} × {:.1} mm  ·  up to {} contacts",
-                            d.vendor_id, d.product_id, d.width_mm, d.height_mm, d.max_contacts
+                            "{:04X}:{:04X}  ·  {:.1} × {:.1} mm  ·  {}",
+                            d.vendor_id,
+                            d.product_id,
+                            d.width_mm,
+                            d.height_mm,
+                            crate::i18n::plural(
+                                d.max_contacts as usize,
+                                "up to {} contact",
+                                "up to {} contacts"
+                            )
                         ),
                     ));
                 });
