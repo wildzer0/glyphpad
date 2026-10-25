@@ -187,9 +187,27 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
     service.read_config_text();
     service.rebuild_engine();
     service.publish_usage();
+    let (panic_shared, panic_ui) = (service.shared.clone(), service.ui.clone());
     std::thread::Builder::new()
         .name("engine".into())
-        .spawn(move || service.run(events, cmd_rx))?;
+        .spawn(move || {
+            // The engine owns everything that changes at runtime: if it
+            // panics, nothing works any more. Say so in the window instead
+            // of leaving a program that silently does nothing.
+            let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                service.run(events, cmd_rx)
+            }));
+            if stopped.is_err() {
+                tracing::error!("the gesture engine stopped after an internal error");
+                if let Ok(mut s) = panic_shared.lock() {
+                    s.status = Some(
+                        "The gesture engine stopped after an internal error: quit and start GlyphPad again."
+                            .into(),
+                    );
+                }
+                panic_ui.wake();
+            }
+        })?;
     Ok(handle)
 }
 
@@ -1075,6 +1093,11 @@ impl Service {
                     Ok(n) => n,
                     Err(e) => return self.set_status(format!("gesture not saved: {e}")),
                 };
+                // The configuration first: if it cannot be written, the
+                // samples it would have used must not stay behind.
+                if let Err(e) = self.write_config(&new, false) {
+                    return self.set_status(format!("gesture not saved: {e}"));
+                }
                 if let Some((symbol, samples)) = symbol_samples {
                     self.templates
                         .symbols
@@ -1084,9 +1107,6 @@ impl Service {
                     if let Err(e) = self.write_templates() {
                         return self.set_status(format!("templates not saved: {e:#}"));
                     }
-                }
-                if let Err(e) = self.write_config(&new, false) {
-                    return self.set_status(format!("gesture not saved: {e}"));
                 }
                 self.reload();
                 self.set_status(format!("gesture \"{name}\" saved"));
@@ -1103,6 +1123,20 @@ impl Service {
                         self.set_status(format!("template added to \"{symbol}\""));
                     }
                     Err(e) => self.set_status(format!("template not saved: {e:#}")),
+                }
+            }
+            Command::AddTemplates { symbol, samples } => {
+                self.templates
+                    .symbols
+                    .entry(symbol.clone())
+                    .or_default()
+                    .extend(samples);
+                match self.write_templates() {
+                    Ok(()) => {
+                        self.rebuild_engine();
+                        self.set_status(format!("templates added to \"{symbol}\""));
+                    }
+                    Err(e) => self.set_status(format!("templates not saved: {e:#}")),
                 }
             }
             Command::DeleteTemplate { symbol, index } => {

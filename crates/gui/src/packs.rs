@@ -364,10 +364,16 @@ impl State {
                 if !*on {
                     continue;
                 }
-                for sample in import.pack.templates.get(symbol).into_iter().flatten() {
-                    cx.send(Command::AddTemplate {
+                let samples = import
+                    .pack
+                    .templates
+                    .get(symbol)
+                    .cloned()
+                    .unwrap_or_default();
+                if !samples.is_empty() {
+                    cx.send(Command::AddTemplates {
                         symbol: symbol.clone(),
-                        sample: sample.clone(),
+                        samples,
                     });
                 }
             }
