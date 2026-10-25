@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-25
+
 ### Added
 - Cargo workspace with the `core`, `platform`, `actions`, `gui`, `updater` and `app` crates.
 - Minimal `glyphpad` binary that prints its version (`--version`).
@@ -117,4 +119,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Show window" only flashed the taskbar button when the window was behind others.
 - The wizard's quality check was recomputed every frame, slowing the window down.
 
-[Unreleased]: https://github.com/wildzer0/glyphpad/commits/main
+[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/wildzer0/glyphpad/releases/tag/v1.0.0
