@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-25
+
 ### Added
 - `[settings] touchpad` chooses which touchpad to use, by part of its name: the other pads'
   frames are then ignored, and the zone map is drawn with the chosen pad's size. Settings →
@@ -260,7 +262,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Show window" only flashed the taskbar button when the window was behind others.
 - The wizard's quality check was recomputed every frame, slowing the window down.
 
-[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/wildzer0/glyphpad/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/wildzer0/glyphpad/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/wildzer0/glyphpad/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/wildzer0/glyphpad/compare/v1.1.0...v1.2.0
