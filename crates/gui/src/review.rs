@@ -1,18 +1,19 @@
-//! "Review gestures" page (SPEC §10.1): every template of every symbol,
-//! animated with its real timing, and the history of recognitions with the
-//! trace overlaid on the template that recognized it.
+//! "Review" page (SPEC §10.1): every template of every symbol, animated
+//! with its real timing, and the history of recognitions with the trace
+//! overlaid on the template that recognized it.
 
 use std::collections::BTreeMap;
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Align, Align2, Color32, CornerRadius, Layout, Rect, Sense, Stroke, Vec2};
 use glyphpad_core::service::{Command, HistoryEntry};
 use glyphpad_core::symbols::{Sample, templates};
 
-use crate::Ctx;
 use crate::canvas::{self, Pad, Playback};
-use crate::style;
+use crate::theme::{fonts, pal, radius, size, space};
+use crate::widgets::{self as w, Tone};
+use crate::{Ctx, icons};
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Clone, Copy)]
 enum View {
     #[default]
     Templates,
@@ -31,27 +32,28 @@ pub struct State {
     confirm_delete: Option<(String, usize)>,
 }
 
-const THUMB: f32 = 180.0;
-
 /// Returns a symbol to record more templates for, when asked.
 pub fn show(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String> {
-    ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            style::page_header(
+    let history_label = format!("History ({})", cx.shared.history.len());
+    w::page_header(
+        ui,
+        "Review",
+        "The templates of every symbol, and what was recognized lately.",
+        |ui| {
+            w::segmented_with_icons(
                 ui,
-                "Review gestures",
-                "Templates of every symbol and the latest recognitions.",
-            )
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-            ui.selectable_value(
                 &mut st.view,
-                View::History,
-                format!("History ({})", cx.shared.history.len()),
+                &[
+                    (View::Templates, icons::SCRIBBLE_LOOP, "Templates"),
+                    (
+                        View::History,
+                        icons::CLOCK_COUNTER_CLOCKWISE,
+                        &history_label,
+                    ),
+                ],
             );
-            ui.selectable_value(&mut st.view, View::Templates, "Templates");
-        });
-    });
+        },
+    );
     match st.view {
         View::Templates => templates_view(ui, cx, st),
         View::History => {
@@ -59,6 +61,79 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String> {
             None
         }
     }
+}
+
+/// A selectable row of a master list: a leading glyph, a title, a note.
+fn list_item(
+    ui: &mut egui::Ui,
+    selected: bool,
+    lead: &str,
+    lead_is_icon: bool,
+    title: &str,
+    note: &str,
+) -> egui::Response {
+    let p = pal(ui);
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 50.0), Sense::click());
+    let fill = if selected {
+        p.accent_soft
+    } else if response.hovered() {
+        p.raised
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(
+        rect.shrink2(Vec2::new(4.0, 1.0)),
+        CornerRadius::same(radius::CONTROL + 2),
+        fill,
+    );
+    let badge = Rect::from_center_size(
+        egui::pos2(rect.left() + 30.0, rect.center().y),
+        Vec2::splat(32.0),
+    );
+    ui.painter().rect_filled(
+        badge,
+        CornerRadius::same(radius::CONTROL + 2),
+        if selected { p.surface } else { p.raised },
+    );
+    ui.painter().text(
+        badge.center(),
+        Align2::CENTER_CENTER,
+        lead,
+        if lead_is_icon {
+            fonts::icon(17.0)
+        } else {
+            fonts::strong(17.0)
+        },
+        if selected { p.accent } else { p.text },
+    );
+    let text_left = rect.left() + 56.0;
+    let width = rect.right() - text_left - 10.0;
+    let t = w::elided(ui, title, fonts::strong(size::BODY), p.text, width);
+    ui.painter()
+        .galley(egui::pos2(text_left, rect.center().y - 17.0), t, p.text);
+    let n = w::elided(ui, note, fonts::text(size::SMALL), p.text_dim, width);
+    ui.painter()
+        .galley(egui::pos2(text_left, rect.center().y + 2.0), n, p.text_dim);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn master_frame<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let p = pal(ui);
+    egui::Frame::new()
+        .fill(p.surface)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(CornerRadius::same(radius::CARD))
+        .inner_margin(egui::Margin::same(4))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.set_height(ui.available_height());
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, add)
+                .inner
+        })
+        .inner
 }
 
 fn templates_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String> {
@@ -83,9 +158,11 @@ fn templates_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String>
 
     egui::Panel::left("symbols")
         .resizable(false)
-        .exact_size(190.0)
+        .exact_size(220.0)
+        .frame(egui::Frame::new())
+        .show_separator_line(false)
         .show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            master_frame(ui, |ui| {
                 for (name, samples) in effective.iter() {
                     let used = cx.shared.config.gestures.iter().any(|g| {
                         g.def
@@ -94,126 +171,167 @@ fn templates_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String>
                             .is_some_and(|s| s.to_vec().contains(name))
                     });
                     let selected = st.symbol.as_ref() == Some(name);
-                    let r = ui.add_sized(
-                        [170.0, 28.0],
-                        egui::Button::selectable(
-                            selected,
-                            format!("{name}   ·   {}", samples.len()),
-                        ),
+                    let note = format!(
+                        "{} example{}{}",
+                        samples.len(),
+                        if samples.len() == 1 { "" } else { "s" },
+                        if used { " · in use" } else { "" }
                     );
-                    if r.clicked() {
+                    let lead: String = name.chars().next().map(String::from).unwrap_or_default();
+                    if list_item(ui, selected, &lead, false, name, &note).clicked() {
                         st.symbol = Some(name.clone());
                         st.playback.restart();
                     }
-                    if used {
-                        r.on_hover_text("Used by a gesture");
-                    }
                 }
             });
         });
 
-    let Some(symbol) = st.symbol.clone() else {
-        ui.label("No templates.");
-        return None;
-    };
-    let samples: &[Sample] = effective.get(&symbol).map_or(&[], Vec::as_slice);
-    let hidden = cx.shared.templates.hidden_builtins.contains(&symbol);
-    let n_builtin = if hidden {
-        0
-    } else {
-        builtin.get(&symbol).copied().unwrap_or(0)
-    };
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().inner_margin(egui::Margin {
+            left: space::L as i8,
+            ..Default::default()
+        }))
+        .show(ui, |ui| {
+            let Some(symbol) = st.symbol.clone() else {
+                w::empty_state(
+                    ui,
+                    icons::SCRIBBLE_LOOP,
+                    "No templates",
+                    "Record a symbol from Gestures.",
+                    |_| {},
+                );
+                return;
+            };
+            let samples: &[Sample] = effective.get(&symbol).map_or(&[], Vec::as_slice);
+            let hidden = cx.shared.templates.hidden_builtins.contains(&symbol);
+            let n_builtin = if hidden {
+                0
+            } else {
+                builtin.get(&symbol).copied().unwrap_or(0)
+            };
 
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(&symbol).size(22.0).strong());
-        if ui.button("✚ Record more examples").clicked() {
-            record = Some(symbol.clone());
-        }
-        if builtin.contains_key(&symbol) {
-            let mut use_builtin = !hidden;
-            if ui
-                .checkbox(&mut use_builtin, "Use the built-in examples")
-                .changed()
-            {
-                cx.send(Command::HideBuiltins {
-                    symbol: symbol.clone(),
-                    hidden: !use_builtin,
-                });
-            }
-        }
-    });
-    let total = canvas::duration_us(samples.iter().flat_map(|s| &s.strokes));
-    st.playback.controls(ui, total);
-    st.playback.advance(ui.ctx(), total);
-    ui.add_space(6.0);
-
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
-            for (i, sample) in samples.iter().enumerate() {
-                egui::Frame::new()
-                    .fill(ui.visuals().faint_bg_color)
-                    .corner_radius(egui::CornerRadius::same(8))
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.set_width(THUMB);
-                        ui.vertical(|ui| {
-                            canvas::thumbnail(ui, THUMB, sample, Some(st.playback.t_us));
-                            ui.horizontal(|ui| {
-                                if i < n_builtin {
-                                    ui.weak(format!("built-in {}", i + 1));
-                                } else {
-                                    let user_index = i - n_builtin;
-                                    ui.label(format!("recorded {}", user_index + 1));
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if ui
-                                                .small_button("🗑")
-                                                .on_hover_text("Delete this example")
-                                                .clicked()
-                                            {
-                                                st.confirm_delete =
-                                                    Some((symbol.clone(), user_index));
-                                            }
-                                        },
-                                    );
-                                }
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(&symbol).font(fonts::strong(26.0)));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if w::primary_button(ui, icons::RECORD, "Record more examples").clicked() {
+                        record = Some(symbol.clone());
+                    }
+                    if builtin.contains_key(&symbol) {
+                        let mut use_builtin = !hidden;
+                        if w::switch(ui, &mut use_builtin)
+                            .on_hover_text("Use the examples that come with GlyphPad")
+                            .changed()
+                        {
+                            cx.send(Command::HideBuiltins {
+                                symbol: symbol.clone(),
+                                hidden: !use_builtin,
                             });
-                        });
+                        }
+                        ui.label(w::dim(ui, "Built-in examples"));
+                    }
+                });
+            });
+            ui.add_space(space::S);
+            let total = canvas::duration_us(samples.iter().flat_map(|s| &s.strokes));
+            st.playback.controls(ui, total);
+            st.playback.advance(ui.ctx(), total);
+            ui.add_space(space::M);
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .content_margin(egui::Margin::symmetric(2, 2))
+                .show(ui, |ui| {
+                    w::grid(ui, samples.len(), 170.0, space::M, |ui, i, width| {
+                        sample_card(ui, st, &symbol, &samples[i], i, n_builtin, width);
                     });
-            }
+                });
         });
-    });
 
     if let Some((sym, index)) = st.confirm_delete.clone() {
-        egui::Modal::new(egui::Id::unique("delete-template")).show(ui.ctx(), |ui| {
-            ui.heading("Delete this example?");
-            ui.label(format!("Recorded example {} of “{sym}”.", index + 1));
-            ui.horizontal(|ui| {
-                if ui
-                    .button(RichText::new("Delete").color(style::BAD))
-                    .clicked()
-                {
-                    cx.send(Command::DeleteTemplate {
-                        symbol: sym.clone(),
-                        index,
-                    });
-                    st.confirm_delete = None;
-                }
-                if ui.button("Cancel").clicked() {
-                    st.confirm_delete = None;
-                }
-            });
-        });
+        let mut close = false;
+        w::dialog(
+            ui.ctx(),
+            "delete-template",
+            "Delete this example?",
+            340.0,
+            |ui| {
+                ui.label(format!(
+                    "Recorded example {} of “{sym}” will be removed.",
+                    index + 1
+                ));
+                ui.add_space(space::M);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if w::danger_button(ui, icons::TRASH, "Delete").clicked() {
+                        cx.send(Command::DeleteTemplate {
+                            symbol: sym.clone(),
+                            index,
+                        });
+                        close = true;
+                    }
+                    if w::button(ui, "", "Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            },
+        );
+        if close {
+            st.confirm_delete = None;
+        }
     }
     record
+}
+
+fn sample_card(
+    ui: &mut egui::Ui,
+    st: &mut State,
+    symbol: &str,
+    sample: &Sample,
+    i: usize,
+    n_builtin: usize,
+    width: f32,
+) {
+    let inner = width - 2.0 * space::S - 2.0;
+    w::card_frame(ui)
+        .inner_margin(egui::Margin::same(space::S as i8))
+        .show(ui, |ui| {
+            ui.set_width(inner);
+            ui.vertical(|ui| {
+                canvas::thumbnail(ui, inner, sample, Some(st.playback.t_us));
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    if i < n_builtin {
+                        ui.label(w::faint(ui, format!("Built-in {}", i + 1)));
+                    } else {
+                        let user_index = i - n_builtin;
+                        ui.label(w::caption(ui, format!("Recorded {}", user_index + 1)));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if w::icon_button_tone(
+                                ui,
+                                icons::TRASH,
+                                "Delete this example",
+                                Tone::Bad,
+                            )
+                            .clicked()
+                            {
+                                st.confirm_delete = Some((symbol.to_string(), user_index));
+                            }
+                        });
+                    }
+                });
+            });
+        });
 }
 
 fn history_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) {
     let history = &cx.shared.history;
     if history.is_empty() {
-        ui.label("No gestures recognized yet. The last ones are kept here while GlyphPad runs.");
+        w::empty_state(
+            ui,
+            icons::CLOCK_COUNTER_CLOCKWISE,
+            "Nothing recognized yet",
+            "The latest gestures are kept here while GlyphPad runs.",
+            |_| {},
+        );
         return;
     }
     if st.entry.is_some_and(|i| i >= history.len()) {
@@ -221,87 +339,72 @@ fn history_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) {
     }
     egui::Panel::left("history")
         .resizable(false)
-        .exact_size(420.0)
+        .exact_size(380.0_f32.min(ui.available_width() * 0.45))
+        .frame(egui::Frame::new())
+        .show_separator_line(false)
         .show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            master_frame(ui, |ui| {
                 for (i, e) in history.iter().enumerate().rev() {
                     let selected = st.entry == Some(i);
-                    let fill = if selected {
-                        style::ACCENT.gamma_multiply(0.25)
+                    let title = format!(
+                        "{}  {}",
+                        e.time,
+                        e.gesture.clone().unwrap_or_else(|| "no gesture".into())
+                    );
+                    let mut note = e.recognized.clone();
+                    if let Some(a) = &e.app {
+                        note = format!("{note}  ·  {a}");
+                    }
+                    let lead = if e.executed {
+                        icons::CHECK
                     } else {
-                        ui.visuals().faint_bg_color
+                        icons::PROHIBIT
                     };
-                    let r = egui::Frame::new()
-                        .fill(fill)
-                        .corner_radius(egui::CornerRadius::same(8))
-                        .inner_margin(egui::Margin::symmetric(10, 6))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.monospace(&e.time);
-                                ui.label(
-                                    RichText::new(
-                                        e.gesture.clone().unwrap_or_else(|| "(no gesture)".into()),
-                                    )
-                                    .strong(),
-                                );
-                                if let Some(s) = e.score {
-                                    ui.weak(format!("{s:.2}"));
-                                }
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        let (text, color) = if e.executed {
-                                            (e.action.clone().unwrap_or_default(), style::OK)
-                                        } else {
-                                            ("not run".to_string(), Color32::GRAY)
-                                        };
-                                        ui.colored_label(color, text);
-                                    },
-                                );
-                            });
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(format!(
-                                        "{}  ·  {}",
-                                        e.recognized,
-                                        e.app.clone().unwrap_or_default()
-                                    ))
-                                    .small()
-                                    .weak(),
-                                )
-                                .truncate(),
-                            );
-                        })
-                        .response
-                        .interact(egui::Sense::click());
-                    if r.clicked() {
+                    if list_item(ui, selected, lead, true, &title, &note).clicked() {
                         st.entry = Some(i);
                         st.playback.restart();
                         st.assign_to = e.symbol.clone().unwrap_or_default();
                     }
-                    ui.add_space(4.0);
                 }
             });
         });
 
-    let Some(entry) = st.entry.and_then(|i| history.get(i)) else {
-        ui.vertical_centered(|ui| {
-            ui.add_space(40.0);
-            ui.weak("Select a recognition to replay it.");
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().inner_margin(egui::Margin {
+            left: space::L as i8,
+            ..Default::default()
+        }))
+        .show(ui, |ui| {
+            let Some(entry) = st.entry.and_then(|i| history.get(i)) else {
+                w::empty_state(
+                    ui,
+                    icons::PLAY,
+                    "Select a recognition",
+                    "It is replayed here with its real timing.",
+                    |_| {},
+                );
+                return;
+            };
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .content_margin(egui::Margin::symmetric(2, 2))
+                .show(ui, |ui| entry_view(ui, cx, st, entry));
         });
-        return;
-    };
-    entry_view(ui, cx, st, entry);
 }
 
 fn entry_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State, e: &HistoryEntry) {
-    // A fixed width: the playback must not resize anything around it.
-    let width = (ui.available_width() - 16.0).clamp(260.0, 560.0);
-    ui.allocate_ui(egui::vec2(width, ui.available_height()), |ui| {
-        ui.set_width(width);
-        ui.add(egui::Label::new(RichText::new(&e.recognized).strong()).truncate());
-        let strokes = &e.trace.strokes;
+    let p = pal(ui);
+    let strokes = &e.trace.strokes;
+    w::section(ui, "", "", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(w::strong(&e.recognized));
+            if let Some(a) = &e.action {
+                w::badge(ui, a, if e.executed { Tone::Ok } else { Tone::Neutral });
+            }
+            if !e.executed {
+                w::badge(ui, "not run", Tone::Neutral);
+            }
+        });
         let total = if strokes.is_empty() {
             canvas::duration_us(e.trace.fingers.values())
         } else {
@@ -309,10 +412,12 @@ fn entry_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State, e: &HistoryEntry) {
         };
         st.playback.controls(ui, total);
         st.playback.advance(ui.ctx(), total);
+        ui.add_space(space::S);
+        let width = ui.available_width().min(560.0);
         let (_, painter, pad) = Pad::new(ui, width, e.width_mm, e.height_mm);
         if strokes.is_empty() {
             canvas::draw_fingers(&painter, &pad, &e.trace.fingers, Some(st.playback.t_us));
-            ui.weak("Each finger in its own color.");
+            ui.label(w::caption(ui, "Each finger in its own color."));
             return;
         }
         if let Some(symbol) = &e.symbol
@@ -323,61 +428,57 @@ fn entry_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State, e: &HistoryEntry) {
                 .iter()
                 .map(|s| s.iter().map(|p| (p.x_mm, p.y_mm)).collect())
                 .collect();
-            canvas::draw_polylines(
-                &painter,
-                &pad,
-                &lines,
-                egui::Stroke::new(7.0, Color32::from_gray(75)),
-            );
+            canvas::draw_polylines(&painter, &pad, &lines, Stroke::new(8.0, p.border_strong));
         }
         canvas::draw_strokes(&painter, &pad, strokes, Some(st.playback.t_us), true);
-        ui.weak("In gray: the recognized symbol's first template, scaled onto the drawing.");
-        ui.add_space(6.0);
-        let sample = || Sample {
-            strokes: strokes.clone(),
-            width_mm: e.width_mm,
-            height_mm: e.height_mm,
-        };
-        style::card(ui, "Use this drawing", |ui| {
-            if let Some(symbol) = &e.symbol
-                && ui
-                    .button(format!("Add it as an example of “{symbol}”"))
-                    .clicked()
-            {
-                cx.send(Command::AddTemplate {
-                    symbol: symbol.clone(),
-                    sample: sample(),
+        ui.label(w::caption(
+            ui,
+            "The gray shape is the recognized symbol's first template, scaled onto the drawing.",
+        ));
+    });
+    if strokes.is_empty() {
+        return;
+    }
+    let sample = || Sample {
+        strokes: strokes.clone(),
+        width_mm: e.width_mm,
+        height_mm: e.height_mm,
+    };
+    w::section(
+        ui,
+        "Use this drawing",
+        "Useful when it was recognized as the wrong symbol.",
+        |ui| {
+            if let Some(symbol) = &e.symbol {
+                w::row(ui, &format!("Example of “{symbol}”"), "", |ui| {
+                    if w::button(ui, icons::PLUS, "Add it").clicked() {
+                        cx.send(Command::AddTemplate {
+                            symbol: symbol.clone(),
+                            sample: sample(),
+                        });
+                    }
                 });
             }
-            ui.horizontal(|ui| {
-                ui.label("Add it to");
-                egui::ComboBox::from_id_salt("assign")
-                    .selected_text(if st.assign_to.is_empty() {
-                        "symbol…".to_string()
-                    } else {
-                        st.assign_to.clone()
-                    })
-                    .show_ui(ui, |ui| {
-                        for name in cx.shared.effective.keys() {
-                            ui.selectable_value(&mut st.assign_to, name.clone(), name);
-                        }
-                    });
-                ui.add(
-                    egui::TextEdit::singleline(&mut st.assign_to)
-                        .hint_text("or a new name")
-                        .desired_width(100.0),
-                );
-                if ui
-                    .add_enabled(!st.assign_to.trim().is_empty(), egui::Button::new("Add"))
-                    .clicked()
-                {
-                    cx.send(Command::AddTemplate {
-                        symbol: st.assign_to.trim().to_string(),
-                        sample: sample(),
-                    });
-                }
+            w::row(ui, "Example of another symbol", "", |ui| {
+                ui.horizontal(|ui| {
+                    let options: Vec<(String, String)> = cx
+                        .shared
+                        .effective
+                        .keys()
+                        .map(|k| (k.clone(), k.clone()))
+                        .collect();
+                    w::dropdown(ui, "assign", &mut st.assign_to, &options, 90.0);
+                    w::text_field(ui, &mut st.assign_to, "or a new name", 130.0);
+                    if w::button_enabled(ui, icons::PLUS, "Add", !st.assign_to.trim().is_empty())
+                        .clicked()
+                    {
+                        cx.send(Command::AddTemplate {
+                            symbol: st.assign_to.trim().to_string(),
+                            sample: sample(),
+                        });
+                    }
+                });
             });
-            ui.weak("Useful when it was recognized as the wrong symbol.");
-        });
-    });
+        },
+    );
 }

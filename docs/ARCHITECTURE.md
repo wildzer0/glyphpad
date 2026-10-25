@@ -121,11 +121,15 @@ modifiers while others tap or swipe; the session's own gesture is then void).
 ## Configuration editing
 
 The window keeps one draft (`gui::editor`) for gestures and settings, with
-undo/redo. Saving renders the draft with `core::config_edit::write_gestures`
+undo/redo. The draft saves itself: once it is valid and untouched for 700 ms
+(and no pointer button is down) `Editor::frame` sends it; a save is reported
+failed after 4 s without confirmation. Every gesture has a stable `uid`, and
+the file position of each one comes from the *saved* state, so the draft may
+keep changing while a save is on its way. Saving renders the draft with `core::config_edit::write_gestures`
 and `settings_edits` onto the text it started from, so comments and the
 formatting of untouched values survive reordering, edits and deletions, and
 sends it with that text's revision. The engine thread validates, backs up
-the current file into `backups/`, writes atomically and reloads; if the file
+the current file into `backups/` (editor saves less than two minutes after the last backup share it), writes atomically and reloads; if the file
 changed meanwhile it refuses, and the window offers reload, overwrite or a
 diff. Changes made outside are picked up by a `notify` watcher on the
 configuration folder.

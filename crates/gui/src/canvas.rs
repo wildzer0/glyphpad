@@ -8,18 +8,14 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Str
 use glyphpad_core::Contact;
 use glyphpad_core::symbols::Stroke as Trace;
 
-/// Colors of successive strokes or fingers.
-pub const PALETTE: [Color32; 6] = [
-    Color32::from_rgb(90, 170, 255),
-    Color32::from_rgb(255, 170, 70),
-    Color32::from_rgb(120, 220, 140),
-    Color32::from_rgb(230, 110, 200),
-    Color32::from_rgb(240, 225, 100),
-    Color32::from_rgb(150, 140, 255),
-];
+use crate::icons;
+use crate::theme::{self, fonts, pal, radius, size};
+use crate::widgets as w;
 
-pub fn color(i: usize) -> Color32 {
-    PALETTE[i % PALETTE.len()]
+/// Color of the `i`th stroke or finger, in the theme the painter draws in.
+pub fn color(painter: &egui::Painter, i: usize) -> Color32 {
+    let p = theme::pal_of(painter.ctx());
+    p.series[i % p.series.len()]
 }
 
 /// A touchpad drawn on screen; maps millimeters to screen points.
@@ -42,12 +38,12 @@ impl Pad {
         let size = Vec2::new(width, width * h_mm / w_mm);
         let (response, painter) = ui.allocate_painter(size, Sense::click());
         let rect = response.rect;
-        let visuals = ui.visuals();
-        painter.rect_filled(rect, 8.0, visuals.extreme_bg_color);
+        let p = pal(ui);
+        painter.rect_filled(rect, radius::CARD, p.bg);
         painter.rect_stroke(
             rect,
-            8.0,
-            visuals.widgets.noninteractive.bg_stroke,
+            radius::CARD,
+            Stroke::new(1.0, p.border_strong),
             StrokeKind::Inside,
         );
         (
@@ -89,7 +85,7 @@ pub fn draw_strokes(
     numbered: bool,
 ) {
     for (i, stroke) in strokes.iter().enumerate() {
-        let base = color(i);
+        let base = color(painter, i);
         let visible: Vec<_> = stroke
             .iter()
             .filter(|p| until_us.is_none_or(|t| p.t_us <= t))
@@ -102,7 +98,7 @@ pub fn draw_strokes(
                     pad.to_screen(w[0].x_mm, w[0].y_mm),
                     pad.to_screen(w[1].x_mm, w[1].y_mm),
                 ],
-                Stroke::new(3.0, base.gamma_multiply(alpha)),
+                Stroke::new(3.5, base.gamma_multiply(alpha)),
             );
         }
         if let Some(first) = visible.first() {
@@ -113,7 +109,7 @@ pub fn draw_strokes(
                     p + Vec2::new(7.0, -7.0),
                     Align2::LEFT_BOTTOM,
                     (i + 1).to_string(),
-                    FontId::proportional(12.0),
+                    fonts::strong(size::SMALL),
                     base,
                 );
             }
@@ -126,7 +122,7 @@ pub fn draw_strokes(
             painter.circle_stroke(
                 pad.to_screen(last.x_mm, last.y_mm),
                 6.0,
-                Stroke::new(2.0, Color32::WHITE),
+                Stroke::new(2.0, theme::pal_of(painter.ctx()).text),
             );
         }
     }
@@ -147,7 +143,7 @@ pub fn draw_fingers(
 pub fn draw_contacts(painter: &egui::Painter, pad: &Pad, contacts: &[Contact]) {
     for c in contacts.iter().filter(|c| c.tip) {
         let p = pad.to_screen(c.x_mm, c.y_mm);
-        let col = color(c.id as usize);
+        let col = color(painter, c.id as usize);
         if c.confident {
             painter.circle_filled(p, 11.0, col.gamma_multiply(0.85));
         } else {
@@ -158,7 +154,7 @@ pub fn draw_contacts(painter: &egui::Painter, pad: &Pad, contacts: &[Contact]) {
             Align2::CENTER_CENTER,
             c.id.to_string(),
             FontId::monospace(11.0),
-            Color32::BLACK,
+            theme::pal_of(painter.ctx()).on_accent,
         );
     }
 }
@@ -310,34 +306,49 @@ impl Playback {
     }
 
     pub fn controls(&mut self, ui: &mut egui::Ui, total_us: u64) {
+        let p = pal(ui);
         ui.horizontal(|ui| {
-            if ui
-                .button(if self.playing {
-                    "⏸ Pause"
-                } else {
-                    "▶ Play"
-                })
-                .clicked()
-            {
+            let (icon, tip) = if self.playing {
+                (icons::PAUSE, "Pause")
+            } else {
+                (icons::PLAY, "Play")
+            };
+            if w::icon_button(ui, icon, tip).clicked() {
                 if !self.playing && self.t_us >= total_us {
                     self.t_us = 0;
                 }
                 self.playing = !self.playing;
             }
-            ui.add(
-                egui::Slider::new(&mut self.speed, 0.25..=2.0)
-                    .text("speed")
-                    .suffix("×"),
-            );
-            ui.checkbox(&mut self.looping, "Loop");
             let mut ms = self.t_us.min(total_us) as f32 / 1000.0;
             let max = (total_us as f32 / 1000.0).max(1.0);
-            if ui
-                .add(egui::Slider::new(&mut ms, 0.0..=max).suffix(" ms"))
-                .changed()
-            {
+            ui.spacing_mut().slider_width = (ui.available_width() - 250.0).clamp(80.0, 320.0);
+            if w::slider(ui, egui::Slider::new(&mut ms, 0.0..=max).show_value(false)).changed() {
                 self.t_us = (ms * 1000.0) as u64;
                 self.playing = false;
+            }
+            ui.label(
+                egui::RichText::new(format!("{:.1} s", ms / 1000.0))
+                    .font(fonts::mono(12.0))
+                    .color(p.text_dim),
+            );
+            let mut speed = self.speed;
+            let options: Vec<(f32, &str)> =
+                vec![(0.25, "¼×"), (0.5, "½×"), (1.0, "1×"), (2.0, "2×")];
+            if w::segmented(ui, &mut speed, &options).changed() {
+                self.speed = speed;
+            }
+            let looping = self.looping;
+            let r = w::icon_button(ui, icons::REPEAT, "Loop");
+            if looping {
+                ui.painter().rect_stroke(
+                    r.rect,
+                    egui::CornerRadius::same(radius::CONTROL),
+                    Stroke::new(1.5, p.accent),
+                    StrokeKind::Inside,
+                );
+            }
+            if r.clicked() {
+                self.looping = !self.looping;
             }
         });
     }

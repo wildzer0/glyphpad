@@ -1,15 +1,17 @@
-//! Form widgets for gestures: the trigger, the action and the conditions
-//! (SPEC §10.2).
+//! Forms of a gesture: its trigger, its action and where it works
+//! (SPEC §10.2). Each form edits a value in place and shows what is wrong
+//! with it right where it is.
 
-use eframe::egui::{self, Color32, Id, RichText};
+use eframe::egui::{self, Id, RichText};
 use glyphpad_core::action::{Action, MediaKey};
 use glyphpad_core::config::{Direction, Edge, GestureDef, GestureKind, OneOrMany, When};
 use glyphpad_core::keys::KeyCombo;
 use glyphpad_core::service::Command;
 use glyphpad_core::trigger::{TriggerDef, Turn, Zoom};
 
-use crate::Ctx;
-use crate::style;
+use crate::theme::{self, pal, space};
+use crate::widgets::{self as w, Tone};
+use crate::{Ctx, icons};
 
 pub const KINDS: [GestureKind; 9] = [
     GestureKind::Tap,
@@ -23,16 +25,19 @@ pub const KINDS: [GestureKind; 9] = [
     GestureKind::Sequence,
 ];
 
-const DIRECTIONS: [Direction; 8] = [
-    Direction::Up,
-    Direction::Down,
-    Direction::Left,
-    Direction::Right,
-    Direction::UpLeft,
-    Direction::UpRight,
-    Direction::DownLeft,
-    Direction::DownRight,
-];
+pub fn kind_icon(k: GestureKind) -> &'static str {
+    match k {
+        GestureKind::Tap => icons::HAND_TAP,
+        GestureKind::Hold => icons::FINGERPRINT,
+        GestureKind::Swipe => icons::HAND_SWIPE_RIGHT,
+        GestureKind::EdgeSwipe => icons::BOUNDING_BOX,
+        GestureKind::Pinch => icons::ARROWS_IN_SIMPLE,
+        GestureKind::Rotate => icons::ARROW_CLOCKWISE,
+        GestureKind::Click => icons::CURSOR_CLICK,
+        GestureKind::Symbol => icons::SCRIBBLE_LOOP,
+        GestureKind::Sequence => icons::QUEUE,
+    }
+}
 
 pub fn kind_label(k: GestureKind) -> String {
     let l = k.label();
@@ -40,6 +45,21 @@ pub fn kind_label(k: GestureKind) -> String {
     c.next().map_or(String::new(), |f| {
         f.to_uppercase().collect::<String>() + c.as_str()
     })
+}
+
+/// A label for the kinds in tiles: shorter than the list's.
+fn tile_label(k: GestureKind) -> &'static str {
+    match k {
+        GestureKind::Tap => "Tap",
+        GestureKind::Hold => "Hold",
+        GestureKind::Swipe => "Swipe",
+        GestureKind::EdgeSwipe => "Edge swipe",
+        GestureKind::Pinch => "Pinch",
+        GestureKind::Rotate => "Rotate",
+        GestureKind::Click => "Click",
+        GestureKind::Symbol => "Symbol",
+        GestureKind::Sequence => "Sequence",
+    }
 }
 
 /// Copies trigger fields into a gesture.
@@ -89,27 +109,42 @@ fn reset_for(kind: GestureKind, old: &TriggerDef) -> TriggerDef {
     t
 }
 
-fn direction_combo(ui: &mut egui::Ui, id: Id, label: &str, d: &mut Direction) {
-    egui::ComboBox::from_id_salt(id.with(label))
-        .selected_text(d.to_string().replace('_', "-"))
-        .show_ui(ui, |ui| {
-            for x in DIRECTIONS {
-                ui.selectable_value(d, x, x.to_string().replace('_', "-"));
-            }
-        });
-}
-
 fn fingers(ui: &mut egui::Ui, v: &mut Option<u8>, min: u8) {
     let mut n = v.unwrap_or(3).max(min);
-    ui.add(egui::Slider::new(&mut n, min..=glyphpad_core::MAX_CONTACTS as u8).text("fingers"));
+    w::stepper(ui, &mut n, min, glyphpad_core::MAX_CONTACTS as u8);
     *v = Some(n);
 }
 
-fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
-    ui.horizontal(|ui| {
-        ui.add_sized([110.0, 20.0], egui::Label::new(RichText::new(label).weak()));
-        add(ui);
-    });
+/// The kinds of gesture as a grid of tiles.
+fn kind_picker(ui: &mut egui::Ui, kind: GestureKind, allow_sequence: bool) -> Option<GestureKind> {
+    let mut picked = None;
+    let kinds: Vec<GestureKind> = KINDS
+        .into_iter()
+        .filter(|k| allow_sequence || *k != GestureKind::Sequence)
+        .collect();
+    let gap = space::S;
+    let per_row = if ui.available_width() > 470.0 { 5 } else { 3 };
+    let width = ((ui.available_width() - gap * (per_row as f32 - 1.0)) / per_row as f32).floor();
+    ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
+    for chunk in kinds.chunks(per_row) {
+        ui.horizontal(|ui| {
+            for k in chunk {
+                if w::tile(
+                    ui,
+                    kind_icon(*k),
+                    tile_label(*k),
+                    *k == kind,
+                    egui::vec2(width, 64.0),
+                )
+                .clicked()
+                    && *k != kind
+                {
+                    picked = Some(*k);
+                }
+            }
+        });
+    }
+    picked
 }
 
 /// Edits a trigger. `allow_sequence` is false for the steps of a sequence.
@@ -122,102 +157,116 @@ pub fn trigger_form(
     allow_sequence: bool,
 ) {
     let kind = t.kind.unwrap_or(GestureKind::Tap);
-    row(ui, "Type", |ui| {
-        egui::ComboBox::from_id_salt(id.with("kind"))
-            .selected_text(kind_label(kind))
-            .show_ui(ui, |ui| {
-                for k in KINDS
-                    .into_iter()
-                    .filter(|k| allow_sequence || *k != GestureKind::Sequence)
-                {
-                    if ui.selectable_label(k == kind, kind_label(k)).clicked() && k != kind {
-                        *t = reset_for(k, t);
-                    }
-                }
-            });
-    });
+    if let Some(k) = kind_picker(ui, kind, allow_sequence) {
+        *t = reset_for(k, t);
+    }
+    ui.add_space(space::XS);
     let kind = t.kind.unwrap_or(GestureKind::Tap);
     match kind {
         GestureKind::Tap => {
-            row(ui, "Fingers", |ui| fingers(ui, &mut t.fingers, 1));
-            row(ui, "Taps", |ui| {
+            w::row(ui, "Fingers", "", |ui| fingers(ui, &mut t.fingers, 1));
+            w::row(ui, "Taps", "", |ui| {
                 let mut taps = t.taps.unwrap_or(1);
-                for n in 1..=3 {
-                    ui.radio_value(
-                        &mut taps,
-                        n,
-                        ["single", "double", "triple"][usize::from(n - 1)],
-                    );
-                }
+                w::segmented(
+                    ui,
+                    &mut taps,
+                    &[(1, "Single"), (2, "Double"), (3, "Triple")],
+                );
                 t.taps = (taps > 1).then_some(taps);
             });
             chord(ui, t);
         }
-        GestureKind::Hold => row(ui, "Fingers", |ui| fingers(ui, &mut t.fingers, 1)),
+        GestureKind::Hold => w::row(ui, "Fingers", "", |ui| fingers(ui, &mut t.fingers, 1)),
         GestureKind::Swipe => {
-            row(ui, "Fingers", |ui| fingers(ui, &mut t.fingers, 1));
-            row(ui, "Direction", |ui| {
+            w::row(ui, "Fingers", "", |ui| fingers(ui, &mut t.fingers, 1));
+            w::row(ui, "Direction", "", |ui| {
                 let mut d = t.direction.unwrap_or(Direction::Up);
-                direction_combo(ui, id, "dir", &mut d);
+                w::direction_picker(ui, &mut d, true);
                 t.direction = Some(d);
             });
             chord(ui, t);
         }
         GestureKind::EdgeSwipe => {
-            row(ui, "Fingers", |ui| fingers(ui, &mut t.fingers, 1));
-            row(ui, "From edge", |ui| {
+            w::row(ui, "Fingers", "", |ui| fingers(ui, &mut t.fingers, 1));
+            w::row(ui, "Starts at the", "", |ui| {
                 let mut e = t.edge.unwrap_or_default();
-                for x in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
-                    ui.radio_value(&mut e, x, format!("{x:?}").to_lowercase());
-                }
+                w::segmented(
+                    ui,
+                    &mut e,
+                    &[
+                        (Edge::Left, "Left"),
+                        (Edge::Right, "Right"),
+                        (Edge::Top, "Top"),
+                        (Edge::Bottom, "Bottom"),
+                    ],
+                );
                 t.edge = Some(e);
             });
-            row(ui, "Direction", |ui| {
+            w::row(ui, "Direction", "", |ui| {
                 let mut d = t.direction.unwrap_or(Direction::Right);
-                direction_combo(ui, id, "dir", &mut d);
+                w::direction_picker(ui, &mut d, true);
                 t.direction = Some(d);
             });
         }
         GestureKind::Pinch => {
-            row(ui, "Fingers", |ui| fingers(ui, &mut t.fingers, 2));
-            row(ui, "Fingers move", |ui| {
+            w::row(ui, "Fingers", "", |ui| fingers(ui, &mut t.fingers, 2));
+            w::row(ui, "Fingers move", "", |ui| {
                 let mut z = t.zoom.unwrap_or(Zoom::In);
-                ui.radio_value(&mut z, Zoom::In, "closer (pinch in)");
-                ui.radio_value(&mut z, Zoom::Out, "apart (pinch out)");
+                w::segmented(ui, &mut z, &[(Zoom::In, "Closer"), (Zoom::Out, "Apart")]);
                 t.zoom = Some(z);
             });
         }
         GestureKind::Rotate => {
-            row(ui, "Fingers", |ui| fingers(ui, &mut t.fingers, 2));
-            row(ui, "Turn", |ui| {
+            w::row(ui, "Fingers", "", |ui| fingers(ui, &mut t.fingers, 2));
+            w::row(ui, "Turn", "", |ui| {
                 let mut r = t.rotation.unwrap_or(Turn::Clockwise);
-                ui.radio_value(&mut r, Turn::Clockwise, "clockwise");
-                ui.radio_value(&mut r, Turn::Counterclockwise, "counterclockwise");
+                w::segmented_with_icons(
+                    ui,
+                    &mut r,
+                    &[
+                        (Turn::Clockwise, icons::ARROW_CLOCKWISE, "Clockwise"),
+                        (
+                            Turn::Counterclockwise,
+                            icons::ARROW_COUNTER_CLOCKWISE,
+                            "Counterclockwise",
+                        ),
+                    ],
+                );
                 t.rotation = Some(r);
             });
         }
         GestureKind::Click => {
-            row(ui, "Fingers", |ui| fingers(ui, &mut t.fingers, 1));
-            row(ui, "Drag", |ui| {
-                let mut drag = t.direction.is_some();
-                ui.checkbox(&mut drag, "click and drag");
-                if drag {
-                    let mut d = t.direction.unwrap_or(Direction::Down);
-                    direction_combo(ui, id, "drag", &mut d);
-                    t.direction = Some(d);
-                } else {
-                    t.direction = None;
-                }
-            });
-            ui.weak("The click itself still reaches Windows: raw input cannot hold it back.");
+            w::row(ui, "Fingers", "", |ui| fingers(ui, &mut t.fingers, 1));
+            w::row(
+                ui,
+                "Drag",
+                "The click itself still reaches Windows: raw input cannot hold it back.",
+                |ui| {
+                    let mut drag = t.direction.is_some();
+                    ui.horizontal(|ui| {
+                        w::switch(ui, &mut drag);
+                        ui.label("Click and drag");
+                    });
+                    if drag {
+                        let mut d = t.direction.unwrap_or(Direction::Down);
+                        w::direction_picker(ui, &mut d, true);
+                        t.direction = Some(d);
+                    } else {
+                        t.direction = None;
+                    }
+                },
+            );
         }
         GestureKind::Symbol => {
             let mut chosen = t.symbol.as_ref().map(OneOrMany::to_vec).unwrap_or_default();
-            row(ui, "Symbols", |ui| {
+            w::row(ui, "Symbols", "Any of the chosen ones triggers it.", |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                     for s in symbols {
                         let mut on = chosen.contains(s);
-                        if ui.toggle_value(&mut on, s).changed() {
+                        let r = w::chip(ui, s, on);
+                        if r.clicked() {
+                            on = !on;
                             if on {
                                 chosen.push(s.clone());
                             } else {
@@ -225,50 +274,79 @@ pub fn trigger_form(
                             }
                         }
                     }
-                    for s in chosen.clone().iter().filter(|s| !symbols.contains(s)) {
-                        ui.colored_label(style::WARN, s)
-                            .on_hover_text("No templates yet: record some in Review gestures");
-                    }
                 });
+                for s in chosen.iter().filter(|s| !symbols.contains(s)) {
+                    w::warn_text(
+                        ui,
+                        &format!("“{s}” has no examples yet: record some in Review."),
+                    );
+                }
             });
             t.symbol = match chosen.len() {
                 0 => None,
                 1 => Some(OneOrMany::One(chosen[0].clone())),
                 _ => Some(OneOrMany::Many(chosen)),
             };
-            row(ui, "Minimum score", |ui| {
-                let mut c = t.confidence.unwrap_or(default_confidence);
-                if ui.add(egui::Slider::new(&mut c, 0.5..=0.99)).changed() {
-                    t.confidence = Some(c);
-                }
-                if t.confidence.is_some() {
-                    if ui.small_button("Restore default").clicked() {
-                        t.confidence = None;
-                    }
-                } else {
-                    ui.weak(format!("default {default_confidence:.2}"));
-                }
-            });
+            w::row(
+                ui,
+                "Minimum score",
+                "How close a drawing must be to count.",
+                |ui| {
+                    ui.horizontal(|ui| {
+                        let mut c = t.confidence.unwrap_or(default_confidence);
+                        if w::slider(ui, egui::Slider::new(&mut c, 0.5..=0.99).fixed_decimals(2))
+                            .changed()
+                        {
+                            t.confidence = Some(c);
+                        }
+                        if t.confidence.is_some() {
+                            if w::icon_button(
+                                ui,
+                                icons::ARROW_COUNTER_CLOCKWISE,
+                                "Restore the default",
+                            )
+                            .clicked()
+                            {
+                                t.confidence = None;
+                            }
+                        } else {
+                            ui.label(w::faint(ui, "default"));
+                        }
+                    });
+                },
+            );
         }
         GestureKind::Sequence => {}
     }
+    let _ = id;
 }
 
 fn chord(ui: &mut egui::Ui, t: &mut TriggerDef) {
-    row(ui, "Chord", |ui| {
-        let mut on = t.modifier_fingers.is_some();
-        ui.checkbox(&mut on, "while other fingers rest");
-        if on {
-            let mut m = t.modifier_fingers.unwrap_or(1);
-            ui.add(egui::Slider::new(&mut m, 1..=3).text("resting"));
-            t.modifier_fingers = Some(m);
-            if t.taps.is_some() {
-                t.taps = None;
+    w::row(
+        ui,
+        "Chord",
+        "Other fingers rest while these ones move.",
+        |ui| {
+            let mut on = t.modifier_fingers.is_some();
+            ui.horizontal(|ui| {
+                w::switch(ui, &mut on);
+                ui.label("With resting fingers");
+            });
+            if on {
+                let mut m = t.modifier_fingers.unwrap_or(1);
+                ui.horizontal(|ui| {
+                    w::stepper(ui, &mut m, 1, 3);
+                    ui.label(w::dim(ui, "resting"));
+                });
+                t.modifier_fingers = Some(m);
+                if t.taps.is_some() {
+                    t.taps = None;
+                }
+            } else {
+                t.modifier_fingers = None;
             }
-        } else {
-            t.modifier_fingers = None;
-        }
-    });
+        },
+    );
 }
 
 /// The steps of a sequence and the pause allowed between them.
@@ -279,38 +357,64 @@ pub fn sequence_form(
     symbols: &[String],
     default_confidence: f32,
 ) {
+    let p = pal(ui);
     let steps = def.steps.get_or_insert_with(Vec::new);
     let mut remove = None;
     let mut swap = None;
     let n = steps.len();
     for (i, step) in steps.iter_mut().enumerate() {
-        style::card(ui, &format!("Step {}", i + 1), |ui| {
-            trigger_form(
-                ui,
-                id.with(("step", i)),
-                step,
-                symbols,
-                default_confidence,
-                false,
-            );
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(i > 0, egui::Button::new("↑").small())
-                    .clicked()
-                {
-                    swap = Some((i, i - 1));
-                }
-                if ui
-                    .add_enabled(i + 1 < n, egui::Button::new("↓").small())
-                    .clicked()
-                {
-                    swap = Some((i, i + 1));
-                }
-                if ui.small_button("Remove step").clicked() {
-                    remove = Some(i);
-                }
+        egui::Frame::new()
+            .fill(p.bg)
+            .corner_radius(egui::CornerRadius::same(theme::radius::CARD))
+            .inner_margin(egui::Margin::same(space::M as i8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    w::badge(ui, &format!("Step {}", i + 1), Tone::Accent);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if w::icon_button_tone(ui, icons::TRASH, "Remove this step", Tone::Bad)
+                            .clicked()
+                        {
+                            remove = Some(i);
+                        }
+                        if ui
+                            .add_enabled(
+                                i + 1 < n,
+                                egui::Button::new(w::icon_text(
+                                    icons::ARROW_DOWN,
+                                    14.0,
+                                    p.text_dim,
+                                ))
+                                .frame(false),
+                            )
+                            .on_hover_text("Move down")
+                            .clicked()
+                        {
+                            swap = Some((i, i + 1));
+                        }
+                        if ui
+                            .add_enabled(
+                                i > 0,
+                                egui::Button::new(w::icon_text(icons::ARROW_UP, 14.0, p.text_dim))
+                                    .frame(false),
+                            )
+                            .on_hover_text("Move up")
+                            .clicked()
+                        {
+                            swap = Some((i, i - 1));
+                        }
+                    });
+                });
+                trigger_form(
+                    ui,
+                    id.with(("step", i)),
+                    step,
+                    symbols,
+                    default_confidence,
+                    false,
+                );
             });
-        });
+        ui.add_space(space::S);
     }
     if let Some((a, b)) = swap {
         steps.swap(a, b);
@@ -318,50 +422,89 @@ pub fn sequence_form(
     if let Some(i) = remove {
         steps.remove(i);
     }
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(steps.len() < 4, egui::Button::new("+ Add step"))
-            .clicked()
-        {
-            steps.push(TriggerDef {
-                kind: Some(GestureKind::Tap),
-                fingers: Some(3),
-                ..Default::default()
-            });
-        }
-        let mut within = def
-            .within_ms
-            .unwrap_or(glyphpad_core::config::DEFAULT_SEQUENCE_WITHIN_MS);
-        ui.label("each within");
-        if ui
-            .add(
-                egui::DragValue::new(&mut within)
-                    .range(100..=5000)
-                    .suffix(" ms"),
-            )
-            .changed()
-        {
-            def.within_ms = Some(within);
-        }
-    });
-    ui.weak("The first step's own gesture waits for the next step before it runs.");
+    let can_add = steps.len() < 4;
+    if w::button_enabled(ui, icons::PLUS, "Add a step", can_add).clicked() {
+        steps.push(TriggerDef {
+            kind: Some(GestureKind::Tap),
+            fingers: Some(3),
+            ..Default::default()
+        });
+    }
+    w::row(
+        ui,
+        "Time between steps",
+        "The first step's own gesture waits for the next step before it runs.",
+        |ui| {
+            let mut within = def
+                .within_ms
+                .unwrap_or(glyphpad_core::config::DEFAULT_SEQUENCE_WITHIN_MS);
+            if ui
+                .add(
+                    egui::DragValue::new(&mut within)
+                        .range(100..=5000)
+                        .suffix(" ms"),
+                )
+                .changed()
+            {
+                def.within_ms = Some(within);
+            }
+        },
+    );
 }
 
-const ACTIONS: &[(&str, &str)] = &[
-    ("keys", "Press a shortcut"),
-    ("lock_screen", "Lock the PC"),
-    ("close_window", "Close the window in front"),
-    ("minimize", "Minimize the window"),
-    ("maximize", "Maximize / restore the window"),
-    ("run", "Run a program"),
-    ("media", "Media key"),
-    ("chain", "Several actions in a row"),
-    ("notify", "Show a message"),
-    ("toggle_enabled", "Pause / resume gestures"),
-    ("repeat_last", "Repeat the last gesture"),
-    ("show_window", "Show the GlyphPad window"),
-    ("draw_symbol", "Draw a symbol with one finger next"),
+const ACTIONS: &[(&str, &str, &str)] = &[
+    ("keys", icons::KEYBOARD, "Press a shortcut"),
+    ("lock_screen", icons::LOCK_SIMPLE, "Lock the PC"),
+    ("close_window", icons::X, "Close the window in front"),
+    ("minimize", icons::MINUS, "Minimize the window"),
+    ("maximize", icons::SQUARE, "Maximize / restore the window"),
+    ("run", icons::TERMINAL_WINDOW, "Run a program"),
+    ("media", icons::PLAY_PAUSE, "Media key"),
+    ("chain", icons::STACK, "Several actions in a row"),
+    ("notify", icons::BELL, "Show a message"),
+    ("toggle_enabled", icons::POWER, "Pause / resume gestures"),
+    ("repeat_last", icons::REPEAT, "Repeat the last gesture"),
+    ("show_window", icons::APP_WINDOW, "Show the GlyphPad window"),
+    (
+        "draw_symbol",
+        icons::SCRIBBLE_LOOP,
+        "Draw a symbol with one finger next",
+    ),
 ];
+
+pub fn action_icon(kind: &str) -> &'static str {
+    ACTIONS
+        .iter()
+        .find(|(k, _, _)| *k == kind)
+        .map_or(icons::TIMER, |(_, i, _)| i)
+}
+
+pub fn action_label(kind: &str) -> &'static str {
+    ACTIONS
+        .iter()
+        .find(|(k, _, _)| *k == kind)
+        .map_or("Pause", |(_, _, l)| l)
+}
+
+/// A short name of an action, for lists.
+pub fn action_short(kind: &str) -> &'static str {
+    match kind {
+        "keys" => "Shortcut",
+        "lock_screen" => "Lock",
+        "close_window" => "Close window",
+        "minimize" => "Minimize",
+        "maximize" => "Maximize",
+        "run" => "Run program",
+        "media" => "Media key",
+        "chain" => "Several actions",
+        "notify" => "Message",
+        "toggle_enabled" => "Pause / resume",
+        "repeat_last" => "Repeat last",
+        "show_window" => "Show window",
+        "draw_symbol" => "Draw symbol",
+        _ => "Pause",
+    }
+}
 
 fn default_action(kind: &str) -> Action {
     match kind {
@@ -425,6 +568,7 @@ pub fn key_name(key: egui::Key) -> Option<String> {
 
 /// A shortcut field: typed, or captured by pressing it.
 fn shortcut_field(ui: &mut egui::Ui, id: Id, combo: &mut Option<KeyCombo>) {
+    let p = pal(ui);
     let text_id = id.with("text");
     let capture_id = id.with("capture");
     let mut text: String = ui
@@ -432,31 +576,35 @@ fn shortcut_field(ui: &mut egui::Ui, id: Id, combo: &mut Option<KeyCombo>) {
         .unwrap_or_else(|| combo.as_ref().map(ToString::to_string).unwrap_or_default());
     let mut capturing: bool = ui.data_mut(|d| d.get_temp(capture_id)).unwrap_or(false);
     ui.horizontal(|ui| {
-        let edit = ui.add(
-            egui::TextEdit::singleline(&mut text)
-                .desired_width(150.0)
-                .hint_text("e.g. Ctrl+Shift+T"),
-        );
+        let edit = w::text_field(ui, &mut text, "e.g. Ctrl+Shift+T", 170.0);
         if edit.changed()
             && let Ok(c) = text.parse::<KeyCombo>()
         {
             *combo = Some(c);
         }
-        if ui
-            .selectable_label(
-                capturing,
-                if capturing {
-                    "Press the shortcut…"
-                } else {
-                    "Record"
-                },
+        let label = if capturing {
+            "Press the keys…"
+        } else {
+            "Record"
+        };
+        let btn = if capturing {
+            egui::Button::new(
+                RichText::new(format!("{}  {label}", icons::RECORD)).color(p.on_accent),
             )
+            .fill(p.bad)
+            .stroke(egui::Stroke::NONE)
+        } else {
+            egui::Button::new(format!("{}  {label}", icons::RECORD))
+        };
+        if ui
+            .add(btn.min_size(egui::vec2(0.0, theme::CONTROL_HEIGHT)))
             .on_hover_text("Press the key combination to use")
             .clicked()
         {
             capturing = !capturing;
         }
         if capturing {
+            ui.ctx().request_repaint();
             let pressed = ui.input_mut(|i| {
                 let mut found = None;
                 i.events.retain(|e| match e {
@@ -492,67 +640,81 @@ fn shortcut_field(ui: &mut egui::Ui, id: Id, combo: &mut Option<KeyCombo>) {
         }
     });
     let valid = text.parse::<KeyCombo>().is_ok();
+    if valid && !text.is_empty() {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for (i, part) in text.split('+').enumerate() {
+                if i > 0 {
+                    ui.label(w::faint(ui, "+"));
+                }
+                w::kbd(ui, part.trim());
+            }
+        });
+    }
     if !valid && !text.is_empty() {
-        ui.colored_label(style::BAD, "Not a valid shortcut");
+        w::error_text(ui, "Not a valid shortcut");
     }
     if text.eq_ignore_ascii_case("win+l") {
-        ui.colored_label(
-            style::WARN,
-            "Win+L cannot be simulated; use “Lock the PC” instead.",
-        );
+        w::warn_text(ui, "Win+L cannot be simulated; use “Lock the PC” instead.");
     }
-    ui.weak("The Windows key and some system shortcuts are taken by Windows before GlyphPad sees them: type those.");
+    w::hint(
+        ui,
+        "The Windows key and some system shortcuts are taken by Windows before GlyphPad sees them: type those.",
+    );
     ui.data_mut(|d| {
         d.insert_temp(text_id, text);
         d.insert_temp(capture_id, capturing);
     });
 }
 
+fn action_picker(ui: &mut egui::Ui, id: Id, action: &mut Action, nested: bool) {
+    let kind = action.kind();
+    let current = format!("{}  {}", action_icon(kind), action_label(kind));
+    egui::ComboBox::from_id_salt(id.with("kind"))
+        .width(280.0)
+        .selected_text(current)
+        .show_ui(ui, |ui| {
+            for (k, icon, label) in ACTIONS {
+                if nested
+                    && matches!(
+                        *k,
+                        "chain" | "repeat_last" | "draw_symbol" | "toggle_enabled" | "show_window"
+                    )
+                {
+                    continue;
+                }
+                if ui
+                    .selectable_label(*k == kind, format!("{icon}  {label}"))
+                    .clicked()
+                    && *k != kind
+                {
+                    *action = default_action(k);
+                }
+            }
+            if nested
+                && ui
+                    .selectable_label(kind == "wait", format!("{}  Pause", icons::TIMER))
+                    .clicked()
+                && kind != "wait"
+            {
+                *action = default_action("wait");
+            }
+        });
+}
+
 /// Edits an action; `nested` hides the kinds a chain cannot contain.
 pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nested: bool) {
-    let kind = action.kind();
     ui.horizontal(|ui| {
-        let label = ACTIONS
-            .iter()
-            .find(|(k, _)| *k == kind)
-            .map_or(if kind == "wait" { "Pause" } else { kind }, |(_, l)| *l);
-        egui::ComboBox::from_id_salt(id.with("kind"))
-            .width(230.0)
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                for (k, l) in ACTIONS {
-                    if nested
-                        && matches!(
-                            *k,
-                            "chain"
-                                | "repeat_last"
-                                | "draw_symbol"
-                                | "toggle_enabled"
-                                | "show_window"
-                        )
-                    {
-                        continue;
-                    }
-                    if ui.selectable_label(*k == kind, *l).clicked() && *k != kind {
-                        *action = default_action(k);
-                    }
-                }
-                if nested
-                    && ui.selectable_label(kind == "wait", "Pause").clicked()
-                    && kind != "wait"
-                {
-                    *action = default_action("wait");
-                }
-            });
+        action_picker(ui, id, action, nested);
         if !nested
-            && ui
-                .button("▶ Run now")
-                .on_hover_text("Try the action")
+            && w::button(ui, icons::PLAY, "Try it")
+                .on_hover_text("Run this action now")
                 .clicked()
         {
             cx.send(Command::RunAction(action.clone()));
         }
     });
+    ui.add_space(space::XS);
     match action {
         Action::Keys { combo, sequence } => {
             if sequence.is_empty() {
@@ -566,14 +728,17 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
-                if ui.small_button("Use a single shortcut instead").clicked() {
+                if w::small_button(ui, "Use a single shortcut instead").clicked() {
                     *combo = sequence.first().cloned();
                     sequence.clear();
                 }
             }
         }
         Action::CloseWindow { force } => {
-            ui.checkbox(force, "Terminate the program instead of asking it to close");
+            ui.horizontal(|ui| {
+                w::switch(ui, force);
+                ui.label("Terminate the program instead of asking it to close");
+            });
         }
         Action::Run {
             command,
@@ -582,12 +747,8 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
             cwd,
         } => {
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(command)
-                        .desired_width(260.0)
-                        .hint_text("program, e.g. wt.exe"),
-                );
-                if ui.button("Browse…").clicked()
+                w::text_field(ui, command, "program, e.g. wt.exe", 280.0);
+                if w::button(ui, icons::FOLDER_OPEN, "Browse").clicked()
                     && let Some(p) = rfd::FileDialog::new()
                         .add_filter("Programs", &["exe", "bat", "cmd", "ps1"])
                         .pick_file()
@@ -596,32 +757,21 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                 }
             });
             let mut a = args.join(" ");
-            if ui
-                .add(
-                    egui::TextEdit::singleline(&mut a)
-                        .desired_width(320.0)
-                        .hint_text("arguments, separated by spaces"),
-                )
-                .changed()
-            {
+            if w::text_field(ui, &mut a, "arguments, separated by spaces", 360.0).changed() {
                 *args = a.split_whitespace().map(str::to_string).collect();
             }
             let mut dir = cwd.clone().unwrap_or_default();
-            if ui
-                .add(
-                    egui::TextEdit::singleline(&mut dir)
-                        .desired_width(320.0)
-                        .hint_text("working folder (optional)"),
-                )
-                .changed()
-            {
+            if w::text_field(ui, &mut dir, "working folder (optional)", 360.0).changed() {
                 *cwd = (!dir.trim().is_empty()).then_some(dir);
             }
-            ui.checkbox(hidden, "Without a console window");
+            ui.horizontal(|ui| {
+                w::switch(ui, hidden);
+                ui.label("Without a console window");
+            });
         }
         Action::Media { key } => {
             egui::ComboBox::from_id_salt(id.with("media"))
-                .selected_text(format!("{key:?}"))
+                .selected_text(media_label(*key))
                 .show_ui(ui, |ui| {
                     for m in [
                         MediaKey::PlayPause,
@@ -632,69 +782,158 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                         MediaKey::VolumeDown,
                         MediaKey::Mute,
                     ] {
-                        ui.selectable_value(key, m, format!("{m:?}"));
+                        ui.selectable_value(key, m, media_label(m));
                     }
                 });
         }
         Action::Notify { title, message } => {
             let mut t = title.clone().unwrap_or_default();
-            if ui
-                .add(egui::TextEdit::singleline(&mut t).hint_text("title (optional)"))
-                .changed()
-            {
+            if w::text_field(ui, &mut t, "title (optional)", 360.0).changed() {
                 *title = (!t.is_empty()).then_some(t);
             }
-            ui.add(egui::TextEdit::singleline(message).hint_text("message"));
+            w::text_field(ui, message, "message", 360.0);
         }
         Action::Wait { ms } => {
             ui.add(egui::DragValue::new(ms).range(10..=60_000).suffix(" ms"));
         }
-        Action::Chain { actions } => {
-            let n = actions.len();
-            let (mut remove, mut swap) = (None, None);
-            for (i, a) in actions.iter_mut().enumerate() {
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.weak(format!("{}.", i + 1));
-                        if ui
-                            .add_enabled(i > 0, egui::Button::new("↑").small())
-                            .clicked()
-                        {
-                            swap = Some((i, i - 1));
+        Action::Chain { actions } => chain_form(ui, cx, id, actions),
+        _ => {}
+    }
+    if let Err(e) = action.validate() {
+        w::error_text(ui, &e);
+    }
+}
+
+fn media_label(m: MediaKey) -> &'static str {
+    match m {
+        MediaKey::PlayPause => "Play / pause",
+        MediaKey::Next => "Next track",
+        MediaKey::Previous => "Previous track",
+        MediaKey::Stop => "Stop",
+        MediaKey::VolumeUp => "Volume up",
+        MediaKey::VolumeDown => "Volume down",
+        MediaKey::Mute => "Mute",
+    }
+}
+
+fn chain_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, actions: &mut Vec<Action>) {
+    let p = pal(ui);
+    let n = actions.len();
+    let (mut remove, mut swap) = (None, None);
+    for (i, a) in actions.iter_mut().enumerate() {
+        egui::Frame::new()
+            .fill(p.bg)
+            .corner_radius(egui::CornerRadius::same(theme::radius::CARD))
+            .inner_margin(egui::Margin::same(space::M as i8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    w::badge(ui, &format!("{}", i + 1), Tone::Neutral);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if w::icon_button_tone(ui, icons::TRASH, "Remove", Tone::Bad).clicked() {
+                            remove = Some(i);
                         }
                         if ui
-                            .add_enabled(i + 1 < n, egui::Button::new("↓").small())
+                            .add_enabled(
+                                i + 1 < n,
+                                egui::Button::new(w::icon_text(
+                                    icons::ARROW_DOWN,
+                                    14.0,
+                                    p.text_dim,
+                                ))
+                                .frame(false),
+                            )
+                            .on_hover_text("Move down")
                             .clicked()
                         {
                             swap = Some((i, i + 1));
                         }
-                        if ui.small_button("✕").on_hover_text("Remove").clicked() {
-                            remove = Some(i);
+                        if ui
+                            .add_enabled(
+                                i > 0,
+                                egui::Button::new(w::icon_text(icons::ARROW_UP, 14.0, p.text_dim))
+                                    .frame(false),
+                            )
+                            .on_hover_text("Move up")
+                            .clicked()
+                        {
+                            swap = Some((i, i - 1));
                         }
                     });
-                    action_form(ui, cx, id.with(("chain", i)), a, true);
                 });
+                action_form(ui, cx, id.with(("chain", i)), a, true);
+            });
+        ui.add_space(space::S);
+    }
+    if let Some((a, b)) = swap {
+        actions.swap(a, b);
+    }
+    if let Some(i) = remove {
+        actions.remove(i);
+    }
+    ui.horizontal(|ui| {
+        if w::button(ui, icons::PLUS, "Action").clicked() {
+            actions.push(default_action("keys"));
+        }
+        if w::button(ui, icons::TIMER, "Pause").clicked() {
+            actions.push(default_action("wait"));
+        }
+    });
+}
+
+/// A list of application names (executables), with removal, a picker over
+/// the open windows and manual entry.
+pub fn app_list(ui: &mut egui::Ui, cx: &Ctx, id: Id, apps: &mut Vec<String>) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        let mut remove = None;
+        for (i, a) in apps.iter().enumerate() {
+            if w::tag(ui, a) {
+                remove = Some(i);
             }
-            if let Some((a, b)) = swap {
-                actions.swap(a, b);
-            }
-            if let Some(i) = remove {
-                actions.remove(i);
-            }
-            ui.horizontal(|ui| {
-                if ui.button("+ Action").clicked() {
-                    actions.push(default_action("keys"));
+        }
+        if let Some(i) = remove {
+            apps.remove(i);
+        }
+    });
+    ui.horizontal(|ui| {
+        let add = egui::ComboBox::from_id_salt(id.with("pick-app"))
+            .selected_text(format!("{}  Add an open app", icons::PLUS))
+            .width(200.0)
+            .show_ui(ui, |ui| {
+                let mut seen = std::collections::BTreeSet::new();
+                for a in &cx.shared.open_apps {
+                    if seen.insert(a.exe.to_lowercase())
+                        && ui
+                            .selectable_label(false, format!("{}  —  {}", a.exe, a.title))
+                            .clicked()
+                        && !apps.iter().any(|x| x.eq_ignore_ascii_case(&a.exe))
+                    {
+                        apps.push(a.exe.clone());
+                    }
                 }
-                if ui.button("+ Pause").clicked() {
-                    actions.push(default_action("wait"));
+                if cx.shared.open_apps.is_empty() {
+                    ui.label(w::dim(ui, "Open windows are being listed…"));
                 }
             });
+        if add.response.clicked() {
+            cx.send(Command::ListWindows);
         }
-        _ => {}
-    }
-    if let Err(e) = action.validate() {
-        ui.colored_label(style::BAD, e);
-    }
+        let typed_id = id.with("typed-app");
+        let mut typed: String = ui.data_mut(|d| d.get_temp(typed_id)).unwrap_or_default();
+        let r = w::text_field(ui, &mut typed, "or type name.exe, then Enter", 190.0);
+        if r.lost_focus()
+            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+            && !typed.trim().is_empty()
+        {
+            let t = typed.trim().to_string();
+            if !apps.iter().any(|x| x.eq_ignore_ascii_case(&t)) {
+                apps.push(t);
+            }
+            typed.clear();
+        }
+        ui.data_mut(|d| d.insert_temp(typed_id, typed));
+    });
 }
 
 /// Where and when the gesture works: apps, window title, profile.
@@ -707,117 +946,63 @@ pub fn conditions_form(
 ) {
     let when = def.when.get_or_insert_with(When::default);
     let mut apps = when.app.as_ref().map(OneOrMany::to_vec).unwrap_or_default();
-    row(ui, "Only in apps", |ui| {
-        ui.vertical(|ui| {
-            ui.horizontal_wrapped(|ui| {
-                let mut remove = None;
-                for (i, a) in apps.iter().enumerate() {
-                    if ui
-                        .button(format!("{a}  ✕"))
-                        .on_hover_text("Remove")
-                        .clicked()
-                    {
-                        remove = Some(i);
-                    }
-                }
-                if let Some(i) = remove {
-                    apps.remove(i);
-                }
-                if apps.is_empty() {
-                    ui.weak("everywhere");
-                }
-            });
-            ui.horizontal(|ui| {
-                let add = egui::ComboBox::from_id_salt(id.with("pick-app"))
-                    .selected_text("Add an open app…")
-                    .width(220.0)
-                    .show_ui(ui, |ui| {
-                        let mut seen = std::collections::BTreeSet::new();
-                        for a in &cx.shared.open_apps {
-                            if seen.insert(a.exe.to_lowercase())
-                                && ui
-                                    .selectable_label(false, format!("{}  —  {}", a.exe, a.title))
-                                    .clicked()
-                                && !apps.iter().any(|x| x.eq_ignore_ascii_case(&a.exe))
-                            {
-                                apps.push(a.exe.clone());
-                            }
-                        }
-                        if cx.shared.open_apps.is_empty() {
-                            ui.weak("No list yet");
-                        }
-                    });
-                if add.response.clicked() {
-                    cx.send(Command::ListWindows);
-                }
-                let typed_id = id.with("typed-app");
-                let mut typed: String = ui.data_mut(|d| d.get_temp(typed_id)).unwrap_or_default();
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut typed)
-                        .desired_width(120.0)
-                        .hint_text("or type name.exe"),
-                );
-                if r.lost_focus()
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    && !typed.trim().is_empty()
-                {
-                    apps.push(typed.trim().to_string());
-                    typed.clear();
-                }
-                ui.data_mut(|d| d.insert_temp(typed_id, typed));
-            });
-        });
-    });
+    w::row(
+        ui,
+        "Only in these apps",
+        "Leave empty to work everywhere.",
+        |ui| app_list(ui, cx, id, &mut apps),
+    );
     when.app = match apps.len() {
         0 => None,
         1 => Some(OneOrMany::One(apps[0].clone())),
         _ => Some(OneOrMany::Many(apps)),
     };
-    row(ui, "Window title", |ui| {
-        let mut t = when.title.clone().unwrap_or_default();
-        if ui
-            .add(
-                egui::TextEdit::singleline(&mut t)
-                    .desired_width(220.0)
-                    .hint_text("regular expression (optional)"),
-            )
-            .changed()
-        {
-            when.title = (!t.trim().is_empty()).then_some(t);
-        }
-        if let Some(t) = &when.title
-            && let Err(e) = regex_check(t)
-        {
-            ui.colored_label(style::BAD, e);
-        }
-    });
+    w::row(
+        ui,
+        "Window title",
+        "A regular expression, optional.",
+        |ui| {
+            let mut t = when.title.clone().unwrap_or_default();
+            if w::text_field(ui, &mut t, "e.g. ^Inbox", 280.0).changed() {
+                when.title = (!t.trim().is_empty()).then_some(t);
+            }
+            if let Some(t) = &when.title
+                && let Err(e) = regex_check(t)
+            {
+                w::error_text(ui, &e);
+            }
+        },
+    );
     if when.app.is_none() && when.title.is_none() {
         def.when = None;
     }
-    row(ui, "Profile", |ui| {
-        egui::ComboBox::from_id_salt(id.with("profile"))
-            .selected_text(def.profile.clone().unwrap_or_else(|| "all profiles".into()))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut def.profile, None, "all profiles");
-                for p in profiles {
-                    ui.selectable_value(&mut def.profile, Some(p.clone()), p);
-                }
-            });
-    });
-    row(ui, "Repeatable", |ui| {
-        egui::ComboBox::from_id_salt(id.with("repeat"))
-            .selected_text(match def.repeatable {
-                None => "default",
-                Some(true) => "yes",
-                Some(false) => "no",
-            })
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut def.repeatable, None, "default");
-                ui.selectable_value(&mut def.repeatable, Some(true), "yes");
-                ui.selectable_value(&mut def.repeatable, Some(false), "no");
-            });
-        ui.weak("by “Repeat the last gesture”");
-    });
+    w::row(
+        ui,
+        "Profile",
+        "The gesture works only while it is active.",
+        |ui| {
+            egui::ComboBox::from_id_salt(id.with("profile"))
+                .selected_text(def.profile.clone().unwrap_or_else(|| "All profiles".into()))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut def.profile, None, "All profiles");
+                    for p in profiles {
+                        ui.selectable_value(&mut def.profile, Some(p.clone()), p);
+                    }
+                });
+        },
+    );
+    w::row(
+        ui,
+        "Repeatable",
+        "Whether “Repeat the last gesture” may run it again.",
+        |ui| {
+            w::segmented(
+                ui,
+                &mut def.repeatable,
+                &[(None, "Default"), (Some(true), "Yes"), (Some(false), "No")],
+            );
+        },
+    );
 }
 
 fn regex_check(t: &str) -> Result<(), String> {
@@ -829,15 +1014,6 @@ fn regex_check(t: &str) -> Result<(), String> {
     glyphpad_core::config::parse(&toml)
         .map(|_| ())
         .map_err(|e| e.first().map_or_else(String::new, |d| d.message.clone()))
-}
-
-/// A colored badge for a gesture's state.
-pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
-    egui::Frame::new()
-        .fill(color.gamma_multiply(0.25))
-        .corner_radius(egui::CornerRadius::same(8))
-        .inner_margin(egui::Margin::symmetric(6, 1))
-        .show(ui, |ui| ui.label(RichText::new(text).small().color(color)));
 }
 
 #[cfg(test)]
@@ -855,5 +1031,13 @@ mod tests {
             key_name(egui::Key::OpenBracket).as_deref(),
             Some("BracketLeft")
         );
+    }
+
+    #[test]
+    fn every_action_has_an_icon_and_a_label() {
+        for (kind, _, _) in ACTIONS {
+            assert_ne!(action_icon(kind), icons::TIMER, "{kind}");
+            assert_ne!(action_label(kind), "Pause", "{kind}");
+        }
     }
 }

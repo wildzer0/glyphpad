@@ -70,6 +70,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatic pause while a listed or full-screen application is in front; the tray icon
   shows it. Optional start with Windows (`autostart`).
 
+### Changed
+- The window was rebuilt on a design system: light and dark themes (`theme = "system" |
+  "light" | "dark"` in `[settings]`, also in Settings → Appearance), Phosphor icons, a
+  sidebar with the engine state and the Gestures / Test mode switches, master-detail
+  Gestures page with a visual picker for the type and the direction, and previews that
+  lay out in columns and scale with the window.
+- Configuration changes from the window are saved automatically a moment after the last
+  edit, and only when valid; the bottom bar shows "All changes saved", and problems (invalid
+  draft, file changed on disk, write failure) appear as a message above the page. There is
+  no Save button. Saves made close together share one backup.
+
 ### Fixed
 - Symbols shown as boxes in the window (system fonts are now used on Windows).
 - Template thumbnails stuck in a corner or cut off; the history panel growing during replay.

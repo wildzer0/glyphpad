@@ -13,9 +13,11 @@ mod editor;
 mod forms;
 mod gestures;
 mod icon;
+mod icons;
 mod review;
 mod settings;
-mod style;
+mod theme;
+mod widgets;
 mod wizard;
 
 use std::path::{Path, PathBuf};
@@ -23,7 +25,7 @@ use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::Sender;
 use eframe::egui::ViewportCommand;
-use glyphpad_core::service::{Command, Shared, UiLink};
+use glyphpad_core::service::{Command, EngineMode, Shared, UiLink};
 
 pub use eframe::egui;
 pub use icon::icon_rgba;
@@ -104,15 +106,18 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
         "GlyphPad",
         native,
         Box::new(move |cc| {
-            style::install(&cc.egui_ctx);
+            let snapshot = shared.lock().map(|s| s.clone()).unwrap_or_default();
+            let theme_choice = snapshot.config.settings.theme;
+            theme::install(&cc.egui_ctx, theme_choice);
             let ctx = cc.egui_ctx.clone();
             ui.set_repaint(move || ctx.request_repaint());
             ui.set_visible(!options.start_hidden);
             let tray = tray(cc.egui_ctx.clone());
-            let editor = editor::Editor::new(&shared.lock().map(|s| s.clone()).unwrap_or_default());
+            let editor = editor::Editor::new(&snapshot);
             Ok(Box::new(App {
                 icon: None,
                 editor,
+                applied_theme: theme_choice,
                 pending_wizard: None,
                 shared,
                 commands,
@@ -140,7 +145,9 @@ struct App {
     /// The icon in the navigation bar, and whether it shows "paused".
     icon: Option<(bool, egui::TextureHandle)>,
     editor: editor::Editor,
-    /// A wizard asked for while the draft has unsaved changes.
+    applied_theme: glyphpad_core::config::ThemeChoice,
+    /// A wizard asked for while the draft has unsaved changes: it starts
+    /// once they are saved, since the wizard writes to the same file.
     pending_wizard: Option<wizard::Start>,
     shared: Arc<Mutex<Shared>>,
     commands: Sender<Command>,
@@ -167,6 +174,7 @@ struct App {
 pub(crate) struct Ctx<'a> {
     pub shared: &'a Shared,
     pub commands: &'a Sender<Command>,
+    pub version: &'a str,
 }
 
 impl Ctx<'_> {
@@ -274,11 +282,21 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let shared = self.snapshot();
         let commands = self.commands.clone();
+        let version = self.version.clone();
         let cx = Ctx {
             shared: &shared,
             commands: &commands,
+            version: &version,
         };
-        self.editor.sync(&shared);
+        // The editor follows the file and saves the draft once it settles.
+        if let Some(cmd) = self.editor.frame(ui.ctx(), &shared) {
+            cx.send(cmd);
+        }
+        let choice = self.editor.draft.settings.theme;
+        if choice != self.applied_theme {
+            theme::apply_choice(ui.ctx(), choice);
+            self.applied_theme = choice;
+        }
 
         // Undo / redo of the draft, when not typing (text fields have their own).
         if !ui.ctx().egui_wants_keyboard_input() {
@@ -300,44 +318,71 @@ impl eframe::App for App {
             }
         }
 
+        let p = theme::pal_of(ui.ctx());
         egui::Panel::left("nav")
             .resizable(false)
-            .exact_size(200.0)
+            .exact_size(theme::SIDEBAR_WIDTH)
+            .frame(
+                egui::Frame::new()
+                    .fill(p.sidebar)
+                    .inner_margin(egui::Margin::symmetric(12, 16)),
+            )
+            .show_separator_line(false)
             .show(ui, |ui| self.navigation(ui, &cx));
-        egui::Panel::bottom("status").show(ui, |ui| status_bar(ui, &cx));
-        if self.editor.dirty() || self.editor.external_change {
-            egui::Panel::top("savebar").show(ui, |ui| self.save_bar(ui, &cx));
-        }
-        egui::CentralPanel::default().show(ui, |ui| {
-            if let Some(w) = &mut self.wizard {
-                match w.show(ui, &cx) {
-                    wizard::Outcome::Open => {}
-                    wizard::Outcome::Closed => self.wizard = None,
-                    wizard::Outcome::Test => {
-                        self.wizard = None;
-                        self.tab = Tab::Debug;
+        // A hairline between the sidebar and the content.
+        let nav_right = ui.max_rect().left() + theme::SIDEBAR_WIDTH;
+        ui.painter().line_segment(
+            [
+                egui::pos2(nav_right, ui.max_rect().top()),
+                egui::pos2(nav_right, ui.max_rect().bottom()),
+            ],
+            egui::Stroke::new(1.0, p.border),
+        );
+        egui::Panel::bottom("status")
+            .frame(
+                egui::Frame::new()
+                    .fill(p.bg)
+                    .inner_margin(egui::Margin::symmetric(theme::space::XL as i8, 6)),
+            )
+            .show_separator_line(false)
+            .show(ui, |ui| self.status_bar(ui, &cx));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(p.bg).inner_margin(egui::Margin {
+                left: theme::space::XL as i8,
+                right: theme::space::XL as i8,
+                top: theme::space::XL as i8,
+                bottom: 0,
+            }))
+            .show(ui, |ui| {
+                self.save_banner(ui, &cx);
+                if let Some(wz) = &mut self.wizard {
+                    match wz.show(ui, &cx) {
+                        wizard::Outcome::Open => {}
+                        wizard::Outcome::Closed => self.wizard = None,
+                        wizard::Outcome::Test => {
+                            self.wizard = None;
+                            self.tab = Tab::Debug;
+                        }
                     }
+                    return;
                 }
-                return;
-            }
-            match self.tab {
-                Tab::Gestures => {
-                    if let Some(start) =
-                        gestures::show(ui, &cx, &mut self.editor, &mut self.gestures)
-                    {
-                        self.start_wizard(start);
+                match self.tab {
+                    Tab::Gestures => {
+                        if let Some(start) =
+                            gestures::show(ui, &cx, &mut self.editor, &mut self.gestures)
+                        {
+                            self.start_wizard(start);
+                        }
                     }
-                }
-                Tab::Review => {
-                    if let Some(symbol) = review::show(ui, &cx, &mut self.review) {
-                        self.start_wizard(wizard::Start::AddTemplates(symbol));
+                    Tab::Review => {
+                        if let Some(symbol) = review::show(ui, &cx, &mut self.review) {
+                            self.start_wizard(wizard::Start::AddTemplates(symbol));
+                        }
                     }
+                    Tab::Settings => settings::show(ui, &cx, &mut self.editor, &mut self.settings),
+                    Tab::Debug => debug::show(ui, &cx),
                 }
-                Tab::Settings => settings::show(ui, &cx, &mut self.editor, &mut self.settings),
-                Tab::Debug => debug::show(ui, &cx),
-            }
-        });
-        self.editor.track(ui.ctx());
+            });
         self.dialogs(ui.ctx(), &cx);
     }
 }
@@ -345,210 +390,315 @@ impl eframe::App for App {
 impl App {
     fn start_wizard(&mut self, start: wizard::Start) {
         if self.editor.dirty() {
-            // The wizard saves to the file: unsaved edits must go first.
+            // The wizard writes to the file: edits still waiting go first.
+            self.editor.flush();
             self.pending_wizard = Some(start);
         } else {
             self.wizard = Some(wizard::Wizard::new(start));
         }
     }
 
+    fn leave_wizard(&mut self, cx: &Ctx) {
+        if self.wizard.take().is_some() && cx.shared.mode.is_recording() {
+            cx.send(Command::SetMode(EngineMode::Normal));
+        }
+    }
+
     fn navigation(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
-        ui.add_space(10.0);
         ui.horizontal(|ui| {
+            ui.add_space(4.0);
             let paused = !cx.shared.enabled;
-            if self.icon.as_ref().is_none_or(|(p, _)| *p != paused) {
+            if self.icon.as_ref().is_none_or(|(pp, _)| *pp != paused) {
                 let tex = ui.ctx().load_texture(
                     "app-icon",
-                    egui::ColorImage::from_rgba_unmultiplied([32, 32], &icon_rgba(32, paused)),
+                    egui::ColorImage::from_rgba_unmultiplied([64, 64], &icon_rgba(64, paused)),
                     egui::TextureOptions::LINEAR,
                 );
                 self.icon = Some((paused, tex));
             }
             if let Some((_, tex)) = &self.icon {
-                ui.image((tex.id(), egui::vec2(28.0, 28.0)));
+                ui.image((tex.id(), egui::vec2(32.0, 32.0)));
             }
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new("GlyphPad").size(18.0).strong());
-                ui.weak(format!("v{}", self.version));
+                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.label(egui::RichText::new("GlyphPad").font(theme::fonts::strong(17.0)));
+                ui.label(widgets::faint(ui, format!("v{}", self.version)));
             });
         });
-        ui.add_space(14.0);
+        ui.add_space(theme::space::XL);
         for (tab, icon, name) in [
-            (Tab::Gestures, "✋", "Gestures"),
-            (Tab::Review, "▶", "Review gestures"),
-            (Tab::Settings, "⚙", "Settings"),
-            (Tab::Debug, "🔍", "Live debug"),
+            (Tab::Gestures, icons::HAND_TAP, "Gestures"),
+            (Tab::Review, icons::SCRIBBLE_LOOP, "Review"),
+            (Tab::Settings, icons::GEAR_SIX, "Settings"),
+            (Tab::Debug, icons::PULSE, "Live debug"),
         ] {
             let selected = self.tab == tab && self.wizard.is_none();
-            let text = egui::RichText::new(format!("{icon}   {name}")).size(15.0);
-            if ui
-                .add_sized([180.0, 34.0], egui::Button::selectable(selected, text))
-                .clicked()
-            {
+            if widgets::nav_item(ui, icon, name, selected).clicked() {
+                self.leave_wizard(cx);
                 self.tab = tab;
             }
+            ui.add_space(2.0);
         }
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            ui.add_space(8.0);
-            let s = cx.shared;
-            let (label, color) = match (s.enabled, s.mode, &s.auto_paused) {
-                (_, glyphpad_core::service::EngineMode::Test, _) => ("Test mode", style::WARN),
-                (false, _, _) => ("Paused", egui::Color32::GRAY),
-                (true, m, _) if m.is_recording() => ("Recording", style::BAD),
-                (true, _, Some(_)) => ("Paused for this app", egui::Color32::GRAY),
-                (true, _, None) => ("Active", style::OK),
-            };
-            let button = egui::Button::new(egui::RichText::new(format!("●  {label}")).color(color));
-            if ui
-                .add_sized([180.0, 30.0], button)
-                .on_hover_text(
-                    s.auto_paused
-                        .clone()
-                        .unwrap_or_else(|| "Click to pause or resume all gestures".into()),
-                )
-                .clicked()
-            {
-                cx.send(Command::ToggleEnabled);
-            }
-        });
+        // The card pinned to the bottom of the sidebar: a nested panel
+        // sizes itself to its content, unlike a bottom-up layout.
+        egui::Panel::bottom("nav-status")
+            .frame(egui::Frame::new())
+            .show_separator_line(false)
+            .show(ui, |ui| self.status_card(ui, cx));
     }
 
-    fn save_bar(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let valid = self.editor.check();
-            ui.colored_label(
-                style::WARN,
-                egui::RichText::new("●  Unsaved changes").strong(),
-            );
-            if ui
-                .add_enabled(
-                    valid.is_ok(),
-                    egui::Button::new(egui::RichText::new("💾 Save").strong()),
-                )
-                .clicked()
-                && let Some(cmd) = self.editor.save(cx.shared)
-            {
-                cx.send(cmd);
-            }
-            if ui.button("Discard").clicked() {
-                self.editor.discard(cx.shared);
-            }
-            ui.separator();
-            if ui
-                .add_enabled(self.editor.can_undo(), egui::Button::new("↶ Undo"))
-                .on_hover_text("Ctrl+Z")
-                .clicked()
-            {
-                self.editor.undo();
-            }
-            if ui
-                .add_enabled(self.editor.can_redo(), egui::Button::new("↷ Redo"))
-                .on_hover_text("Ctrl+Y")
-                .clicked()
-            {
-                self.editor.redo();
-            }
-            if let Err(e) = valid {
-                ui.separator();
-                ui.colored_label(style::BAD, e.lines().next().unwrap_or_default())
-                    .on_hover_text(e);
-            }
-        });
-        ui.add_space(4.0);
-    }
-
-    fn dialogs(&mut self, ctx: &egui::Context, cx: &Ctx) {
-        if self.editor.external_change && !self.editor.show_diff {
-            egui::Modal::new(egui::Id::unique("external-change")).show(ctx, |ui| {
-                ui.set_width(440.0);
-                ui.heading("The configuration changed on disk");
-                ui.label("It was edited outside GlyphPad while you had unsaved changes here.");
-                ui.add_space(8.0);
+    /// Whether gestures run, and the two switches that change it.
+    fn status_card(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
+        let p = theme::pal(ui);
+        let s = cx.shared;
+        let (label, tone) = match (s.enabled, s.mode, &s.auto_paused) {
+            (_, EngineMode::Test, _) => ("Test mode", widgets::Tone::Warn),
+            (false, _, _) => ("Paused", widgets::Tone::Neutral),
+            (true, m, _) if m.is_recording() => ("Recording", widgets::Tone::Bad),
+            (true, _, Some(_)) => ("Paused for this app", widgets::Tone::Neutral),
+            (true, _, None) => ("Active", widgets::Tone::Ok),
+        };
+        egui::Frame::new()
+            .fill(p.surface)
+            .stroke(egui::Stroke::new(1.0, p.border))
+            .corner_radius(egui::CornerRadius::same(theme::radius::CARD))
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    for (choice, label) in [
-                        (editor::ConflictChoice::Reload, "Reload from the file"),
+                    let (r, _) =
+                        ui.allocate_exact_size(egui::vec2(12.0, 18.0), egui::Sense::hover());
+                    ui.painter().circle_filled(
+                        r.center(),
+                        5.0,
+                        match tone {
+                            widgets::Tone::Ok => p.ok,
+                            widgets::Tone::Warn => p.warn,
+                            widgets::Tone::Bad => p.bad,
+                            _ => p.text_faint,
+                        },
+                    );
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.label(widgets::strong(label));
+                        if let Some(why) = &s.auto_paused {
+                            ui.add(egui::Label::new(widgets::faint(ui, why)).truncate());
+                        }
+                    });
+                });
+                ui.add_space(theme::space::XS);
+                let mut enabled = s.enabled;
+                ui.horizontal(|ui| {
+                    if widgets::switch(ui, &mut enabled)
+                        .on_hover_text("Pause or resume every gesture")
+                        .changed()
+                    {
+                        cx.send(Command::ToggleEnabled);
+                    }
+                    ui.label(widgets::dim(ui, "Gestures"));
+                });
+                let mut test = s.mode == EngineMode::Test;
+                ui.horizontal(|ui| {
+                    if widgets::switch(ui, &mut test)
+                        .on_hover_text("Recognize gestures without running their actions")
+                        .changed()
+                    {
+                        cx.send(Command::SetMode(if test {
+                            EngineMode::Test
+                        } else {
+                            EngineMode::Normal
+                        }));
+                    }
+                    ui.label(widgets::dim(ui, "Test mode"));
+                });
+            });
+    }
+
+    /// The bottom bar: where the configuration lives, and whether what you
+    /// changed is saved.
+    fn status_bar(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
+        let p = theme::pal(ui);
+        ui.horizontal(|ui| {
+            let text = cx
+                .shared
+                .status
+                .clone()
+                .unwrap_or_else(|| cx.shared.config_path.display().to_string());
+            ui.add(egui::Label::new(widgets::faint(ui, text)).truncate());
+            if !cx.shared.warnings.is_empty() {
+                widgets::badge(
+                    ui,
+                    &format!(
+                        "{} warning{}",
+                        cx.shared.warnings.len(),
+                        if cx.shared.warnings.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ),
+                    widgets::Tone::Warn,
+                )
+                .on_hover_text(cx.shared.warnings.join("\n"));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                use editor::SaveState as S;
+                let (icon, text, color) = match self.editor.state() {
+                    S::Saved => (icons::CHECK_CIRCLE, "All changes saved", p.ok),
+                    S::Waiting | S::Saving => (icons::CIRCLE_NOTCH, "Saving…", p.text_dim),
+                    S::Invalid(_) => (icons::WARNING, "Not saved: needs attention", p.warn),
+                    S::Conflict => (icons::WARNING, "Not saved: file changed", p.warn),
+                    S::Failed(_) => (icons::WARNING_CIRCLE, "Could not save", p.bad),
+                };
+                ui.label(
+                    egui::RichText::new(format!("{icon}  {text}"))
+                        .size(theme::size::SMALL)
+                        .color(color),
+                );
+                ui.add_space(theme::space::S);
+                if widgets::icon_button(ui, icons::ARROW_CLOCKWISE, "Redo (Ctrl+Y)").clicked()
+                    && self.editor.can_redo()
+                {
+                    self.editor.redo();
+                }
+                if widgets::icon_button(ui, icons::ARROW_COUNTER_CLOCKWISE, "Undo (Ctrl+Z)")
+                    .clicked()
+                    && self.editor.can_undo()
+                {
+                    self.editor.undo();
+                }
+            });
+        });
+    }
+
+    /// Says what needs attention about saving, above the page.
+    fn save_banner(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
+        use editor::SaveState as S;
+        match self.editor.state().clone() {
+            S::Invalid(why) => widgets::banner(
+                ui,
+                widgets::Tone::Warn,
+                "These changes are not saved yet",
+                &why,
+                |_| {},
+            ),
+            S::Failed(why) => widgets::banner(
+                ui,
+                widgets::Tone::Bad,
+                "The configuration could not be saved",
+                &why,
+                |ui| {
+                    if widgets::button(ui, icons::ARROWS_CLOCKWISE, "Try again").clicked() {
+                        self.editor.retry();
+                    }
+                },
+            ),
+            S::Conflict => widgets::banner(
+                ui,
+                widgets::Tone::Warn,
+                "The configuration changed on disk",
+                "It was edited outside GlyphPad while you were making changes here.",
+                |ui| {
+                    for (choice, icon, label) in [
+                        (
+                            editor::ConflictChoice::Reload,
+                            icons::DOWNLOAD_SIMPLE,
+                            "Load the file",
+                        ),
                         (
                             editor::ConflictChoice::Overwrite,
-                            "Overwrite it with my changes",
+                            icons::FLOPPY_DISK,
+                            "Keep my changes",
                         ),
-                        (editor::ConflictChoice::ShowDiff, "Show the differences"),
+                        (
+                            editor::ConflictChoice::ShowDiff,
+                            icons::EYE,
+                            "Show differences",
+                        ),
                     ] {
-                        if ui.button(label).clicked()
+                        if widgets::button(ui, icon, label).clicked()
                             && let Some(cmd) = self.editor.resolve_conflict(choice, cx.shared)
                         {
                             cx.send(cmd);
                         }
                     }
-                });
-            });
-        }
-        if self.editor.show_diff {
-            let diff = self.editor.diff(cx.shared);
-            egui::Modal::new(egui::Id::unique("diff")).show(ctx, |ui| {
-                ui.set_width(720.0);
-                ui.heading("File on disk (−) and your changes (+)");
-                egui::ScrollArea::both().max_height(460.0).show(ui, |ui| {
-                    for (mark, line) in diff.iter().filter(|(m, _)| *m != ' ') {
-                        let color = if *mark == '+' { style::OK } else { style::BAD };
-                        ui.label(
-                            egui::RichText::new(format!("{mark} {line}"))
-                                .monospace()
-                                .color(color),
-                        );
-                    }
-                });
-                if ui.button("Close").clicked() {
-                    self.editor.show_diff = false;
-                }
-            });
-        }
-        if let Some(start) = self.pending_wizard.take() {
-            let mut keep = Some(start);
-            egui::Modal::new(egui::Id::unique("wizard-unsaved")).show(ctx, |ui| {
-                ui.set_width(380.0);
-                ui.heading("Unsaved changes");
-                ui.label("The new gesture is written to the configuration: save or discard your changes first.");
-                ui.horizontal(|ui| {
-                    if ui.button("Save and continue").clicked()
-                        && let Some(cmd) = self.editor.save(cx.shared)
-                    {
-                        cx.send(cmd);
-                        self.wizard = keep.take().map(wizard::Wizard::new);
-                    }
-                    if ui.button("Discard and continue").clicked() {
-                        self.editor.discard(cx.shared);
-                        self.wizard = keep.take().map(wizard::Wizard::new);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        keep = None;
-                    }
-                });
-            });
-            self.pending_wizard = keep;
+                },
+            ),
+            S::Saved | S::Waiting | S::Saving => {}
         }
     }
-}
 
-fn status_bar(ui: &mut egui::Ui, cx: &Ctx) {
-    ui.horizontal(|ui| {
-        match &cx.shared.status {
-            Some(s) => {
-                ui.label(s);
-            }
-            None => {
-                ui.weak(format!(
-                    "Configuration: {}",
-                    cx.shared.config_path.display()
-                ));
+    fn dialogs(&mut self, ctx: &egui::Context, cx: &Ctx) {
+        let p = theme::pal_of(ctx);
+        if self.editor.show_diff {
+            let diff = self.editor.diff(cx.shared);
+            let mut close = false;
+            widgets::dialog(
+                ctx,
+                "diff",
+                "File on disk (−) and your changes (+)",
+                720.0,
+                |ui| {
+                    egui::ScrollArea::both().max_height(420.0).show(ui, |ui| {
+                        for (mark, line) in diff.iter().filter(|(m, _)| *m != ' ') {
+                            let color = if *mark == '+' { p.ok } else { p.bad };
+                            ui.label(
+                                egui::RichText::new(format!("{mark} {line}"))
+                                    .font(theme::fonts::mono(12.5))
+                                    .color(color),
+                            );
+                        }
+                    });
+                    ui.add_space(theme::space::M);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if widgets::button(ui, "", "Close").clicked() {
+                            close = true;
+                        }
+                    });
+                },
+            );
+            if close {
+                self.editor.show_diff = false;
             }
         }
-        if !cx.shared.warnings.is_empty() {
-            ui.colored_label(
-                style::WARN,
-                format!("⚠ {} warning(s)", cx.shared.warnings.len()),
-            )
-            .on_hover_text(cx.shared.warnings.join("\n"));
+        if let Some(start) = self.pending_wizard.take() {
+            use editor::SaveState as S;
+            match self.editor.state() {
+                S::Saved => self.wizard = Some(wizard::Wizard::new(start)),
+                S::Waiting | S::Saving => {
+                    self.editor.flush();
+                    self.pending_wizard = Some(start);
+                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                }
+                _ => {
+                    // Something stops the draft from being saved: the
+                    // banner says what; the wizard waits for the user.
+                    let mut cancel = false;
+                    widgets::dialog(
+                        ctx,
+                        "wizard-unsaved",
+                        "Finish your changes first",
+                        400.0,
+                        |ui| {
+                            ui.label(
+                            "The new gesture is written to the same file as your pending changes, which cannot be saved yet. Fix them (see the message at the top), or undo them.",
+                        );
+                            ui.add_space(theme::space::M);
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if widgets::button(ui, "", "Cancel").clicked() {
+                                        cancel = true;
+                                    }
+                                },
+                            );
+                        },
+                    );
+                    if !cancel {
+                        self.pending_wizard = Some(start);
+                    }
+                }
+            }
         }
-    });
+    }
 }
