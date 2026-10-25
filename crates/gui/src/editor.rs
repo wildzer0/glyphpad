@@ -528,6 +528,28 @@ mod tests {
     }
 
     #[test]
+    fn a_gesture_written_by_the_wizard_appears_in_the_draft() {
+        let s1 = shared(FILE, 1);
+        let mut e = Editor::new(&s1);
+        assert_eq!(e.draft.gestures.len(), 2);
+        // What `Command::SaveGesture` does: the file gains a gesture, and the
+        // service publishes the new text with a new revision.
+        let written = FILE.to_string()
+            + "\n[[gesture]]\nname = \"c\"\ntype = \"tap\"\nfingers = 3\naction = { type = \"lock_screen\" }\n";
+        let s2 = shared(&written, 2);
+        e.sync(&s2);
+        assert!(!e.external_change, "a clean draft takes the new file");
+        assert_eq!(
+            e.draft
+                .gestures
+                .iter()
+                .map(|s| s.def.name.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+    }
+
+    #[test]
     fn saves_once_the_draft_has_settled() {
         let s1 = shared(FILE, 1);
         let mut e = Editor::new(&s1);

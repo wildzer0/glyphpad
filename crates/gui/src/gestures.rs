@@ -39,6 +39,11 @@ pub struct State {
     rename: Option<(String, String)>,
     /// The row being dragged to a new priority.
     dragging: Option<u64>,
+    /// Names seen last frame, to notice a gesture added from outside this
+    /// page (the recording wizard, another program).
+    known: Option<Vec<String>>,
+    /// A row to bring into view on this frame.
+    scroll_to: Option<u64>,
     packs: crate::packs::State,
 }
 
@@ -138,6 +143,24 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
         }
     }
 
+    // A gesture added from somewhere else — the recording wizard, another
+    // program editing the file — is selected and brought into view: at the
+    // bottom of a long list it would otherwise look as if it had not been
+    // saved at all.
+    let names: Vec<String> = ed
+        .draft
+        .gestures
+        .iter()
+        .map(|s| s.def.name.clone())
+        .collect();
+    if let Some(known) = &st.known
+        && let Some(uid) = appeared(known, ed)
+    {
+        st.selected = Some(uid);
+        st.scroll_to = st.selected;
+    }
+    st.known = Some(names);
+
     if st.selected.is_some_and(|u| ed.index_of(u).is_none()) {
         st.selected = None;
     }
@@ -183,6 +206,20 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
     profiles_dialog(ui.ctx(), ed, st);
     st.packs.dialogs(ui.ctx(), ed, cx);
     start
+}
+
+/// The gesture that appeared since `known`, when the draft is the file's and
+/// not the user's own edits: what the recording wizard just saved, or another
+/// program editing the file.
+fn appeared(known: &[String], ed: &Editor) -> Option<u64> {
+    if ed.dirty() {
+        return None;
+    }
+    ed.draft
+        .gestures
+        .iter()
+        .find(|s| !known.contains(&s.def.name))
+        .map(|s| s.uid)
 }
 
 fn matches_filters(st: &State, def: &GestureDef) -> bool {
@@ -305,6 +342,10 @@ fn rows(ui: &mut egui::Ui, ed: &mut Editor, st: &mut State) {
         let width = ui.available_width();
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, ROW_HEIGHT), Sense::click());
         drawn.push((uid, rect));
+        if st.scroll_to == Some(uid) {
+            ui.scroll_to_rect(rect, Some(Align::Center));
+            st.scroll_to = None;
+        }
         if ui.is_rect_visible(rect) {
             let fill = if selected {
                 p.accent_soft
@@ -796,5 +837,46 @@ fn profiles_dialog(ctx: &egui::Context, ed: &mut Editor, st: &mut State) {
     if close {
         st.profile_dialog = false;
         st.rename = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use glyphpad_core::config;
+
+    use super::*;
+    use crate::editor::Editor;
+    use glyphpad_core::service::Shared;
+    use std::sync::Arc;
+
+    const FILE: &str = "[settings]\nclose_to_tray = true\n\n[[gesture]]\nname = \"a\"\ntype = \"tap\"\nfingers = 1\naction = { type = \"lock_screen\" }\n\n[[gesture]]\nname = \"b\"\ntype = \"tap\"\nfingers = 2\naction = { type = \"lock_screen\" }\n";
+
+    fn shared(text: &str) -> Shared {
+        Shared {
+            config: Arc::new(config::parse(text).unwrap().config),
+            config_text: Arc::new(text.to_string()),
+            revision: 1,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_gesture_the_page_did_not_know_is_the_one_to_show() {
+        let s = shared(FILE);
+        let e = Editor::new(&s);
+        let (a, b) = (e.draft.gestures[0].uid, e.draft.gestures[1].uid);
+        // Both known: nothing new.
+        assert_eq!(appeared(&["a".into(), "b".into()], &e), None);
+        // The wizard added "b" to the file: it is the one to select.
+        assert_eq!(appeared(&["a".into()], &e), Some(b));
+        // The user's own edits are not "added from outside".
+        let mut dirty = Editor::new(&s);
+        dirty.draft.gestures.push(Slot {
+            uid: 99,
+            def: dirty.draft.gestures[0].def.clone(),
+        });
+        assert!(dirty.dirty());
+        assert_eq!(appeared(&["a".into(), "b".into()], &dirty), None);
+        let _ = a;
     }
 }
