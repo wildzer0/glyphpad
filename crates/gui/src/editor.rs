@@ -197,9 +197,11 @@ impl Editor {
         if let Some(sent) = &self.sent
             && shared.write_refusals > sent.refusals
         {
-            // Our save was refused: the file changed first.
+            // Our save was refused: the file changed first. Take the file as
+            // the base to render against, so the next save is not written
+            // over a text that is no longer there.
             self.sent = None;
-            self.external_change = true;
+            self.rebase(shared);
             return;
         }
         if shared.revision == self.base_revision || self.external_change {
@@ -225,16 +227,42 @@ impl Editor {
         } else if !self.dirty() {
             self.reset(shared);
         } else {
-            // The file changed while the draft has edits of its own. Whatever
-            // the file gained that the draft never had is taken in before
-            // freezing into a conflict: a gesture saved by the wizard (or by
-            // another program) must not disappear from the window just
-            // because a keystroke was in flight. The rest — a gesture edited
-            // on both sides — stays the conflict the user resolves.
+            // The file changed while the draft has edits of its own. The
+            // draft keeps its edits, and the file becomes the base they are
+            // rendered against and the source of the gestures it gained: a
+            // gesture saved by the wizard must never stay invisible, and the
+            // window must never freeze into a conflict it cannot leave.
             self.adopt_new_gestures(shared);
+            self.rebase(shared);
             self.sent = None;
-            self.external_change = true;
         }
+    }
+
+    /// Makes the file's configuration the base the draft is rendered against,
+    /// keeping the uids the draft already uses (by name) so a selection and
+    /// the undo history stay attached. Without it a save would write the
+    /// gestures the file gained a second time.
+    fn rebase(&mut self, shared: &Shared) {
+        let (mut base, _) = Draft::from_config(&shared.config);
+        for slot in &mut base.gestures {
+            if let Some(same) = self
+                .draft
+                .gestures
+                .iter()
+                .find(|s| s.def.name == slot.def.name)
+            {
+                slot.uid = same.uid;
+            }
+        }
+        self.base_origin = base
+            .gestures
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.uid, i))
+            .collect();
+        self.base = base;
+        self.base_text = shared.config_text.as_ref().clone();
+        self.base_revision = shared.revision;
     }
 
     /// Takes in the gestures `shared` has and neither the file's text as the
@@ -659,7 +687,11 @@ mod tests {
             ["renamed", "b", "c"],
             "the edit stays and the new gesture is taken in, not lost to a conflict"
         );
-        assert!(ed.external_change, "the conflict is still reported");
+        assert!(!ed.external_change, "the window keeps following the file");
+        // The next save writes the file's gesture once, not twice.
+        let rendered = ed.render().expect("the merged draft is valid");
+        assert_eq!(rendered.matches("name = \"c\"").count(), 1);
+        assert!(rendered.contains("name = \"renamed\""), "the edit is kept");
     }
 
     #[test]
@@ -734,15 +766,15 @@ mod tests {
     }
 
     #[test]
-    fn external_change_keeps_the_draft() {
+    fn a_file_change_keeps_the_draft_and_the_window_follows_it() {
         let s1 = shared(FILE, 1);
         let mut e = Editor::new(&s1);
         e.draft.settings.close_to_tray = false;
         e.sync(&shared("[settings]\nstart_minimized = true\n", 2));
-        assert!(e.external_change);
+        assert!(!e.external_change, "nothing to get stuck in");
         assert!(!e.draft.settings.close_to_tray, "the draft survives");
-        assert!(step(&mut e, &s1, 10).is_none(), "no saving over a conflict");
-        assert_eq!(e.state(), &SaveState::Conflict);
+        assert_eq!(e.base_revision, 2, "the file is the new base");
+        assert!(e.dirty(), "so the next step saves the edit");
         // A clean editor simply follows the file.
         let mut clean = Editor::new(&s1);
         clean.sync(&shared("[settings]\nstart_minimized = true\n", 2));
@@ -750,7 +782,7 @@ mod tests {
     }
 
     #[test]
-    fn refused_save_becomes_a_conflict() {
+    fn a_refused_save_re_bases_and_keeps_the_edit() {
         let s1 = shared(FILE, 1);
         let mut e = Editor::new(&s1);
         e.draft.settings.close_to_tray = false;
@@ -760,18 +792,10 @@ mod tests {
             ..s1.clone()
         };
         e.sync(&refused);
-        assert!(e.external_change && e.dirty());
-        // Overwriting writes against the current revision.
-        let newer = Shared {
-            revision: 3,
-            ..refused
-        };
-        let Some(Command::WriteConfig { base_revision, .. }) =
-            e.resolve_conflict(ConflictChoice::Overwrite, &newer)
-        else {
-            panic!()
-        };
-        assert_eq!(base_revision, 3);
+        assert!(!e.external_change, "no conflict to get stuck in");
+        assert!(e.dirty(), "the edit is still there to save");
+        // The next step saves it again, against the current revision.
+        assert!(step(&mut e, &refused, 20).is_some());
     }
 
     #[test]
