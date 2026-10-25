@@ -184,6 +184,7 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
         last_preview: Instant::now(),
         trail_shown: false,
         zone_hint: None,
+        scrolling: None,
         last_auto_pause_check: Instant::now() - AUTO_PAUSE_POLL,
         config_text: Arc::new(String::new()),
         revision: 0,
@@ -253,6 +254,8 @@ struct Service {
     /// The zone gesture last announced while a finger rested on it, so the
     /// overlay says it once per touch.
     zone_hint: Option<String>,
+    /// A `scroll_hold` in progress: it scrolls while the fingers move.
+    scrolling: Option<ScrollDrag>,
     last_auto_pause_check: Instant,
     /// The configuration file as last loaded, to tell our own writes and
     /// unchanged saves from real edits on disk.
@@ -405,6 +408,23 @@ impl Service {
                 let live = self.last_preview.elapsed() >= LIVE_INTERVAL
                     || frame.contacts.iter().all(|c| !c.tip);
                 let out = self.engine.on_event(&event);
+                // A hold-then-drag scrolls as the fingers move.
+                if let Some(mut drag) = self.scrolling {
+                    if frame.contacts.iter().any(|c| c.tip && c.confident) {
+                        let (_, y) = mean_position(frame);
+                        let notches = drag.update(y);
+                        self.scrolling = Some(drag);
+                        if notches != 0 {
+                            let _ = self.actions.send(Action::Scroll {
+                                amount: notches,
+                                smooth_ms: Some(60),
+                            });
+                        }
+                    } else {
+                        // Fingers lifted: the drag is over.
+                        self.scrolling = None;
+                    }
+                }
                 if live {
                     self.last_preview = Instant::now();
                     let preview = self.engine.drawing_preview();
@@ -781,6 +801,11 @@ impl Service {
             }
             Action::ShowCheatSheet => {
                 self.show_cheat_sheet();
+                true
+            }
+            Action::ScrollHold { mm_per_notch } => {
+                // The frames that follow scroll, until the fingers lift.
+                self.scrolling = Some(ScrollDrag::new(*mm_per_notch));
                 true
             }
             other => {
@@ -1385,6 +1410,42 @@ fn spawn_action_worker(
     tx
 }
 
+/// Turns the vertical movement of one touch into wheel notches, for
+/// `scroll_hold`: the hold fires once, then every `mm_per_notch` of travel
+/// scrolls, positive downwards.
+#[derive(Debug, Clone, Copy)]
+struct ScrollDrag {
+    mm_per_notch: f32,
+    /// Where the fingers were last frame; `None` until the first.
+    last_y: Option<f32>,
+    /// Movement not yet worth a notch, in millimetres.
+    carry: f32,
+}
+
+impl ScrollDrag {
+    fn new(mm_per_notch: f32) -> Self {
+        Self {
+            mm_per_notch: mm_per_notch.max(1.0),
+            last_y: None,
+            carry: 0.0,
+        }
+    }
+
+    /// Moves to the fingers' new height and returns the whole notches that
+    /// movement earned; the rest stays for the next frame.
+    fn update(&mut self, y_mm: f32) -> i32 {
+        let Some(last) = self.last_y else {
+            self.last_y = Some(y_mm);
+            return 0;
+        };
+        self.carry += y_mm - last;
+        self.last_y = Some(y_mm);
+        let notches = (self.carry / self.mm_per_notch).trunc();
+        self.carry -= notches * self.mm_per_notch;
+        notches.clamp(-20.0, 20.0) as i32
+    }
+}
+
 /// Where the fingers of a frame are, in millimetres: their mean.
 fn mean_position(frame: &glyphpad_core::TouchFrame) -> (f32, f32) {
     let touching: Vec<&glyphpad_core::Contact> = frame
@@ -1496,6 +1557,20 @@ mod tests {
             distance_mm: 40.0,
             speed_mm_s: 200.0,
         }
+    }
+
+    #[test]
+    fn a_drag_turns_movement_into_whole_notches() {
+        let mut drag = ScrollDrag::new(5.0);
+        assert_eq!(drag.update(10.0), 0, "the first frame only sets the start");
+        assert_eq!(drag.update(12.0), 0, "2 mm is not a notch yet");
+        assert_eq!(drag.update(16.0), 1, "6 mm in all: one notch, 1 mm kept");
+        // Upwards gives negative notches, which scroll up.
+        assert_eq!(drag.update(4.0), -2, "12 mm up: two notches up");
+        // A tiny notch size and a long move stay within the cap.
+        let mut fast = ScrollDrag::new(1.0);
+        fast.update(0.0);
+        assert_eq!(fast.update(500.0), 20);
     }
 
     #[test]

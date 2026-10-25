@@ -853,6 +853,11 @@ const ACTIONS: &[(&str, &str, &str)] = &[
     ),
     ("media", icons::PLAY_PAUSE, "Media key"),
     ("scroll", icons::ARROW_DOWN, "Turn the mouse wheel"),
+    (
+        "scroll_hold",
+        icons::ARROW_UP,
+        "Scroll while the fingers move",
+    ),
     ("repeat", icons::REPEAT, "Repeat an action"),
     ("only_if", icons::EYE, "Only when…"),
     ("mouse_click", icons::CURSOR_CLICK, "Click a mouse button"),
@@ -897,6 +902,7 @@ const NOT_IN_CHAINS: &[&str] = &[
     "switch_profile",
     "next_profile",
     "show_cheat_sheet",
+    "scroll_hold",
 ];
 
 pub fn action_icon(kind: &str) -> &'static str {
@@ -950,6 +956,7 @@ fn default_action(kind: &str) -> Action {
             amount: 3,
             smooth_ms: None,
         },
+        "scroll_hold" => Action::ScrollHold { mm_per_notch: 5.0 },
         "repeat" => Action::Repeat {
             times: 5,
             action: Box::new(Action::Keys {
@@ -1410,6 +1417,26 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                         }
                     });
                 },
+            );
+        }
+        Action::ScrollHold { mm_per_notch } => {
+            w::row(
+                ui,
+                "Millimetres per notch",
+                "How far the fingers move for one turn of the wheel.",
+                |ui| {
+                    ui.add(
+                        egui::DragValue::new(mm_per_notch)
+                            .range(1.0..=50.0)
+                            .speed(0.5)
+                            .fixed_decimals(1)
+                            .suffix(" mm"),
+                    );
+                },
+            );
+            w::hint(
+                ui,
+                "Hold fires once, then the wheel turns as the fingers move, until they lift.",
             );
         }
         Action::Repeat { times, action } => {

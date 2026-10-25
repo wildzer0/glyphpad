@@ -370,6 +370,7 @@ marked *app*.
 | `drag` | **`dx`**, **`dy`** | Presses the left button, moves the pointer by those pixels and releases it |
 | `media` | **`key`** | `play_pause`, `next`, `previous`, `stop`, `volume_up`, `volume_down`, `mute` |
 | `chain` | **`actions`** (a list) | Runs them in order; no `chain` inside a `chain` |
+| `scroll_hold` | `mm_per_notch` (default 5) | Scrolls while the fingers move after a `hold`: the action fires once and the wheel turns every few millimetres, until they lift |
 | `repeat` | **`action`**, `times` (default 5, 1–50) | Runs one action that many times |
 | `only_if` | **`when`**, **`action`** | Runs the action only if the window in front matches `when` (`app` and/or `title`), checked when it runs |
 | `wait` | **`ms`** (≤ 60000) | A pause, for use inside a `chain` |

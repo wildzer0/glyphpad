@@ -374,6 +374,19 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Edit this zone", "Modifica questa zona"),
     ("All four corners", "Tutti e quattro gli angoli"),
     (
+        "Scroll while the fingers move",
+        "Scorri mentre le dita si muovono",
+    ),
+    ("Millimetres per notch", "Millimetri per tacca"),
+    (
+        "How far the fingers move for one turn of the wheel.",
+        "Quanto devono spostarsi le dita per un giro di rotella.",
+    ),
+    (
+        "Hold fires once, then the wheel turns as the fingers move, until they lift.",
+        "La pressione prolungata scatta una volta, poi la rotella gira mentre le dita si muovono, finché non si sollevano.",
+    ),
+    (
         "The part of the touchpad, in millimetres from its top-left corner.",
         "La parte del touchpad, in millimetri dall'angolo in alto a sinistra.",
     ),

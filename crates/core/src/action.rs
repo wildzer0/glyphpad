@@ -70,6 +70,13 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         smooth_ms: Option<u64>,
     },
+    /// Turns the wheel while the fingers move, after a hold: the gesture
+    /// fires once and then every `mm_per_notch` of vertical travel scrolls.
+    /// Handled by the application, since it lasts as long as the touch.
+    ScrollHold {
+        #[serde(default = "scroll_hold_default")]
+        mm_per_notch: f32,
+    },
     /// Runs another action again, `times` times.
     Repeat {
         #[serde(default = "repeat_default")]
@@ -207,6 +214,12 @@ pub enum MediaKey {
     Mute,
 }
 
+/// Five millimetres per wheel notch, the feel of a phone: about a line of
+/// text.
+fn scroll_hold_default() -> f32 {
+    5.0
+}
+
 /// `repeat` runs its action five times unless told otherwise.
 fn repeat_default() -> u8 {
     5
@@ -231,6 +244,7 @@ impl Action {
             Action::Media { .. } => "media",
             Action::Scroll { .. } => "scroll",
             Action::Repeat { .. } => "repeat",
+            Action::ScrollHold { .. } => "scroll_hold",
             Action::OnlyIf { .. } => "only_if",
             Action::MouseClick { .. } => "mouse_click",
             Action::Drag { .. } => "drag",
@@ -267,6 +281,7 @@ impl Action {
                 | Action::ShowCheatSheet
                 | Action::ToggleEnabled
                 | Action::ShowWindow
+                | Action::ScrollHold { .. }
         )
     }
 
@@ -297,6 +312,7 @@ impl Action {
             "media" => "Media key",
             "scroll" => "Scroll",
             "repeat" => "Repeat",
+            "scroll_hold" => "Scroll while moving",
             "only_if" => "Only when",
             "mouse_click" => "Mouse click",
             "drag" => "Drag",
@@ -383,6 +399,12 @@ impl Action {
                 }
                 if smooth_ms.is_some_and(|ms| ms > 2_000) {
                     return Err("`scroll.smooth_ms` is at most 2000".into());
+                }
+                Ok(())
+            }
+            Action::ScrollHold { mm_per_notch } => {
+                if !(1.0..=50.0).contains(mm_per_notch) {
+                    return Err("`scroll_hold.mm_per_notch` must be between 1 and 50".into());
                 }
                 Ok(())
             }

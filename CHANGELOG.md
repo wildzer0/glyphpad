@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.0] - 2026-10-25
 
 ### Added
+- `scroll_hold` scrolls continuously after a hold: the gesture fires once and the wheel turns as
+  the fingers move, a notch every few millimetres, until they lift.
 - `repeat` runs an action several times, `only_if` runs one only when the window in front matches
   (evaluated when it runs, not when the gesture fired), and `scroll` can be smooth (`smooth_ms`).
 - The gestures page shows every zone on one map of the pad, the overlapping ones in red and a
