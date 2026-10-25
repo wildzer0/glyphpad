@@ -11,6 +11,7 @@ use crate::action::AppInfo;
 use crate::config::Config;
 use crate::engine::{Engine, Observation, Recognition, resolve};
 use crate::model::DeviceEvent;
+use crate::trigger::Trigger;
 
 /// A recognition and the gesture it triggers (index into `config.gestures`).
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +83,40 @@ fn names(config: &Config, candidates: &[(usize, u64)]) -> String {
         .map(|&(i, _)| format!("\"{}\"", config.gestures[i].def.name))
         .collect::<Vec<_>>()
         .join(" or ")
+}
+
+/// Fingers a recognition was made with.
+fn observed_fingers(o: &Observation) -> Option<u8> {
+    match o {
+        Observation::Tap { fingers, .. }
+        | Observation::Hold { fingers }
+        | Observation::Swipe { fingers, .. }
+        | Observation::EdgeSwipe { fingers, .. }
+        | Observation::Pinch { fingers, .. }
+        | Observation::Rotate { fingers, .. }
+        | Observation::Click { fingers, .. } => Some(*fingers),
+        Observation::Chord { gesture, .. } => observed_fingers(gesture),
+        Observation::Symbol { .. }
+        | Observation::UnrecognizedSymbol { .. }
+        | Observation::Sample { .. } => None,
+    }
+}
+
+/// What the configuration expects with this many fingers, for a recognition
+/// that matched nothing. "No gesture configured" is a dead end: the usual
+/// mistake is a gesture of the wrong kind — a three-finger touch held 1.7 s
+/// is a hold, not the tap a sequence's first step asked for.
+fn near_miss(config: &Config, observation: &Observation) -> Option<String> {
+    let fingers = observed_fingers(observation)?;
+    let configured: Vec<String> = config
+        .gestures
+        .iter()
+        .filter(|g| g.def.enabled)
+        .flat_map(|g| g.trigger.iter().chain(&g.steps))
+        .filter(|t| t.fingers() == fingers)
+        .map(Trigger::describe)
+        .collect();
+    (!configured.is_empty()).then(|| configured.join(", "))
 }
 
 impl Dispatcher {
@@ -228,8 +263,18 @@ impl Dispatcher {
             .map(|(i, _)| candidate_deadline(config, i, r.ended_us))
             .collect();
         if starts.is_empty() {
+            let gesture = index_of(config, &r.observation, app.as_ref());
+            if gesture.is_none()
+                && let Some(hint) = near_miss(config, &r.observation)
+            {
+                tracing::info!(
+                    "{} matched no gesture; with {} fingers the configuration has: {hint}",
+                    r.observation,
+                    observed_fingers(&r.observation).unwrap_or(0)
+                );
+            }
             out.push(Dispatched {
-                gesture: index_of(config, &r.observation, app.as_ref()),
+                gesture,
                 recognition: r,
                 app,
             });
@@ -443,6 +488,18 @@ action = { type = "minimize" }
             names(&c, &d.on_recognition(&c, rec(other, 200), None)),
             ["tap3", "-"]
         );
+    }
+
+    #[test]
+    fn a_recognition_nothing_matches_names_what_is_configured() {
+        let c = config();
+        // Three fingers resting 1.7 s are a hold, while the sequence's first
+        // step wants a tap: "no gesture configured" would hide that.
+        let hint = near_miss(&c, &Observation::Hold { fingers: 3 }).unwrap();
+        assert!(hint.contains("tap with 3 fingers"), "{hint}");
+        assert!(hint.contains("swipe up with 3 fingers"), "{hint}");
+        // A finger count the configuration never uses has nothing to suggest.
+        assert_eq!(near_miss(&c, &Observation::Hold { fingers: 5 }), None);
     }
 
     #[test]

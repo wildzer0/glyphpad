@@ -202,6 +202,11 @@ or `... the next gesture was not its next step` (the pad saw something else: che
 `glyphpad replay <capture> --config <file> --all`, which lists every gesture the engine recognizes
 regardless of what is configured).
 
+A gesture that matches nothing also says what the configuration has with that many fingers
+(`hold fingers=3 matched no gesture; with 3 fingers the configuration has: tap with 3 fingers`),
+because the common mistake is a gesture of the wrong kind: fingers resting longer than
+`tap_max_duration_ms` (250 ms) are a **hold**, and a tap has to be quicker.
+
 
 `direction` is `up`, `down`, `left`, `right`, `up_left`, `up_right`, `down_left` or `down_right`.
 `modifier_fingers` (1–3) makes the gesture a **chord**: that many other fingers must rest on the

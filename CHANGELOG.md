@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaving its steps to fire on their own as if nothing had happened. `glyphpad replay` prints the
   same line, which is the quickest way to tell a sequence done too slowly from one that is not
   configured as expected.
+- A gesture that matches nothing says what the configuration does have with that many fingers
+  ("hold fingers=3 matched no gesture; with 3 fingers the configuration has: tap with 3 fingers"):
+  a touch held 1.7 s is a hold, not the tap a sequence's first step asked for, and "no gesture
+  configured" hid the difference.
 
 ## [1.1.0] - 2026-10-25
 
