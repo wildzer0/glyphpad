@@ -77,6 +77,8 @@ pub struct Settings {
     pub close_to_tray: bool,
     /// Start in the tray without showing the window.
     pub start_minimized: bool,
+    /// Light or dark appearance of the window.
+    pub theme: ThemeChoice,
     /// Recognitions kept in the history.
     pub history_size: usize,
     /// Also keep the history in `history.jsonl` next to the configuration.
@@ -96,6 +98,16 @@ pub struct Settings {
     pub profiles: Vec<String>,
     /// Earlier versions of the configuration kept in `backups/`.
     pub backup_count: usize,
+}
+
+/// Appearance of the window (SPEC §13): follow the system or force one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeChoice {
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -156,6 +168,7 @@ impl Default for Settings {
             repeat_same_app_only: true,
             close_to_tray: true,
             start_minimized: false,
+            theme: ThemeChoice::System,
             history_size: 20,
             save_history: false,
             overlay: OverlaySettings::default(),

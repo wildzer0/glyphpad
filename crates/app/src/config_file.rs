@@ -170,6 +170,26 @@ pub fn backup(location: &Location, keep: usize) -> Result<()> {
     Ok(())
 }
 
+/// Like [`backup`], but does nothing when the newest backup is younger than
+/// `min_age`: a burst of automatic saves from the editor keeps the version
+/// from before the burst instead of flooding `backups/`.
+pub fn backup_unless_recent(
+    location: &Location,
+    keep: usize,
+    min_age: std::time::Duration,
+) -> Result<()> {
+    let newest = list_backups(location).into_iter().next();
+    let recent = newest
+        .and_then(|name| std::fs::metadata(backups_dir(location).join(name)).ok())
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < min_age);
+    if recent {
+        return Ok(());
+    }
+    backup(location, keep)
+}
+
 /// Backup file names, newest first (their names sort by time).
 pub fn list_backups(location: &Location) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(backups_dir(location)) else {
@@ -205,6 +225,24 @@ mod tests {
         );
         backup(&location, 0).unwrap();
         assert_eq!(list_backups(&location).len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_burst_of_saves_shares_one_backup() {
+        let dir = std::env::temp_dir().join(format!("glyphpad-burst-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let location = Location::Explicit(dir.join(FILE_NAME));
+        std::fs::write(location.path(), "config_version = 1\n").unwrap();
+        let minute = std::time::Duration::from_secs(60);
+        for _ in 0..3 {
+            backup_unless_recent(&location, 10, minute).unwrap();
+        }
+        assert_eq!(list_backups(&location).len(), 1);
+        // With no minimum age every save backs up.
+        backup_unless_recent(&location, 10, std::time::Duration::ZERO).unwrap();
+        assert_eq!(list_backups(&location).len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

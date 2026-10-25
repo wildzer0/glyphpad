@@ -173,6 +173,9 @@ struct Service {
     _watcher: Option<notify::RecommendedWatcher>,
 }
 
+/// Saves from the editor closer together than this share one backup.
+const BACKUP_MIN_AGE: Duration = Duration::from_secs(120);
+
 /// Editors write files in several steps; wait for the burst to end.
 const FILE_SETTLE: Duration = Duration::from_millis(300);
 
@@ -754,8 +757,10 @@ impl Service {
         }
     }
 
-    /// Writes a new configuration after backing up the current one.
-    fn write_config(&mut self, text: &str) -> Result<(), String> {
+    /// Writes a new configuration after backing up the current one. With
+    /// `throttle_backup`, saves that follow each other closely (the editor
+    /// saves automatically) share the backup made before the first.
+    fn write_config(&mut self, text: &str, throttle_backup: bool) -> Result<(), String> {
         glyphpad_core::config::parse(text).map_err(|errors| {
             errors
                 .iter()
@@ -763,8 +768,13 @@ impl Service {
                 .collect::<Vec<_>>()
                 .join("; ")
         })?;
-        config_file::backup(&self.location, self.config.settings.backup_count)
-            .map_err(|e| format!("{e:#}"))?;
+        let keep = self.config.settings.backup_count;
+        if throttle_backup {
+            config_file::backup_unless_recent(&self.location, keep, BACKUP_MIN_AGE)
+        } else {
+            config_file::backup(&self.location, keep)
+        }
+        .map_err(|e| format!("{e:#}"))?;
         config_file::write_atomically(self.location.path(), text).map_err(|e| format!("{e:#}"))?;
         Ok(())
     }
@@ -784,7 +794,7 @@ impl Service {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let new = edit(&text)?;
-        self.write_config(&new)
+        self.write_config(&new, false)
     }
 
     fn on_command(&mut self, cmd: Command) {
@@ -830,7 +840,7 @@ impl Service {
                         return self.set_status(format!("templates not saved: {e:#}"));
                     }
                 }
-                if let Err(e) = self.write_config(&new) {
+                if let Err(e) = self.write_config(&new, false) {
                     return self.set_status(format!("gesture not saved: {e}"));
                 }
                 self.reload();
@@ -901,7 +911,7 @@ impl Service {
                     return self
                         .set_status("not saved: the configuration changed on disk meanwhile");
                 }
-                match self.write_config(&text) {
+                match self.write_config(&text, true) {
                     Ok(()) => {
                         self.reload();
                         self.set_status("configuration saved");
@@ -913,7 +923,7 @@ impl Service {
                 let path = config_file::backups_dir(&self.location).join(&name);
                 match std::fs::read_to_string(&path)
                     .map_err(|e| e.to_string())
-                    .and_then(|t| self.write_config(&t))
+                    .and_then(|t| self.write_config(&t, false))
                 {
                     Ok(()) => {
                         self.reload();
