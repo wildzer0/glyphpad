@@ -148,7 +148,11 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
     };
     let feedback = Feedback::new(&loaded.config);
     let executor_feedback = feedback.clone();
-    let actions = spawn_action_worker(glyphpad_actions::executor(), executor_feedback);
+    let actions = spawn_action_worker(
+        glyphpad_actions::executor(),
+        executor_feedback,
+        glyphpad_actions::foreground(),
+    );
     let loaded_config = Arc::new(loaded.config);
     let usage = std::fs::read_to_string(config_file::usage_path(&options.location))
         .map(|t| glyphpad_core::usage::Usage::from_json(&t))
@@ -1367,13 +1371,14 @@ impl Service {
 fn spawn_action_worker(
     executor: Box<dyn ActionExecutor + Send>,
     feedback: Feedback,
+    foreground: Box<dyn ForegroundInfo + Send>,
 ) -> Sender<Action> {
     let (tx, rx) = crossbeam_channel::unbounded::<Action>();
     std::thread::Builder::new()
         .name("actions".into())
         .spawn(move || {
             for action in rx {
-                run_action(executor.as_ref(), &feedback, &action);
+                run_action(executor.as_ref(), &feedback, foreground.as_ref(), &action);
             }
         })
         .expect("cannot spawn the action thread");
@@ -1397,11 +1402,35 @@ fn mean_position(frame: &glyphpad_core::TouchFrame) -> (f32, f32) {
     )
 }
 
-fn run_action(executor: &dyn ActionExecutor, feedback: &Feedback, action: &Action) {
+fn run_action(
+    executor: &dyn ActionExecutor,
+    feedback: &Feedback,
+    foreground: &dyn ForegroundInfo,
+    action: &Action,
+) {
     match action {
         Action::Chain { actions } => actions
             .iter()
-            .for_each(|a| run_action(executor, feedback, a)),
+            .for_each(|a| run_action(executor, feedback, foreground, a)),
+        Action::Repeat { times, action } => {
+            for _ in 0..*times {
+                run_action(executor, feedback, foreground, action);
+            }
+        }
+        Action::OnlyIf { when, action } => {
+            // The condition is evaluated now, not when the gesture fired: a
+            // chain may have changed the window in front.
+            let app = foreground.foreground_app();
+            if when.matches(app.as_ref()) {
+                run_action(executor, feedback, foreground, action);
+            } else {
+                tracing::info!(
+                    "`only_if` did not match ({} is in front): `{}` not run",
+                    app.as_ref().map_or("nothing", |a| a.exe.as_str()),
+                    action.kind()
+                );
+            }
+        }
         Action::Wait { ms } => std::thread::sleep(Duration::from_millis(*ms)),
         Action::Notify { title, message } => {
             tracing::info!("notify: {message}");

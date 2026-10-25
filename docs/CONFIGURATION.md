@@ -365,11 +365,13 @@ marked *app*.
 | `maximize` | | Maximizes, or restores if already maximized |
 | `run` | **`command`**, `args` (list), `hidden`, `cwd`, `shell`, `env`, `wait`, `timeout_ms` | `hidden` runs a console tool without a console window; `shell = true` goes through the command interpreter; `env` adds variables; `wait = true` waits up to `timeout_ms` (default 30000) |
 | `focus_or_launch` | **`app`**, **`command`**, `args` | Brings the first window of `app` (e.g. `code.exe`) to the front, or starts `command` when it is not running |
-| `scroll` | **`amount`** | Turns the wheel: one step per notch, positive scrolls down |
+| `scroll` | **`amount`**, `smooth_ms` | Turns the wheel: one step per notch, positive scrolls down; `smooth_ms` spreads them over that time |
 | `mouse_click` | `button` (default `left`), `double` | Clicks where the pointer is: `left`, `right` or `middle` |
 | `drag` | **`dx`**, **`dy`** | Presses the left button, moves the pointer by those pixels and releases it |
 | `media` | **`key`** | `play_pause`, `next`, `previous`, `stop`, `volume_up`, `volume_down`, `mute` |
 | `chain` | **`actions`** (a list) | Runs them in order; no `chain` inside a `chain` |
+| `repeat` | **`action`**, `times` (default 5, 1–50) | Runs one action that many times |
+| `only_if` | **`when`**, **`action`** | Runs the action only if the window in front matches `when` (`app` and/or `title`), checked when it runs |
 | `wait` | **`ms`** (≤ 60000) | A pause, for use inside a `chain` |
 | `notify` | **`message`**, `title` | Shown in GlyphPad's overlay |
 | `open` | **`target`** | A file, folder or web address, opened with its default program |

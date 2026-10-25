@@ -853,6 +853,8 @@ const ACTIONS: &[(&str, &str, &str)] = &[
     ),
     ("media", icons::PLAY_PAUSE, "Media key"),
     ("scroll", icons::ARROW_DOWN, "Turn the mouse wheel"),
+    ("repeat", icons::REPEAT, "Repeat an action"),
+    ("only_if", icons::EYE, "Only when…"),
     ("mouse_click", icons::CURSOR_CLICK, "Click a mouse button"),
     ("drag", icons::HAND_SWIPE_RIGHT, "Drag the pointer"),
     ("chain", icons::STACK, "Several actions in a row"),
@@ -944,7 +946,27 @@ fn default_action(kind: &str) -> Action {
         "media" => Action::Media {
             key: MediaKey::PlayPause,
         },
-        "scroll" => Action::Scroll { amount: 3 },
+        "scroll" => Action::Scroll {
+            amount: 3,
+            smooth_ms: None,
+        },
+        "repeat" => Action::Repeat {
+            times: 5,
+            action: Box::new(Action::Keys {
+                combo: Some("Ctrl+C".parse().expect("valid")),
+                sequence: Vec::new(),
+            }),
+        },
+        "only_if" => Action::OnlyIf {
+            when: When {
+                app: None,
+                title: Some("^Inbox".into()),
+            },
+            action: Box::new(Action::Keys {
+                combo: Some("Ctrl+C".parse().expect("valid")),
+                sequence: Vec::new(),
+            }),
+        },
         "mouse_click" => Action::MouseClick {
             button: glyphpad_core::action::MouseButton::Right,
             double: false,
@@ -1363,10 +1385,48 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                 "If a window of that program is open it is brought to the front, otherwise the command runs.",
             );
         }
-        Action::Scroll { amount } => {
+        Action::Scroll { amount, smooth_ms } => {
             w::row(ui, "Notches", "Positive scrolls down; negative up.", |ui| {
                 ui.add(egui::DragValue::new(amount).range(-100..=100));
             });
+            w::row(
+                ui,
+                "Smooth",
+                "Spread the notches over a moment instead of jumping.",
+                |ui| {
+                    let mut on = smooth_ms.is_some();
+                    ui.horizontal(|ui| {
+                        w::switch(ui, &mut on);
+                        if on {
+                            let mut ms = smooth_ms.unwrap_or(150);
+                            ui.add(
+                                egui::DragValue::new(&mut ms)
+                                    .range(20..=2_000)
+                                    .suffix(" ms"),
+                            );
+                            *smooth_ms = Some(ms);
+                        } else {
+                            *smooth_ms = None;
+                        }
+                    });
+                },
+            );
+        }
+        Action::Repeat { times, action } => {
+            w::row(ui, "Times", "", |ui| {
+                ui.add(egui::DragValue::new(times).range(1..=50));
+            });
+            ui.add_space(space::XS);
+            action_form(ui, cx, id.with("repeat"), action, true);
+        }
+        Action::OnlyIf { when, action } => {
+            ui.label(w::dim(
+                ui,
+                "Runs only when the window in front matches, checked at that moment.",
+            ));
+            when_form(ui, cx, id.with("when-cond"), when, &[]);
+            ui.add_space(space::XS);
+            action_form(ui, cx, id.with("only-if"), action, true);
         }
         Action::MouseClick { button, double } => {
             let mut b = *button;
@@ -1691,34 +1751,7 @@ pub fn conditions_form(
     profiles: &[String],
 ) {
     let when = def.when.get_or_insert_with(When::default);
-    let mut apps = when.app.as_ref().map(OneOrMany::to_vec).unwrap_or_default();
-    w::row(
-        ui,
-        "Only in these apps",
-        "Leave empty to work everywhere.",
-        |ui| app_list(ui, cx, id, &mut apps),
-    );
-    when.app = match apps.len() {
-        0 => None,
-        1 => Some(OneOrMany::One(apps[0].clone())),
-        _ => Some(OneOrMany::Many(apps)),
-    };
-    w::row(
-        ui,
-        "Window title",
-        "A regular expression, optional.",
-        |ui| {
-            let mut t = when.title.clone().unwrap_or_default();
-            if w::text_field(ui, &mut t, "e.g. ^Inbox", 280.0).changed() {
-                when.title = (!t.trim().is_empty()).then_some(t);
-            }
-            if let Some(t) = &when.title
-                && let Err(e) = regex_check(t)
-            {
-                w::error_text_raw(ui, &e);
-            }
-        },
-    );
+    when_form(ui, cx, id, when, profiles);
     if when.app.is_none() && when.title.is_none() {
         def.when = None;
     }
@@ -1747,6 +1780,39 @@ pub fn conditions_form(
                 &mut def.repeatable,
                 &[(None, "Default"), (Some(true), "Yes"), (Some(false), "No")],
             );
+        },
+    );
+}
+
+/// The app and the window title on their own, for a gesture or for an
+/// `only_if`, which has no profile of its own.
+fn when_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, when: &mut When, _profiles: &[String]) {
+    let mut apps = when.app.as_ref().map(OneOrMany::to_vec).unwrap_or_default();
+    w::row(
+        ui,
+        "Only in these apps",
+        "Leave empty to work everywhere.",
+        |ui| app_list(ui, cx, id, &mut apps),
+    );
+    when.app = match apps.len() {
+        0 => None,
+        1 => Some(OneOrMany::One(apps[0].clone())),
+        _ => Some(OneOrMany::Many(apps)),
+    };
+    w::row(
+        ui,
+        "Window title",
+        "A regular expression, optional.",
+        |ui| {
+            let mut t = when.title.clone().unwrap_or_default();
+            if w::text_field(ui, &mut t, "e.g. ^Inbox", 280.0).changed() {
+                when.title = (!t.trim().is_empty()).then_some(t);
+            }
+            if let Some(t) = &when.title
+                && let Err(e) = regex_check(t)
+            {
+                w::error_text_raw(ui, &e);
+            }
         },
     );
 }

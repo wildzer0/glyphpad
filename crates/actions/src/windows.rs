@@ -126,7 +126,7 @@ impl ActionExecutor for WindowsExecutor {
                     key: Key::Letter('V'),
                 })
             }
-            Action::Scroll { amount } => scroll(*amount),
+            Action::Scroll { amount, smooth_ms } => scroll(*amount, *smooth_ms),
             Action::MouseClick { button, double } => mouse_click(*button, *double),
             Action::Drag { dx, dy } => drag(*dx, *dy),
             Action::Media { key } => send_combo(&KeyCombo {
@@ -491,10 +491,38 @@ fn key_input(key: Key, up: bool) -> INPUT {
 }
 
 /// Turns the wheel by `amount` notches, positive downwards: Windows counts a
-/// positive wheel as away from the user, so the sign flips here.
-fn scroll(amount: i32) -> Result<(), ActionError> {
-    let delta = -amount * WHEEL_DELTA as i32;
-    send_mouse(&[mouse_input(MOUSEEVENTF_WHEEL, 0, 0, delta)])
+/// positive wheel as away from the user, so the sign flips here. With
+/// `smooth_ms`, the notches are spread over that time in small steps, which
+/// reads as a smooth scroll instead of a jump.
+fn scroll(amount: i32, smooth_ms: Option<u64>) -> Result<(), ActionError> {
+    let Some(ms) = smooth_ms.filter(|ms| *ms > 0) else {
+        let delta = -amount * WHEEL_DELTA as i32;
+        return send_mouse(&[mouse_input(MOUSEEVENTF_WHEEL, 0, 0, delta)]);
+    };
+    // At most one step per 10 ms, so a long scroll does not become a burst.
+    let steps = amount.unsigned_abs().min((ms / 10).max(1) as u32).max(1);
+    let per_step = amount / steps as i32;
+    let mut sent = 0;
+    for i in 1..=steps {
+        // The remainder goes with the last step, so the total is exact.
+        let target = (amount as i64 * i as i64 / steps as i64) as i32;
+        let step = target - sent;
+        sent = target;
+        if step == 0 {
+            continue;
+        }
+        send_mouse(&[mouse_input(
+            MOUSEEVENTF_WHEEL,
+            0,
+            0,
+            -step * WHEEL_DELTA as i32,
+        )])?;
+        if i < steps {
+            std::thread::sleep(Duration::from_millis(ms / u64::from(steps)));
+        }
+    }
+    let _ = per_step;
+    Ok(())
 }
 
 /// Clicks a button where the pointer is, once or twice.

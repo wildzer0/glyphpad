@@ -434,6 +434,32 @@ pub struct When {
     pub title: Option<String>,
 }
 
+impl When {
+    /// Whether the window in front satisfies these conditions, evaluated when
+    /// an action guarded by `only_if` runs. An invalid regular expression
+    /// matches nothing: the configuration check rejects it first.
+    pub fn matches(&self, app: Option<&crate::action::AppInfo>) -> bool {
+        if let Some(list) = &self.app {
+            let Some(app) = app else { return false };
+            if !list
+                .to_vec()
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(&app.exe))
+            {
+                return false;
+            }
+        }
+        if let Some(pattern) = &self.title {
+            let Some(app) = app else { return false };
+            match regex::Regex::new(pattern) {
+                Ok(re) if re.is_match(&app.title) => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
 /// One `[[gesture]]` table as written in the file. A single flat struct for
 /// every type keeps the file format simple; [`validate`] checks which fields
 /// each type accepts.

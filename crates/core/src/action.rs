@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::When;
 use crate::keys::KeyCombo;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,6 +65,23 @@ pub enum Action {
     /// Turns the mouse wheel: positive scrolls down, one step per notch.
     Scroll {
         amount: i32,
+        /// Spread the notches over this long instead of turning them all at
+        /// once, which reads as a smooth scroll.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        smooth_ms: Option<u64>,
+    },
+    /// Runs another action again, `times` times.
+    Repeat {
+        #[serde(default = "repeat_default")]
+        times: u8,
+        action: Box<Action>,
+    },
+    /// Runs the action only when the window in front matches `when`: a
+    /// condition on one step of a chain, where the gesture's own condition
+    /// covers the whole of it.
+    OnlyIf {
+        when: When,
+        action: Box<Action>,
     },
     /// Clicks a mouse button where the pointer is.
     MouseClick {
@@ -189,6 +207,11 @@ pub enum MediaKey {
     Mute,
 }
 
+/// `repeat` runs its action five times unless told otherwise.
+fn repeat_default() -> u8 {
+    5
+}
+
 /// How long `run` waits by default: long enough for a script, short enough
 /// not to hold the queue of actions forever.
 fn run_timeout_default() -> u64 {
@@ -207,6 +230,8 @@ impl Action {
             Action::FocusOrLaunch { .. } => "focus_or_launch",
             Action::Media { .. } => "media",
             Action::Scroll { .. } => "scroll",
+            Action::Repeat { .. } => "repeat",
+            Action::OnlyIf { .. } => "only_if",
             Action::MouseClick { .. } => "mouse_click",
             Action::Drag { .. } => "drag",
             Action::Chain { .. } => "chain",
@@ -229,6 +254,22 @@ impl Action {
         }
     }
 
+    /// Actions only the application can carry out: a `chain` (and a `repeat`
+    /// or an `only_if`) cannot hold them.
+    fn is_app_level(&self) -> bool {
+        matches!(
+            self,
+            Action::Chain { .. }
+                | Action::RepeatLast
+                | Action::DrawSymbol
+                | Action::SwitchProfile { .. }
+                | Action::NextProfile
+                | Action::ShowCheatSheet
+                | Action::ToggleEnabled
+                | Action::ShowWindow
+        )
+    }
+
     /// Whether the action starts a program (`run`, `focus_or_launch`), which
     /// a pack from someone else could use to do anything at all: the import
     /// asks first.
@@ -236,6 +277,9 @@ impl Action {
         match self {
             Action::Run { .. } | Action::FocusOrLaunch { .. } => true,
             Action::Chain { actions } => actions.iter().any(Action::runs_a_program),
+            Action::Repeat { action, .. } | Action::OnlyIf { action, .. } => {
+                action.runs_a_program()
+            }
             _ => false,
         }
     }
@@ -252,6 +296,8 @@ impl Action {
             "focus_or_launch" => "Open or focus a program",
             "media" => "Media key",
             "scroll" => "Scroll",
+            "repeat" => "Repeat",
+            "only_if" => "Only when",
             "mouse_click" => "Mouse click",
             "drag" => "Drag",
             "chain" => "Several actions",
@@ -302,15 +348,7 @@ impl Action {
                     return Err("`chain` needs at least one action".into());
                 }
                 for (i, a) in actions.iter().enumerate() {
-                    if matches!(
-                        a,
-                        Action::Chain { .. }
-                            | Action::RepeatLast
-                            | Action::DrawSymbol
-                            | Action::SwitchProfile { .. }
-                            | Action::NextProfile
-                            | Action::ShowCheatSheet
-                    ) {
+                    if matches!(a, Action::Chain { .. }) || a.is_app_level() {
                         return Err(format!("`chain` item {} cannot be `{}`", i + 1, a.kind()));
                     }
                     a.validate()
@@ -336,14 +374,48 @@ impl Action {
                 }
                 Ok(())
             }
-            Action::Scroll { amount } => {
+            Action::Scroll { amount, smooth_ms } => {
                 if *amount == 0 {
                     return Err("`scroll` needs a non-zero `amount`".into());
                 }
                 if amount.abs() > 100 {
                     return Err("`scroll` turns at most 100 notches at a time".into());
                 }
+                if smooth_ms.is_some_and(|ms| ms > 2_000) {
+                    return Err("`scroll.smooth_ms` is at most 2000".into());
+                }
                 Ok(())
+            }
+            Action::Repeat { times, action } => {
+                if !(1..=50).contains(times) {
+                    return Err("`repeat` runs 1 to 50 times".into());
+                }
+                if matches!(**action, Action::Repeat { .. }) {
+                    return Err("`repeat` cannot hold another `repeat`".into());
+                }
+                if action.is_app_level() {
+                    return Err(format!("`repeat` cannot hold `{}`", action.kind()));
+                }
+                action.validate().map_err(|e| format!("`repeat` → {e}"))
+            }
+            Action::OnlyIf { when, action } => {
+                if when.app.is_none() && when.title.is_none() {
+                    return Err("`only_if` needs an `app` or a `title`".into());
+                }
+                if let Some(t) = &when.title
+                    && let Err(e) = regex::Regex::new(t)
+                {
+                    return Err(format!(
+                        "`only_if` → title: invalid regular expression: {e}"
+                    ));
+                }
+                if matches!(**action, Action::OnlyIf { .. }) {
+                    return Err("`only_if` cannot hold another `only_if`".into());
+                }
+                if action.is_app_level() {
+                    return Err(format!("`only_if` cannot hold `{}`", action.kind()));
+                }
+                action.validate().map_err(|e| format!("`only_if` → {e}"))
             }
             Action::Drag { dx, dy } => {
                 if *dx == 0 && *dy == 0 {
@@ -506,6 +578,14 @@ impl ActionContext {
             Action::Chain { actions } => Action::Chain {
                 actions: actions.iter().map(|a| self.resolve(a)).collect(),
             },
+            Action::Repeat { times, action } => Action::Repeat {
+                times: *times,
+                action: Box::new(self.resolve(action)),
+            },
+            Action::OnlyIf { when, action } => Action::OnlyIf {
+                when: when.clone(),
+                action: Box::new(self.resolve(action)),
+            },
             other => other.clone(),
         }
     }
@@ -535,6 +615,9 @@ impl ActionContext {
             }
             Action::TypeText { text } => mentions(text),
             Action::Chain { actions } => actions.iter().any(Self::mentions_clipboard),
+            Action::Repeat { action, .. } | Action::OnlyIf { action, .. } => {
+                Self::mentions_clipboard(action)
+            }
             _ => false,
         }
     }
@@ -573,6 +656,82 @@ mod tests {
             action: Action,
         }
         toml::from_str::<W>(s).map(|w| w.action)
+    }
+
+    #[test]
+    fn repeat_and_only_if_are_checked() {
+        let repeat = parse(r#"action = { type = "repeat", times = 3, action = { type = "keys", combo = "Ctrl+C" } }"#)
+            .unwrap();
+        assert_eq!(repeat.kind(), "repeat");
+        assert!(repeat.validate().is_ok());
+        // Out of range, nested, or holding something only the app can do.
+        for bad in [
+            r#"action = { type = "repeat", times = 0, action = { type = "minimize" } }"#,
+            r#"action = { type = "repeat", times = 51, action = { type = "minimize" } }"#,
+            r#"action = { type = "repeat", times = 2, action = { type = "repeat", times = 2, action = { type = "minimize" } } }"#,
+            r#"action = { type = "repeat", times = 2, action = { type = "show_cheat_sheet" } }"#,
+        ] {
+            assert!(
+                parse(bad).unwrap().validate().is_err(),
+                "{bad} should be refused"
+            );
+        }
+        let only = parse(
+            r#"action = { type = "only_if", when = { app = "chrome.exe" }, action = { type = "lock_screen" } }"#,
+        )
+        .unwrap();
+        assert!(only.validate().is_ok());
+        // No condition, a broken regular expression, or a nested `only_if`.
+        for bad in [
+            r#"action = { type = "only_if", when = {}, action = { type = "lock_screen" } }"#,
+            r#"action = { type = "only_if", when = { title = "(" }, action = { type = "lock_screen" } }"#,
+            r#"action = { type = "only_if", when = { app = "a" }, action = { type = "only_if", when = { app = "b" }, action = { type = "minimize" } } }"#,
+        ] {
+            assert!(
+                parse(bad).unwrap().validate().is_err(),
+                "{bad} should be refused"
+            );
+        }
+        // A smooth scroll is bounded in time.
+        assert!(
+            parse(r#"action = { type = "scroll", amount = 3, smooth_ms = 5000 }"#)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_window_condition_matches_what_it_says() {
+        use crate::config::OneOrMany;
+        let app = |exe: &str, title: &str| AppInfo {
+            exe: exe.into(),
+            title: title.into(),
+            pid: 1,
+            window: 1,
+            fullscreen: false,
+        };
+        let when = crate::config::When {
+            app: Some(OneOrMany::One("chrome.exe".into())),
+            title: Some("^Inbox".into()),
+        };
+        assert!(when.matches(Some(&app("chrome.exe", "Inbox — Chrome"))));
+        assert!(!when.matches(Some(&app("firefox.exe", "Inbox — Firefox"))));
+        assert!(!when.matches(Some(&app("chrome.exe", "Something else"))));
+        assert!(!when.matches(None));
+        // The title alone is enough.
+        let title_only = crate::config::When {
+            app: None,
+            title: Some("Inbox".into()),
+        };
+        assert!(title_only.matches(Some(&app("anything.exe", "An Inbox"))));
+        // A broken expression matches nothing (the configuration refuses it
+        // before it gets here).
+        let broken = crate::config::When {
+            app: None,
+            title: Some("(".into()),
+        };
+        assert!(!broken.matches(Some(&app("x.exe", "("))));
     }
 
     #[test]
