@@ -7,19 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.4.1] - 2026-10-25
-
-### Changed
-- The gestures page no longer re-checks lookalike symbols on every edit: on a real configuration
-  that check measured over 200 ms (a debug build) and ran shortly after each change, which is
-  what made typing a name or dragging the zone map stutter. It now depends on the symbols in use
-  and is cached; the rest of the conflict check costs microseconds.
-- A draft is validated only once it has been left alone, not on every keystroke or every frame of
-  a drag, and the "not saved yet" banner no longer appears and disappears while a name is half
-  typed.
-
-## [1.4.0] - 2026-10-25
-
 ### Added
 - The statistics say which symbol the unrecognized drawings came closest to, and how often, which
   is what points at a symbol that is drawn badly or whose minimum score is too high.
@@ -38,6 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what one wants for a corner button: press it rather than tap it.
 - A `zone` gesture can have several regions (`regions = [...]`, up to 8) — one gesture for "any
   corner" — and the window has an "All four corners" button to make them.
+
+## [1.4.1] - 2026-10-25
+
+### Changed
+- The gestures page no longer re-checks lookalike symbols on every edit: on a real configuration
+  that check measured over 200 ms (a debug build) and ran shortly after each change, which is
+  what made typing a name or dragging the zone map stutter. It now depends on the symbols in use
+  and is cached; the rest of the conflict check costs microseconds.
+- A draft is validated only once it has been left alone, not on every keystroke or every frame of
+  a drag, and the "not saved yet" banner no longer appears and disappears while a name is half
+  typed.
+
+## [1.4.0] - 2026-10-25
+
+### Added
 - `[settings] touchpad` chooses which touchpad to use, by part of its name: the other pads'
   frames are then ignored, and the zone map is drawn with the chosen pad's size. Settings →
   Touchpad lists the pads that have reported, with their sizes. Empty (the default) keeps
