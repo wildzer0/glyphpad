@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-25
+
 ### Changed
 - A new icon and logo: a rounded tile with a gesture trail sweeping across it. It is drawn in
   code, so the window and the tray get it at any size; the executable's build script compiles the
@@ -317,7 +319,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Show window" only flashed the taskbar button when the window was behind others.
 - The wizard's quality check was recomputed every frame, slowing the window down.
 
-[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/wildzer0/glyphpad/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/wildzer0/glyphpad/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/wildzer0/glyphpad/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/wildzer0/glyphpad/compare/v1.4.0...v1.4.1

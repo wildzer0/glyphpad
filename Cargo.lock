@@ -1442,7 +1442,7 @@ dependencies = [
 
 [[package]]
 name = "glyphpad"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1465,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "glyphpad-actions"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "glyphpad-core",
  "tracing",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "glyphpad-core"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "crossbeam-channel",
  "proptest",
@@ -1490,7 +1490,7 @@ dependencies = [
 
 [[package]]
 name = "glyphpad-gui"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "crossbeam-channel",
  "eframe",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "glyphpad-platform"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "crossbeam-channel",
  "glyphpad-core",
@@ -1516,7 +1516,7 @@ dependencies = [
 
 [[package]]
 name = "glyphpad-updater"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "flate2",
  "minisign-verify",
@@ -4785,7 +4785,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "anyhow",
  "clap",
