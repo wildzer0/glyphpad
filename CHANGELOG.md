@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `docs/DESIGN.md`: in-depth design and architecture guide with diagrams (crates, threads, pipeline, engine, sequences, configuration, GUI, updates, release), invariants and recipes for common changes.
+
 ### Fixed
 - Sequences: `within_ms` is now the pause between the end of one step and the *start* of the next, not the time up to the end of the next step. A calm pace (about 0.6 s between a tap and a swipe) used to break the sequence silently. A step that began in time is waited for until it is recognized.
 - Fingers no longer stay "stuck" in the Debug and recording views after lifting: the frame that lifts the last finger could be skipped by the 16 ms refresh limit.

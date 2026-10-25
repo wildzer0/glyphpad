@@ -71,6 +71,7 @@ actions is in the **[configuration reference](docs/CONFIGURATION.md)**.
 |---|---|
 | [User guide](docs/USER_GUIDE.md) · [Guida utente](docs/GUIDA_UTENTE.md) | Installing, recording gestures, every page of the window, profiles, sharing, updates, troubleshooting |
 | [Configuration reference](docs/CONFIGURATION.md) | Every setting, gesture type, action and condition of `glyphpad.toml`; the files GlyphPad keeps; the command line |
+| [Design guide](docs/DESIGN.md) | Architecture with diagrams: modules, threads, data flow, state machines, how to change things |
 | [Architecture](docs/ARCHITECTURE.md) | How the code is organized, and the known limitations |
 | [Specification](docs/SPEC.md) | The project's binding specification |
 | [Changelog](CHANGELOG.md) | What changed in each version |

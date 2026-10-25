@@ -1,5 +1,9 @@
 # Architecture
 
+For the full picture (diagrams, data flows, state machines, invariants and "how to change X"
+recipes) read [`DESIGN.md`](DESIGN.md) first; this file keeps short per-area notes and the known
+limitations.
+
 GlyphPad is a Cargo workspace. The binding specification is [`SPEC.md`](SPEC.md);
 this document describes how the code is actually organized and records known
 limitations as they are discovered.
