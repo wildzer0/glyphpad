@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-10-25
+
 ### Fixed
 - A gesture saved while the window had edits in flight stayed invisible: the editor latched into a
   conflict it only left when resolved by hand, and from then on ignored the file. The file is now
@@ -337,7 +339,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Show window" only flashed the taskbar button when the window was behind others.
 - The wizard's quality check was recomputed every frame, slowing the window down.
 
-[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.6.3...HEAD
+[1.6.3]: https://github.com/wildzer0/glyphpad/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/wildzer0/glyphpad/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/wildzer0/glyphpad/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/wildzer0/glyphpad/compare/v1.5.0...v1.6.0

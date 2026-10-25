@@ -5,7 +5,7 @@ default-members = ["crates/*"]
 
 [workspace.package]
 # Single source of truth for the version (SPEC §11.1); bumped by `cargo xtask release`.
-version = "1.6.2"
+version = "1.6.3"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
