@@ -170,7 +170,7 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
         .map(|s| s.def.name.clone())
         .collect();
     if let Some(known) = &st.known
-        && let Some(uid) = appeared(known, ed)
+        && let Some(uid) = appeared(known, ed, cx.shared)
     {
         st.selected = Some(uid);
         st.scroll_to = st.selected;
@@ -227,14 +227,17 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
 /// The gesture that appeared since `known`, when the draft is the file's and
 /// not the user's own edits: what the recording wizard just saved, or another
 /// program editing the file.
-fn appeared(known: &[String], ed: &Editor) -> Option<u64> {
-    if ed.dirty() {
-        return None;
-    }
+fn appeared(known: &[String], ed: &Editor, shared: &crate::Shared) -> Option<u64> {
     ed.draft
         .gestures
         .iter()
-        .find(|s| !known.contains(&s.def.name))
+        .find(|s| {
+            !known.contains(&s.def.name)
+                // A gesture that is in the file: the one the wizard just
+                // saved, or another program's. One the user typed here is
+                // not news.
+                && shared.config.gestures.iter().any(|g| g.def.name == s.def.name)
+        })
         .map(|s| s.uid)
 }
 
@@ -1078,17 +1081,18 @@ mod tests {
         let e = Editor::new(&s);
         let (a, b) = (e.draft.gestures[0].uid, e.draft.gestures[1].uid);
         // Both known: nothing new.
-        assert_eq!(appeared(&["a".into(), "b".into()], &e), None);
+        assert_eq!(appeared(&["a".into(), "b".into()], &e, &s), None);
         // The wizard added "b" to the file: it is the one to select.
-        assert_eq!(appeared(&["a".into()], &e), Some(b));
-        // The user's own edits are not "added from outside".
-        let mut dirty = Editor::new(&s);
-        dirty.draft.gestures.push(Slot {
-            uid: 99,
-            def: dirty.draft.gestures[0].def.clone(),
-        });
-        assert!(dirty.dirty());
-        assert_eq!(appeared(&["a".into(), "b".into()], &dirty), None);
+        assert_eq!(appeared(&["a".into()], &e, &s), Some(b));
+        // A gesture the draft has and the file does not is the user's own
+        // work, not something that appeared from outside.
+        let mut own = Editor::new(&s);
+        own.add(GestureDef::new(
+            "mine",
+            TriggerDef::default(),
+            glyphpad_core::action::Action::ShowWindow,
+        ));
+        assert_eq!(appeared(&["a".into(), "b".into()], &own, &s), None);
         let _ = a;
     }
 }

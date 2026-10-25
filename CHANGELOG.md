@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A gesture saved (or added by another program) while the window had edits of its own is no longer
+  swallowed by the conflict: the gestures the file gained are taken into the draft, so they appear
+  in the list, and the edit that was in flight is kept. The "recorded gesture does not appear"
+  reports could not be reproduced from a file that was correct, so the case that hid it is closed.
+
+### Added
+- The log file is written beside the configuration in every mode, not only portable: a windowed
+  program has no terminal to log into, and a report can now come with its log.
+
 ## [1.6.1] - 2026-10-25
 
 ### Changed

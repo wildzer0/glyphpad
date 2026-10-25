@@ -111,15 +111,14 @@ impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for Tee {
 /// Installs the global subscriber: `RUST_LOG` or `info`, to the terminal and
 /// to `location`'s folder when it is a portable one.
 pub fn init(location: Option<&crate::config_file::Location>) {
-    use crate::config_file::Location;
-    let writer = match location {
-        Some(Location::Portable(path)) => path.parent().map_or_else(Tee::terminal, |dir| {
-            Tee::with_file(dir).unwrap_or_else(|e| {
-                eprintln!("cannot write the log file: {e}");
-                Tee::terminal()
-            })
+    // Beside the configuration, wherever that is: a windowed program has no
+    // terminal to log into, and "send me the log" needs a file to send.
+    let writer = match location.and_then(|l| l.path().parent()) {
+        Some(dir) => Tee::with_file(dir).unwrap_or_else(|e| {
+            eprintln!("cannot write the log file: {e}");
+            Tee::terminal()
         }),
-        _ => Tee::terminal(),
+        None => Tee::terminal(),
     };
     let verbose = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into());
     let path = writer.path();

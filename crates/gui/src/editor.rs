@@ -225,9 +225,37 @@ impl Editor {
         } else if !self.dirty() {
             self.reset(shared);
         } else {
+            // The file changed while the draft has edits of its own. Whatever
+            // the file gained that the draft never had is taken in before
+            // freezing into a conflict: a gesture saved by the wizard (or by
+            // another program) must not disappear from the window just
+            // because a keystroke was in flight. The rest — a gesture edited
+            // on both sides — stays the conflict the user resolves.
+            self.adopt_new_gestures(shared);
             self.sent = None;
             self.external_change = true;
         }
+    }
+
+    /// Takes in the gestures `shared` has and neither the file's text as the
+    /// draft knows it nor the draft itself does. Returns how many.
+    pub fn adopt_new_gestures(&mut self, shared: &Shared) -> usize {
+        let known: Vec<String> = self
+            .base_origin
+            .keys()
+            .filter_map(|uid| self.base.gestures.iter().find(|s| s.uid == *uid))
+            .map(|s| s.def.name.clone())
+            .chain(self.draft.gestures.iter().map(|s| s.def.name.clone()))
+            .collect();
+        let mut added = 0;
+        for g in &shared.config.gestures {
+            if known.contains(&g.def.name) {
+                continue;
+            }
+            self.add(g.def.clone());
+            added += 1;
+        }
+        added
     }
 
     /// Frame by frame: follows the file, records undo steps and saves the
@@ -607,6 +635,31 @@ mod tests {
         assert_eq!(e.state(), &SaveState::Saving);
         // Nothing is sent twice while the save is on its way.
         assert!(step(&mut e, &s1, 11).is_none());
+    }
+
+    #[test]
+    fn a_gesture_the_file_gained_while_editing_is_taken_in() {
+        let s1 = shared(FILE, 1);
+        let mut ed = Editor::new(&s1);
+        // The user renames a gesture; meanwhile the wizard saves a third one.
+        ed.draft.gestures[0].def.name = "renamed".into();
+        assert!(ed.dirty());
+        let text = FILE.to_string()
+            + "\n[[gesture]]\nname = \"c\"\ntype = \"tap\"\nfingers = 3\naction = { type = \"lock_screen\" }\n";
+        let s2 = shared(&text, 2);
+        ed.sync(&s2);
+        let names: Vec<&str> = ed
+            .draft
+            .gestures
+            .iter()
+            .map(|s| s.def.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["renamed", "b", "c"],
+            "the edit stays and the new gesture is taken in, not lost to a conflict"
+        );
+        assert!(ed.external_change, "the conflict is still reported");
     }
 
     #[test]
