@@ -70,6 +70,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatic pause while a listed or full-screen application is in front; the tray icon
   shows it. Optional start with Windows (`autostart`).
 
+- Automatic updates from this project's GitHub Releases (`[update]`): `mode` off, notify
+  (default) or auto, `channel` stable or prerelease, `check_interval_h`. A check runs a few
+  seconds after start and then every interval, using the ETag and backing off when GitHub's
+  rate limit is reached. The window shows a banner with the release notes and *Install and
+  restart* / *Ignore this version*; Settings → Updates and the tray have *Check now*.
+- The download is verified against the release's `SHA256SUMS`, then the executable is
+  swapped (`glyphpad.old.exe`), the new version is started and, if it does not report
+  within 15 s or exits, it is stopped and the old one restored. Never installs during a
+  gesture, a drawing or a recording; never downgrades; a folder that cannot be written
+  gets a message with the release link instead of a silent failure.
+- `glyphpad update [--check]`. Debug builds also accept a hidden `--update-source <dir>`.
+- Releases are not signed yet: `SHA256SUMS` protects against corrupt downloads, not
+  against a compromised GitHub account.
+
 ### Changed
 - The window was rebuilt on a design system: light and dark themes (`theme = "system" |
   "light" | "dark"` in `[settings]`, also in Settings → Appearance), Phosphor icons, a

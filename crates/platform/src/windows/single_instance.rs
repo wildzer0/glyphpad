@@ -25,6 +25,10 @@ const WM_SHOW_WINDOW: u32 = WM_APP + 1;
 /// Held by the running instance; dropping it lets another one start.
 pub struct InstanceGuard(HANDLE);
 
+// SAFETY: the guard owns a kernel mutex handle, which any thread may close;
+// the updater thread gives the lock up while the main thread keeps running.
+unsafe impl Send for InstanceGuard {}
+
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
         // SAFETY: the mutex handle is owned by this guard and closed once.

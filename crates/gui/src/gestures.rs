@@ -243,7 +243,8 @@ fn rows(ui: &mut egui::Ui, ed: &mut Editor, st: &mut State) {
     let p = pal(ui);
     let reorderable = !filtering(st);
     if ed.draft.gestures.is_empty() {
-        w::empty_state(ui, icons::LIST_BULLETS, "Nothing here yet", "", |_| {});
+        ui.add_space(space::L);
+        ui.vertical_centered(|ui| ui.label(w::dim(ui, "No gestures yet.")));
         return;
     }
     let conflicting: Vec<String> = st
