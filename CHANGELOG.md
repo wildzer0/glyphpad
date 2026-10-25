@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-25
+
 ### Added
 - The statistics say which symbol the unrecognized drawings came closest to, and how often, which
   is what points at a symbol that is drawn badly or whose minimum score is too high.
@@ -292,7 +294,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Show window" only flashed the taskbar button when the window was behind others.
 - The wizard's quality check was recomputed every frame, slowing the window down.
 
-[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/wildzer0/glyphpad/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/wildzer0/glyphpad/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/wildzer0/glyphpad/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/wildzer0/glyphpad/compare/v1.2.1...v1.3.0
