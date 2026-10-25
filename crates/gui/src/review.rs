@@ -32,6 +32,8 @@ pub struct State {
     builtin_counts: Option<BTreeMap<String, usize>>,
     confirm_delete: Option<(String, usize)>,
     confirm_reset: bool,
+    /// User samples of the selected symbol chosen to be merged into one.
+    merge_selection: std::collections::BTreeSet<usize>,
 }
 
 /// Returns a symbol to record more templates for, when asked.
@@ -350,6 +352,19 @@ fn templates_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String>
                     if w::primary_button(ui, icons::RECORD, "Record more examples").clicked() {
                         record = Some(symbol.clone());
                     }
+                    let chosen = st.merge_selection.len();
+                    if w::button_enabled(ui, icons::STACK, "Merge the chosen ones", chosen >= 2)
+                        .on_hover_text(crate::i18n::tr(
+                            "The two halves of an X recorded apart become one example.",
+                        ))
+                        .clicked()
+                    {
+                        cx.send(Command::MergeTemplates {
+                            symbol: symbol.clone(),
+                            indices: st.merge_selection.iter().copied().collect(),
+                        });
+                        st.merge_selection.clear();
+                    }
                     if builtin.contains_key(&symbol) {
                         let mut use_builtin = !hidden;
                         if w::switch(ui, &mut use_builtin)
@@ -378,7 +393,7 @@ fn templates_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String>
                 .content_margin(egui::Margin::symmetric(2, 2))
                 .show(ui, |ui| {
                     w::grid(ui, samples.len(), 170.0, space::M, |ui, i, width| {
-                        sample_card(ui, st, &symbol, &samples[i], i, n_builtin, width);
+                        sample_card(ui, cx, st, &symbol, &samples[i], i, n_builtin, width);
                     });
                 });
         });
@@ -417,8 +432,10 @@ fn templates_view(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String>
     record
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sample_card(
     ui: &mut egui::Ui,
+    cx: &Ctx,
     st: &mut State,
     symbol: &str,
     sample: &Sample,
@@ -456,6 +473,37 @@ fn sample_card(
                             .clicked()
                             {
                                 st.confirm_delete = Some((symbol.to_string(), user_index));
+                            }
+                            // A drawing that arrived as one example can be
+                            // kept as its separate strokes, and two examples
+                            // can be put together as one.
+                            if sample.strokes.len() >= 2
+                                && w::icon_button(
+                                    ui,
+                                    icons::ARROWS_LEFT_RIGHT,
+                                    "Divide into its strokes",
+                                )
+                                .clicked()
+                            {
+                                cx.send(Command::SplitTemplate {
+                                    symbol: symbol.to_string(),
+                                    index: user_index,
+                                });
+                            }
+                            let chosen = st.merge_selection.contains(&user_index);
+                            if ui
+                                .selectable_label(
+                                    chosen,
+                                    egui::RichText::new(icons::CHECK).font(fonts::icon(13.0)),
+                                )
+                                .on_hover_text(crate::i18n::tr("Choose to merge"))
+                                .clicked()
+                            {
+                                if chosen {
+                                    st.merge_selection.remove(&user_index);
+                                } else {
+                                    st.merge_selection.insert(user_index);
+                                }
                             }
                         });
                     }

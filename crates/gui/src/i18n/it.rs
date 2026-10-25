@@ -373,6 +373,13 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("Edit this zone", "Modifica questa zona"),
     ("All four corners", "Tutti e quattro gli angoli"),
+    ("Merge the chosen ones", "Unisci quelli scelti"),
+    (
+        "The two halves of an X recorded apart become one example.",
+        "Le due metà di una X registrate separatamente diventano un solo esempio.",
+    ),
+    ("Divide into its strokes", "Dividi nei suoi tratti"),
+    ("Choose to merge", "Scegli per unire"),
     (
         "Scroll while the fingers move",
         "Scorri mentre le dita si muovono",

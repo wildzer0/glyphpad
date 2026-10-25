@@ -62,6 +62,17 @@ pub enum Command {
         symbol: String,
         index: usize,
     },
+    /// Put several samples of a symbol together as one (`indices` are in the
+    /// user's list): the two halves of an X recorded apart.
+    MergeTemplates {
+        symbol: String,
+        indices: Vec<usize>,
+    },
+    /// Divide one sample into its strokes, one sample each.
+    SplitTemplate {
+        symbol: String,
+        index: usize,
+    },
     /// Use or hide a symbol's built-in samples.
     HideBuiltins {
         symbol: String,

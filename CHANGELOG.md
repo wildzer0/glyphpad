@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.0] - 2026-10-25
 
 ### Added
+- Review can merge two examples of a symbol into one (the two halves of an X recorded apart) and
+  divide one example into its strokes.
 - `scroll_hold` scrolls continuously after a hold: the gesture fires once and the wheel turns as
   the fingers move, a notch every few millimetres, until they lift.
 - `repeat` runs an action several times, `only_if` runs one only when the window in front matches

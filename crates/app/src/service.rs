@@ -1280,6 +1280,65 @@ impl Service {
                     Err(e) => self.set_status(format!("templates not saved: {e:#}")),
                 }
             }
+            Command::MergeTemplates { symbol, indices } => {
+                let Some(list) = self.templates.symbols.get_mut(&symbol) else {
+                    return self.set_status(format!("\"{symbol}\" has no examples"));
+                };
+                let mut chosen: Vec<usize> = indices
+                    .iter()
+                    .copied()
+                    .filter(|&i| i < list.len())
+                    .collect();
+                chosen.sort_unstable();
+                chosen.dedup();
+                if chosen.len() < 2 {
+                    return self.set_status("choose at least two examples to merge");
+                }
+                let samples: Vec<Sample> = chosen.iter().map(|&i| list[i].clone()).collect();
+                let merged = Sample::merged(&samples).expect("at least two samples");
+                // The merged one takes the first's place; the others go.
+                let keep = chosen[0];
+                for &i in chosen.iter().rev() {
+                    list.remove(i);
+                }
+                list.insert(keep.min(list.len()), merged);
+                match self.write_templates() {
+                    Ok(()) => {
+                        self.rebuild_engine();
+                        self.set_status(format!(
+                            "{} examples of \"{symbol}\" merged into one",
+                            chosen.len()
+                        ));
+                    }
+                    Err(e) => self.set_status(format!("templates not saved: {e:#}")),
+                }
+            }
+            Command::SplitTemplate { symbol, index } => {
+                let Some(list) = self.templates.symbols.get_mut(&symbol) else {
+                    return self.set_status(format!("\"{symbol}\" has no examples"));
+                };
+                if index >= list.len() {
+                    return self.set_status("that example does not exist");
+                }
+                let parts = list[index].split();
+                if parts.len() < 2 {
+                    return self.set_status("this example has a single stroke: nothing to divide");
+                }
+                let n = parts.len();
+                list.remove(index);
+                for (k, part) in parts.into_iter().enumerate() {
+                    list.insert(index + k, part);
+                }
+                match self.write_templates() {
+                    Ok(()) => {
+                        self.rebuild_engine();
+                        self.set_status(format!(
+                            "example of \"{symbol}\" divided into {n} strokes"
+                        ));
+                    }
+                    Err(e) => self.set_status(format!("templates not saved: {e:#}")),
+                }
+            }
             Command::DeleteTemplate { symbol, index } => {
                 if let Some(list) = self.templates.symbols.get_mut(&symbol)
                     && index < list.len()

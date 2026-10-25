@@ -32,6 +32,69 @@ impl Sample {
             .map(|s| s.iter().map(|p| (p.x_mm, p.y_mm)).collect())
             .collect()
     }
+
+    /// One sample holding the strokes of all of them, in order: the two
+    /// halves of an X recorded apart become one X. The times are pushed along,
+    /// with a pause between the parts, so the playback still makes sense.
+    pub fn merged(samples: &[Sample]) -> Option<Self> {
+        /// A pause between the parts, as if they had been drawn one after the
+        /// other.
+        const GAP_US: u64 = 100_000;
+        let first = samples.first()?;
+        let mut strokes: Vec<Stroke> = Vec::new();
+        let mut offset = 0;
+        for sample in samples {
+            for stroke in &sample.strokes {
+                strokes.push(
+                    stroke
+                        .iter()
+                        .map(|p| TracePoint {
+                            t_us: p.t_us + offset,
+                            ..*p
+                        })
+                        .collect(),
+                );
+            }
+            let end = sample
+                .strokes
+                .iter()
+                .flatten()
+                .map(|p| p.t_us)
+                .max()
+                .unwrap_or(0);
+            offset += end + GAP_US;
+        }
+        Some(Self {
+            strokes,
+            width_mm: first.width_mm,
+            height_mm: first.height_mm,
+        })
+    }
+
+    /// One sample per stroke, each starting at time zero: a drawing that
+    /// arrived as one can be kept as its separate strokes.
+    pub fn split(&self) -> Vec<Self> {
+        self.strokes
+            .iter()
+            .filter(|s| s.len() >= 2)
+            .map(|stroke| {
+                let start = stroke.first().map_or(0, |p| p.t_us);
+                Self {
+                    strokes: vec![
+                        stroke
+                            .iter()
+                            .map(|p| TracePoint {
+                                t_us: p.t_us - start,
+                                ..*p
+                            })
+                            .collect(),
+                    ],
+                    width_mm: self.width_mm,
+                    height_mm: self.height_mm,
+                }
+            })
+            .collect()
+    }
 }
 
 /// Version of the templates file format.
@@ -213,6 +276,60 @@ fn densify(stroke: &[(f32, f32)]) -> Vec<(f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn point(x: f32, t_us: u64) -> TracePoint {
+        TracePoint {
+            x_mm: x,
+            y_mm: 0.0,
+            t_us,
+        }
+    }
+
+    fn sample(strokes: Vec<Vec<TracePoint>>) -> Sample {
+        Sample {
+            strokes,
+            width_mm: 155.8,
+            height_mm: 115.2,
+        }
+    }
+
+    #[test]
+    fn two_examples_merge_into_one_with_a_pause_between() {
+        let a = sample(vec![vec![point(0.0, 0), point(10.0, 100_000)]]);
+        let b = sample(vec![vec![point(20.0, 0), point(30.0, 50_000)]]);
+        let merged = Sample::merged(&[a, b]).expect("two samples");
+        assert_eq!(merged.strokes.len(), 2);
+        // The second part starts after the first (100 ms) plus a 100 ms pause.
+        assert_eq!(merged.strokes[1][0].t_us, 200_000);
+        assert_eq!(merged.strokes[1][1].t_us, 250_000);
+        assert_eq!(merged.width_mm, 155.8);
+        // Nothing to merge is nothing.
+        assert!(Sample::merged(&[]).is_none());
+    }
+
+    #[test]
+    fn one_example_divides_into_its_strokes() {
+        let s = sample(vec![
+            vec![point(0.0, 0), point(10.0, 40_000), point(20.0, 80_000)],
+            vec![point(5.0, 200_000), point(15.0, 240_000)],
+            // A single point is not a stroke worth keeping.
+            vec![point(1.0, 300_000)],
+        ]);
+        let parts = s.split();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].strokes.len(), 1);
+        assert_eq!(parts[0].strokes[0].len(), 3);
+        // Each starts at time zero, so the playback of the part is its own.
+        assert_eq!(parts[1].strokes[0][0].t_us, 0);
+        assert_eq!(parts[1].strokes[0][1].t_us, 40_000);
+        // One stroke alone has nothing to divide.
+        assert!(
+            sample(vec![vec![point(0.0, 0), point(1.0, 10)]])
+                .split()
+                .len()
+                == 1
+        );
+    }
 
     #[test]
     fn every_default_has_samples() {
