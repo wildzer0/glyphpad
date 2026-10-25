@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Starting a just-installed version on Linux no longer fails with "text file busy" (it is tried again).
+
 ## [1.0.0] - 2026-10-25
 
 ### Added

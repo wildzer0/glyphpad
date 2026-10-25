@@ -134,7 +134,7 @@ pub fn handoff(
             )),
         }
     };
-    let mut child = match Command::new(&installed.current).args(args).spawn() {
+    let mut child = match spawn_with_retry(&installed.current, args) {
         Ok(c) => c,
         Err(e) => {
             return fail(
@@ -178,6 +178,23 @@ pub fn handoff(
             );
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Starts `exe`, trying again a few times when Linux says "text file busy":
+/// a file that has just been written can be refused while another thread's
+/// `fork` still holds a copy of its write handle.
+fn spawn_with_retry(exe: &Path, args: &[OsString]) -> std::io::Result<Child> {
+    const ETXTBSY: i32 = 26;
+    let mut attempts = 0;
+    loop {
+        match Command::new(exe).args(args).spawn() {
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) && attempts < 10 => {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            result => return result,
+        }
     }
 }
 
