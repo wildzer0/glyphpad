@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-10-25
+
 ### Added
 - `docs/DESIGN.md`: in-depth design and architecture guide with diagrams (crates, threads, pipeline, engine, sequences, configuration, GUI, updates, release), invariants and recipes for common changes.
 
@@ -134,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Show window" only flashed the taskbar button when the window was behind others.
 - The wizard's quality check was recomputed every frame, slowing the window down.
 
-[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/wildzer0/glyphpad/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/wildzer0/glyphpad/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/wildzer0/glyphpad/releases/tag/v1.0.0
