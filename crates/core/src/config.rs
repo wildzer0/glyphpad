@@ -530,6 +530,23 @@ pub struct Gesture {
 /// Default pause allowed between the steps of a sequence.
 pub const DEFAULT_SEQUENCE_WITHIN_MS: u64 = 800;
 
+impl Config {
+    /// The zone gesture a touch of `fingers` fingers at `(x, y)` millimetres
+    /// would set off. The overlay announces it while the fingers rest, before
+    /// the tap is over; an application condition cannot be checked here, so a
+    /// gesture that has one is left out.
+    pub fn zone_at(&self, fingers: u8, x: f32, y: f32) -> Option<&Gesture> {
+        self.gestures.iter().find(|g| {
+            g.applies(&self.settings.active_profile, None)
+                && matches!(
+                    &g.trigger,
+                    Some(crate::trigger::Trigger::Zone { fingers: f, region, .. })
+                        if *f == fingers && region.contains(x, y)
+                )
+        })
+    }
+}
+
 impl GestureDef {
     /// The trigger fields, as checked by [`TriggerDef::build`].
     pub fn trigger_def(&self) -> TriggerDef {
@@ -1353,5 +1370,36 @@ action = { type = "lock_screen" }
         assert!(names.contains(&"default".to_string()));
         // A rule with nothing in it is an error.
         assert!(parse("[settings]\nprofile_rules = [{ app = \"\", profile = \"x\" }]\n").is_err());
+    }
+
+    #[test]
+    fn the_zone_under_a_touch_is_found() {
+        let c = parse(
+            r#"
+[[gesture]]
+name = "corner"
+type = "zone"
+fingers = 1
+region = { x = [0.0, 25.0], y = [0.0, 20.0] }
+action = { type = "lock_screen" }
+
+[[gesture]]
+name = "two"
+type = "zone"
+fingers = 2
+region = { x = [0.0, 25.0], y = [0.0, 20.0] }
+action = { type = "lock_screen" }
+"#,
+        )
+        .unwrap()
+        .config;
+        assert_eq!(
+            c.zone_at(1, 10.0, 8.0).map(|g| g.def.name.as_str()),
+            Some("corner")
+        );
+        // Outside the rectangle, or the wrong finger count: nothing.
+        assert!(c.zone_at(1, 40.0, 8.0).is_none());
+        assert!(c.zone_at(2, 10.0, 8.0).map(|g| g.def.name.as_str()) == Some("two"));
+        assert!(c.zone_at(3, 10.0, 8.0).is_none());
     }
 }

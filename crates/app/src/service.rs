@@ -16,6 +16,7 @@ use glyphpad_core::engine::{Engine, Observation, Recognition, Spec};
 use glyphpad_core::repeat::{Decision, Repeater};
 use glyphpad_core::service::{Command, EngineMode, HistoryEntry, Recorded, Shared, UiLink};
 use glyphpad_core::symbols::{Sample, TemplateFile};
+use glyphpad_core::trigger::Trigger;
 use glyphpad_core::{DeviceEvent, DeviceId, DeviceInfo, config_edit};
 
 use crate::config_file::{self, Location};
@@ -178,6 +179,7 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
         ui,
         last_preview: Instant::now(),
         trail_shown: false,
+        zone_hint: None,
         last_auto_pause_check: Instant::now() - AUTO_PAUSE_POLL,
         config_text: Arc::new(String::new()),
         revision: 0,
@@ -244,6 +246,9 @@ struct Service {
     last_preview: Instant,
     /// The overlay is showing a drawing trail.
     trail_shown: bool,
+    /// The zone gesture last announced while a finger rested on it, so the
+    /// overlay says it once per touch.
+    zone_hint: Option<String>,
     last_auto_pause_check: Instant,
     /// The configuration file as last loaded, to tell our own writes and
     /// unchanged saves from real edits on disk.
@@ -405,6 +410,35 @@ impl Service {
                                 .collect(),
                         );
                     }
+                    // A zone is a button: with the overlay on, say which
+                    // gesture it would run as soon as the fingers land on it,
+                    // not only once the tap is over (SPEC §13).
+                    if self.config.settings.overlay.enabled {
+                        let fingers = frame
+                            .contacts
+                            .iter()
+                            .filter(|c| c.tip && c.confident)
+                            .count();
+                        let hint = if fingers == 0 {
+                            None
+                        } else {
+                            let (x, y) = mean_position(frame);
+                            self.config.zone_at(fingers as u8, x, y).map(|g| {
+                                let what = g
+                                    .trigger
+                                    .as_ref()
+                                    .map(Trigger::describe)
+                                    .unwrap_or_default();
+                                (g.def.name.clone(), what)
+                            })
+                        };
+                        if hint.as_ref().map(|(n, _)| n) != self.zone_hint.as_ref() {
+                            self.zone_hint = hint.as_ref().map(|(n, _)| n.clone());
+                            if let Some((name, what)) = hint {
+                                self.feedback.message(name, what, true);
+                            }
+                        }
+                    }
                     let contacts = frame.contacts.clone();
                     let device = *device;
                     self.update_shared(|s| {
@@ -564,8 +598,13 @@ impl Service {
         match gesture {
             Some(g) => {
                 let label = format!("{}{}", g.def.name, if test { " (test)" } else { "" });
-                self.feedback
-                    .message(label, r.observation.to_string(), true);
+                // A zone is a place on the pad: name it, instead of saying
+                // "tap" and leaving the user to guess which one fired.
+                let detail = match &g.trigger {
+                    Some(t @ Trigger::Zone { .. }) => t.describe(),
+                    _ => r.observation.to_string(),
+                };
+                self.feedback.message(label, detail, true);
                 if !test {
                     executed = self.execute(g, app.clone());
                     if executed {
@@ -1321,6 +1360,23 @@ fn spawn_action_worker(
         })
         .expect("cannot spawn the action thread");
     tx
+}
+
+/// Where the fingers of a frame are, in millimetres: their mean.
+fn mean_position(frame: &glyphpad_core::TouchFrame) -> (f32, f32) {
+    let touching: Vec<&glyphpad_core::Contact> = frame
+        .contacts
+        .iter()
+        .filter(|c| c.tip && c.confident)
+        .collect();
+    if touching.is_empty() {
+        return (0.0, 0.0);
+    }
+    let n = touching.len() as f32;
+    (
+        touching.iter().map(|c| c.x_mm).sum::<f32>() / n,
+        touching.iter().map(|c| c.y_mm).sum::<f32>() / n,
+    )
 }
 
 fn run_action(executor: &dyn ActionExecutor, feedback: &Feedback, action: &Action) {

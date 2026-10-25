@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A zone is placed on a map of the real touchpad: click to put it, drag its corner to resize it,
+  or pick one of the four corners; the numbers in millimetres stay underneath.
+- Two zones that overlap are reported as a conflict, in the gesture list's conflict banner.
+- With the overlay on, a zone gesture is announced by its name as soon as the fingers land on it,
+  and the message names the zone instead of saying "tap".
+
+### Fixed
+- A gesture recorded through the wizard is selected and scrolled into view: it was saved and
+  worked, but the list did not show it.
+- Renaming a gesture no longer stutters, and the name field keeps the focus when it is emptied
+  and typed into again.
+
 ## [1.3.0] - 2026-10-25
 
 ### Added
