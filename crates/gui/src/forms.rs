@@ -74,6 +74,7 @@ pub fn set_trigger(def: &mut GestureDef, t: &TriggerDef) {
     def.symbol = t.symbol.clone();
     def.confidence = t.confidence;
     def.region = t.region;
+    def.regions = t.regions.clone();
 }
 
 /// Fields a kind needs, with sensible starting values, when switching to it.
@@ -87,10 +88,10 @@ fn reset_for(kind: GestureKind, old: &TriggerDef) -> TriggerDef {
         GestureKind::Tap | GestureKind::Hold => t.fingers = Some(fingers),
         GestureKind::Zone => {
             t.fingers = Some(1);
-            t.region = Some(glyphpad_core::trigger::Region {
+            t.regions = Some(vec![glyphpad_core::trigger::Region {
                 x: [0.0, 20.0],
                 y: [0.0, 15.0],
-            });
+            }]);
         }
         GestureKind::Swipe => {
             t.fingers = Some(fingers);
@@ -276,31 +277,55 @@ pub fn trigger_form(
                 );
                 t.taps = (taps > 1).then_some(taps);
             });
-            let mut r = t.region.unwrap_or(glyphpad_core::trigger::Region {
-                x: [0.0, 20.0],
-                y: [0.0, 15.0],
-            });
+            let mut regions: Vec<glyphpad_core::trigger::Region> = match (&t.region, &t.regions) {
+                (Some(one), _) => vec![*one],
+                (None, Some(many)) if !many.is_empty() => many.clone(),
+                _ => vec![corner_region(Corner::TopLeft, pad)],
+            };
+            // Which region the map and the numbers below are editing.
+            let edited_id = id.with("zone-edited");
+            let mut edited: usize = ui.data_mut(|d| d.get_temp(edited_id)).unwrap_or(0);
+            edited = edited.min(regions.len().saturating_sub(1));
             w::row(
                 ui,
-                "Region",
-                "Click the map to place the zone, drag its corner to resize it.",
+                "Regions",
+                "A zone is a button on the pad: one, or several (any corner). Click the map to place the edited one, drag its corner to resize it.",
                 |ui| {
-                    ui.horizontal(|ui| {
-                        for (label, corner) in [
-                            ("Top left", Corner::TopLeft),
-                            ("Top right", Corner::TopRight),
-                            ("Bottom left", Corner::BottomLeft),
-                            ("Bottom right", Corner::BottomRight),
-                        ] {
-                            if w::small_button(ui, label).clicked() {
-                                r = corner_region(corner, pad);
+                    ui.horizontal_wrapped(|ui| {
+                        for i in 0..regions.len() {
+                            if ui
+                                .selectable_label(edited == i, format!("{}", i + 1))
+                                .on_hover_text(crate::i18n::tr("Edit this zone"))
+                                .clicked()
+                            {
+                                edited = i;
                             }
+                        }
+                        if regions.len() < 8 && w::small_button(ui, "Add").clicked() {
+                            regions.push(regions[edited]);
+                            edited = regions.len() - 1;
+                        }
+                        if w::small_button(ui, "All four corners").clicked() {
+                            regions = [
+                                Corner::TopLeft,
+                                Corner::TopRight,
+                                Corner::BottomLeft,
+                                Corner::BottomRight,
+                            ]
+                            .into_iter()
+                            .map(|c| corner_region(c, pad))
+                            .collect();
+                            edited = 0;
+                        }
+                        if regions.len() > 1 && w::small_button(ui, "Remove").clicked() {
+                            regions.remove(edited);
+                            edited = edited.min(regions.len() - 1);
                         }
                     });
                     ui.add_space(space::XS);
-                    let changed = zone_map(ui, id.with("zone-map"), &mut r, pad);
-                    let _ = changed;
+                    zone_map(ui, id.with("zone-map"), &mut regions, edited, pad);
                     ui.add_space(space::XS);
+                    let r = &mut regions[edited];
                     ui.horizontal(|ui| {
                         ui.label(w::dim(ui, "x"));
                         ui.add(
@@ -333,7 +358,12 @@ pub fn trigger_form(
                     });
                 },
             );
-            t.region = Some(sorted(r));
+            for r in &mut regions {
+                *r = sorted(*r);
+            }
+            ui.data_mut(|d| d.insert_temp(edited_id, edited));
+            t.regions = Some(regions);
+            t.region = None;
         }
         GestureKind::Symbol => {
             let mut chosen = t.symbol.as_ref().map(OneOrMany::to_vec).unwrap_or_default();
@@ -532,7 +562,8 @@ fn sorted(mut r: glyphpad_core::trigger::Region) -> glyphpad_core::trigger::Regi
 fn zone_map(
     ui: &mut egui::Ui,
     id: Id,
-    region: &mut glyphpad_core::trigger::Region,
+    regions: &mut [glyphpad_core::trigger::Region],
+    edited: usize,
     pad: (f32, f32),
 ) -> bool {
     let p = pal(ui);
@@ -568,19 +599,35 @@ fn zone_map(
             ((pos.y - rect.top()) / scale).clamp(0.0, pad.1),
         )
     };
-    let zone = egui::Rect::from_two_pos(
-        to_screen(region.x[0], region.y[0]),
-        to_screen(region.x[1], region.y[1]),
-    );
-    painter.rect_filled(zone, 4, p.accent.gamma_multiply(0.22));
-    painter.rect_stroke(
-        zone,
-        4,
-        egui::Stroke::new(1.5, p.accent),
-        egui::StrokeKind::Inside,
-    );
-    let handle = egui::Rect::from_center_size(zone.max, egui::Vec2::splat(14.0));
-    painter.circle_filled(handle.center(), 4.5, p.accent);
+    // Every region of the gesture, with the one being edited standing out:
+    // "any corner" is four rectangles, and seeing them together is the point.
+    let mut handle = egui::Rect::NOTHING;
+    for (i, region) in regions.iter().enumerate() {
+        let zone = egui::Rect::from_two_pos(
+            to_screen(region.x[0], region.y[0]),
+            to_screen(region.x[1], region.y[1]),
+        );
+        let on = i == edited;
+        painter.rect_filled(
+            zone,
+            4,
+            p.accent.gamma_multiply(if on { 0.22 } else { 0.10 }),
+        );
+        painter.rect_stroke(
+            zone,
+            4,
+            egui::Stroke::new(
+                if on { 1.5 } else { 1.0 },
+                p.accent.gamma_multiply(if on { 1.0 } else { 0.5 }),
+            ),
+            egui::StrokeKind::Inside,
+        );
+        if on {
+            handle = egui::Rect::from_center_size(zone.max, egui::Vec2::splat(14.0));
+            painter.circle_filled(handle.center(), 4.5, p.accent);
+        }
+    }
+    let region = &mut regions[edited];
 
     let resizing_id = id.with("resizing");
     let mut resizing: bool = ui.data_mut(|d| d.get_temp(resizing_id)).unwrap_or(false);

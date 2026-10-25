@@ -103,7 +103,10 @@ fn symbol(names: &[String], templates: &BTreeMap<String, Vec<Sample>>) -> Pictog
 pub fn of(trigger: &Trigger, templates: &BTreeMap<String, Vec<Sample>>) -> Pictogram {
     let mut p = Pictogram::default();
     match trigger {
-        Trigger::Zone { region, .. } => {
+        Trigger::Zone { regions, .. } => {
+            let Some(region) = regions.first() else {
+                return p;
+            };
             // A schematic pad: the cheat sheet's pictogram is not to scale.
             const PAD: (f32, f32) = (150.0, 100.0);
             let x = |v: f32| (v / PAD.0).clamp(0.0, 1.0);

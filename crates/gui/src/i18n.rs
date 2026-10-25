@@ -121,20 +121,27 @@ pub fn describe_trigger(t: &glyphpad_core::trigger::Trigger) -> String {
         Trigger::Zone {
             fingers,
             taps,
-            region,
-        } => format!(
-            "{} con {} in {}–{} × {}–{} mm",
-            if *taps == 1 {
+            regions,
+        } => {
+            let what = if *taps == 1 {
                 "tocco".to_string()
             } else {
                 format!("{taps}× tocco")
-            },
-            dita(*fingers),
-            region.x[0],
-            region.x[1],
-            region.y[0],
-            region.y[1]
-        ),
+            };
+            let first = regions.first().map_or_else(
+                || "da nessuna parte".to_string(),
+                |r| format!("{}–{} × {}–{} mm", r.x[0], r.x[1], r.y[0], r.y[1]),
+            );
+            if regions.len() > 1 {
+                format!(
+                    "{what} con {} in {first} e altre {}",
+                    dita(*fingers),
+                    regions.len() - 1
+                )
+            } else {
+                format!("{what} con {} in {first}", dita(*fingers))
+            }
+        }
         Trigger::Tap {
             fingers,
             taps,

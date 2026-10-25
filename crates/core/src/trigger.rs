@@ -82,18 +82,25 @@ pub struct TriggerDef {
     /// one starts, overriding the sequence's own `within_ms`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub within_ms: Option<u64>,
-    /// Where on the touchpad a `zone` gesture has to land.
+    /// Where on the touchpad a `zone` gesture has to land. `region` is one
+    /// and `regions` several ("any corner"): they are not given together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<Region>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regions: Option<Vec<Region>>,
 }
+
+/// The most zones one gesture may have: the pad is not that big, and each
+/// one has to be checked on every tap.
+const MAX_REGIONS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Trigger {
-    /// A tap inside a rectangle of the touchpad.
+    /// A tap inside one of the rectangles of the touchpad.
     Zone {
         fingers: u8,
         taps: u8,
-        region: Region,
+        regions: Vec<Region>,
     },
     /// `modifiers` resting fingers make it a chord.
     Tap {
@@ -143,6 +150,15 @@ pub enum Trigger {
 type FieldErrors = Vec<(&'static str, String)>;
 
 impl TriggerDef {
+    /// The zones of a `zone` field, from `region` or `regions`.
+    fn zone_regions(&self) -> Vec<Region> {
+        match (&self.region, &self.regions) {
+            (Some(one), _) => vec![*one],
+            (None, Some(many)) => many.clone(),
+            (None, None) => Vec::new(),
+        }
+    }
+
     /// Validates the fields for the kind; errors name the field.
     pub fn build(&self) -> Result<Trigger, FieldErrors> {
         let mut errors: FieldErrors = Vec::new();
@@ -186,8 +202,22 @@ impl TriggerDef {
                 allowed.extend(["min_distance_mm", "min_speed_mm_s"]);
             }
             GestureKind::Zone => {
-                need("region", self.region.is_some(), &mut errors);
-                allowed.extend(["taps", "region"]);
+                allowed.extend(["taps", "region", "regions"]);
+                if self.region.is_some() && self.regions.is_some() {
+                    errors.push((
+                        "regions",
+                        "use `region` for one zone or `regions` for several, not both".into(),
+                    ));
+                }
+                if self.zone_regions().is_empty() {
+                    errors.push(("region", "a zone needs a `region`".into()));
+                }
+                if self.zone_regions().len() > MAX_REGIONS {
+                    errors.push((
+                        "regions",
+                        format!("a zone takes at most {MAX_REGIONS} of them"),
+                    ));
+                }
             }
             GestureKind::Pinch => {
                 need("zoom", self.zoom.is_some(), &mut errors);
@@ -219,6 +249,7 @@ impl TriggerDef {
             ("min_change_mm", self.min_change_mm.is_some()),
             ("min_deg", self.min_deg.is_some()),
             ("region", self.region.is_some()),
+            ("regions", self.regions.is_some()),
         ] {
             if present && !allowed.contains(&field) {
                 errors.push((
@@ -274,14 +305,25 @@ impl TriggerDef {
         {
             errors.push(("within_ms", "must be between 100 and 5000".into()));
         }
-        if let Some(r) = &self.region {
+        for (i, r) in self.zone_regions().iter().enumerate() {
+            let field = if self.regions.is_some() {
+                "regions"
+            } else {
+                "region"
+            };
             let in_range = |v: f32| (0.0..=400.0).contains(&v);
             if !(in_range(r.x[0]) && in_range(r.x[1]) && in_range(r.y[0]) && in_range(r.y[1])) {
-                errors.push(("region", "edges must be between 0 and 400 mm".into()));
+                errors.push((
+                    field,
+                    format!("zone {}: edges must be between 0 and 400 mm", i + 1),
+                ));
             } else if r.x[0] >= r.x[1] || r.y[0] >= r.y[1] {
                 errors.push((
-                    "region",
-                    "the first edge of `x` and `y` must be left of and above the second".into(),
+                    field,
+                    format!(
+                        "zone {}: the first edge of `x` and `y` must be left of and above the second",
+                        i + 1
+                    ),
                 ));
             }
         }
@@ -301,10 +343,7 @@ impl TriggerDef {
             GestureKind::Zone => Trigger::Zone {
                 fingers,
                 taps: self.taps.unwrap_or(1),
-                region: self.region.unwrap_or(Region {
-                    x: [0.0, 0.0],
-                    y: [0.0, 0.0],
-                }),
+                regions: self.zone_regions(),
             },
             GestureKind::Tap => Trigger::Tap {
                 fingers,
@@ -377,14 +416,16 @@ impl Trigger {
                 Trigger::Zone {
                     fingers,
                     taps,
-                    region,
+                    regions,
                 },
                 Observation::Tap {
                     fingers: f,
                     taps: t,
                 },
             ) => u8::from(
-                f == fingers && t == taps && at.is_some_and(|(x, y)| region.contains(x, y)),
+                f == fingers
+                    && t == taps
+                    && at.is_some_and(|(x, y)| regions.iter().any(|r| r.contains(x, y))),
             ),
             (
                 Trigger::Tap {
@@ -624,21 +665,26 @@ impl Trigger {
             Trigger::Zone {
                 fingers,
                 taps,
-                region,
+                regions,
             } => {
                 let tap = if *taps == 1 {
                     "tap".to_string()
                 } else {
                     format!("{taps}× tap")
                 };
-                format!(
-                    "{tap} with {} at {}–{} × {}–{} mm",
-                    f(*fingers),
-                    region.x[0],
-                    region.x[1],
-                    region.y[0],
-                    region.y[1]
-                )
+                let first = regions.first().map_or_else(
+                    || "nowhere".to_string(),
+                    |r| format!("{}–{} × {}–{} mm", r.x[0], r.x[1], r.y[0], r.y[1]),
+                );
+                if regions.len() > 1 {
+                    format!(
+                        "{tap} with {} in {first} and {} more",
+                        f(*fingers),
+                        regions.len() - 1
+                    )
+                } else {
+                    format!("{tap} with {} at {first}", f(*fingers))
+                }
             }
         }
     }

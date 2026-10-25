@@ -220,7 +220,7 @@ action = { type = "lock_screen" }   # required
 | `tap` | **`fingers`** 1–10, `taps` 1–3 (default 1), `modifier_fingers` |
 | `hold` | **`fingers`** |
 | `swipe` | **`fingers`**, **`direction`**, `modifier_fingers` |
-| `zone` | **`fingers`**, **`region`**, `taps` | A tap inside a rectangle of the pad, in millimetres: `region = { x = [0, 25], y = [0, 20] }` is a 25 × 20 mm corner at the top left |
+| `zone` | **`fingers`**, **`region`** or **`regions`**, `taps` | A tap inside a rectangle of the pad, in millimetres: `region = { x = [0, 25], y = [0, 20] }` is a 25 × 20 mm corner at the top left; `regions = [...]` takes several (at most 8) |
 | `edge_swipe` | **`fingers`**, **`edge`**, **`direction`** |
 | `pinch` | **`fingers`** ≥ 2, **`zoom`** (`in` = fingers closer, `out` = apart) |
 | `rotate` | **`fingers`** ≥ 2, **`rotation`** (`clockwise`, `counterclockwise`) |
@@ -282,6 +282,20 @@ type = "zone"
 fingers = 1
 region = { x = [0.0, 25.0], y = [0.0, 20.0] }   # top left
 action = { type = "lock_screen" }
+
+[[gesture]]
+name = "any-corner"
+type = "zone"
+fingers = 1
+# One gesture for all four corners, instead of four that would fire on the
+# same tap anyway (overlapping zones are reported as a conflict).
+regions = [
+    { x = [0.0, 24.0], y = [0.0, 18.0] },
+    { x = [131.8, 155.8], y = [0.0, 18.0] },
+    { x = [0.0, 24.0], y = [97.2, 115.2] },
+    { x = [131.8, 155.8], y = [97.2, 115.2] },
+]
+action = { type = "notify", message = "corner" }
 ```
 
 `direction` is `up`, `down`, `left`, `right`, `up_left`, `up_right`, `down_left` or `down_right`.

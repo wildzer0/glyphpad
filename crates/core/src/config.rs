@@ -473,9 +473,12 @@ pub struct GestureDef {
     pub min_change_mm: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_deg: Option<f32>,
-    /// Where a `zone` gesture has to land, in millimetres.
+    /// Where a `zone` gesture has to land, in millimetres: one region, or
+    /// several ("any corner").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<crate::trigger::Region>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regions: Option<Vec<crate::trigger::Region>>,
     /// The gestures of a sequence, in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steps: Option<Vec<TriggerDef>>,
@@ -545,8 +548,8 @@ impl Config {
             g.applies(&self.settings.active_profile, None)
                 && matches!(
                     &g.trigger,
-                    Some(crate::trigger::Trigger::Zone { fingers: f, region, .. })
-                        if *f == fingers && region.contains(x, y)
+                    Some(crate::trigger::Trigger::Zone { fingers: f, regions, .. })
+                        if *f == fingers && regions.iter().any(|r| r.contains(x, y))
                 )
         })
     }
@@ -572,6 +575,7 @@ impl GestureDef {
             min_deg: self.min_deg,
             within_ms: None,
             region: self.region,
+            regions: self.regions.clone(),
         }
     }
 
@@ -594,6 +598,7 @@ impl GestureDef {
             min_change_mm: trigger.min_change_mm,
             min_deg: trigger.min_deg,
             region: trigger.region,
+            regions: trigger.regions,
             steps: None,
             within_ms: None,
             action,
@@ -1376,6 +1381,46 @@ action = { type = "lock_screen" }
         assert!(names.contains(&"default".to_string()));
         // A rule with nothing in it is an error.
         assert!(parse("[settings]\nprofile_rules = [{ app = \"\", profile = \"x\" }]\n").is_err());
+    }
+
+    #[test]
+    fn any_of_a_gesture_zones_matches() {
+        let c = parse(
+            r#"
+[[gesture]]
+name = "corners"
+type = "zone"
+fingers = 1
+regions = [
+    { x = [0.0, 24.0], y = [0.0, 18.0] },
+    { x = [130.0, 155.0], y = [95.0, 115.0] },
+]
+action = { type = "lock_screen" }
+"#,
+        )
+        .unwrap()
+        .config;
+        assert!(c.zone_at(1, 5.0, 5.0).is_some(), "the top-left one");
+        assert!(c.zone_at(1, 140.0, 100.0).is_some(), "the bottom-right one");
+        assert!(
+            c.zone_at(1, 70.0, 50.0).is_none(),
+            "in the middle of neither"
+        );
+        // One zone or several, not both.
+        assert!(
+            parse(
+                r#"
+[[gesture]]
+name = "both"
+type = "zone"
+fingers = 1
+region = { x = [0.0, 24.0], y = [0.0, 18.0] }
+regions = [{ x = [30.0, 50.0], y = [0.0, 18.0] }]
+action = { type = "lock_screen" }
+"#
+            )
+            .is_err()
+        );
     }
 
     #[test]

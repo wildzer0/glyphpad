@@ -53,14 +53,14 @@ fn same_movement(a: &Trigger, b: &Trigger) -> bool {
             Trigger::Zone {
                 fingers: fa,
                 taps: ta,
-                region: ra,
+                regions: ra,
             },
             Trigger::Zone {
                 fingers: fb,
                 taps: tb,
-                region: rb,
+                regions: rb,
             },
-        ) => fa == fb && ta == tb && regions_overlap(ra, rb),
+        ) => fa == fb && ta == tb && ra.iter().any(|a| rb.iter().any(|b| regions_overlap(a, b))),
         _ => a == b,
     }
 }

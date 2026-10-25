@@ -355,6 +355,13 @@ pub const TABLE: &[(&str, &str)] = &[
         "Clicca sulla mappa per posizionare la zona, trascinane l'angolo per ridimensionarla.",
     ),
     ("Region", "Regione"),
+    ("Regions", "Regioni"),
+    (
+        "A zone is a button on the pad: one, or several (any corner). Click the map to place the edited one, drag its corner to resize it.",
+        "Una zona è un pulsante sul pad: una, o più (qualsiasi angolo). Clicca la mappa per posizionare quella in modifica, trascinane l'angolo per ridimensionarla.",
+    ),
+    ("Edit this zone", "Modifica questa zona"),
+    ("All four corners", "Tutti e quattro gli angoli"),
     (
         "The part of the touchpad, in millimetres from its top-left corner.",
         "La parte del touchpad, in millimetri dall'angolo in alto a sinistra.",
