@@ -148,7 +148,17 @@ pub fn write_atomically(path: &Path, contents: &str) -> Result<()> {
         std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     }
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, contents).with_context(|| format!("cannot write {}", tmp.display()))?;
+    {
+        let mut file = std::fs::File::create(&tmp)
+            .with_context(|| format!("cannot write {}", tmp.display()))?;
+        use std::io::Write as _;
+        file.write_all(contents.as_bytes())
+            .with_context(|| format!("cannot write {}", tmp.display()))?;
+        // The rename below would otherwise be able to publish an empty file
+        // after a power cut.
+        file.sync_all()
+            .with_context(|| format!("cannot write {}", tmp.display()))?;
+    }
     std::fs::rename(&tmp, path).with_context(|| format!("cannot replace {}", path.display()))?;
     Ok(())
 }
