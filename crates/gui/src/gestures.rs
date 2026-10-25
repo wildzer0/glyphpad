@@ -585,6 +585,10 @@ fn detail(
                             ui.spacing_mut().item_spacing.y = 0.0;
                             ui.add(
                                 egui::TextEdit::singleline(&mut def.name)
+                                    // An explicit id: the field keeps the
+                                    // focus when something above it appears
+                                    // or disappears (a banner, a warning).
+                                    .id(id.with("name"))
                                     .font(fonts::strong(18.0))
                                     .frame(egui::Frame::new())
                                     .hint_text(crate::i18n::tr("Name"))

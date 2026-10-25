@@ -229,7 +229,19 @@ impl Editor {
             ctx.egui_wants_keyboard_input() || ctx.input(|i| i.pointer.any_down());
         self.track(typing_or_dragging);
         let pointer_down = ctx.input(|i| i.pointer.any_down());
-        let (cmd, wake) = self.autosave(shared, Instant::now(), pointer_down);
+        // A keystroke changes the draft, and validating it writes the whole
+        // file and parses it back: on the very frame the user types that is
+        // felt as a stutter, and it is repeated for every letter. The check
+        // runs as soon as the keys stop, before the debounced save.
+        let typing = ctx.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    eframe::egui::Event::Text(_) | eframe::egui::Event::Key { pressed: true, .. }
+                )
+            })
+        });
+        let (cmd, wake) = self.autosave(shared, Instant::now(), pointer_down, typing);
         if let Some(after) = wake {
             ctx.request_repaint_after(after);
         }
@@ -243,6 +255,7 @@ impl Editor {
         shared: &Shared,
         now: Instant,
         pointer_down: bool,
+        typing: bool,
     ) -> (Option<Command>, Option<Duration>) {
         if self.draft != self.observed {
             self.observed = self.draft.clone();
@@ -259,6 +272,10 @@ impl Editor {
         if self.external_change {
             self.state = SaveState::Conflict;
             return (None, None);
+        }
+        if typing {
+            self.state = SaveState::Waiting;
+            return (None, Some(DEBOUNCE));
         }
         if let Err(e) = self.check() {
             self.state = SaveState::Invalid(e);
@@ -523,8 +540,8 @@ mod tests {
     /// passed: the first call notices an edit, the second saves it.
     fn step(e: &mut Editor, s: &Shared, secs: u64) -> Option<Command> {
         let t = later(secs);
-        let first = e.autosave(s, t, false).0;
-        first.or(e.autosave(s, t + DEBOUNCE * 2, false).0)
+        let first = e.autosave(s, t, false, false).0;
+        first.or(e.autosave(s, t + DEBOUNCE * 2, false, false).0)
     }
 
     #[test]
@@ -557,10 +574,10 @@ mod tests {
         assert_eq!(e.state(), &SaveState::Saved);
         e.draft.settings.close_to_tray = false;
         // Just edited: waiting for a pause.
-        assert!(e.autosave(&s1, Instant::now(), false).0.is_none());
+        assert!(e.autosave(&s1, Instant::now(), false, false).0.is_none());
         assert_eq!(e.state(), &SaveState::Waiting);
         // The pointer being down (a slider drag) keeps it waiting.
-        assert!(e.autosave(&s1, later(5), true).0.is_none());
+        assert!(e.autosave(&s1, later(5), true, false).0.is_none());
         let Some(Command::WriteConfig {
             text,
             base_revision,

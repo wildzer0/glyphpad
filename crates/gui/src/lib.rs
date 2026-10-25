@@ -402,6 +402,23 @@ impl eframe::App for App {
             )
             .show_separator_line(false)
             .show(ui, |ui| self.status_bar(ui, &cx));
+        // The banners live in a panel of their own: appearing or
+        // disappearing must not shift the widgets of the page below, which
+        // would take the focus away from the field being typed in.
+        if self.banner_needed(&cx) {
+            egui::Panel::top("banners")
+                .frame(
+                    egui::Frame::new()
+                        .fill(p.bg)
+                        .inner_margin(egui::Margin::symmetric(theme::space::XL as i8, 0)),
+                )
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    ui.add_space(theme::space::S);
+                    self.update_banner(ui, &cx);
+                    self.save_banner(ui, &cx);
+                });
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(p.bg).inner_margin(egui::Margin {
                 left: theme::space::XL as i8,
@@ -410,8 +427,6 @@ impl eframe::App for App {
                 bottom: 0,
             }))
             .show(ui, |ui| {
-                self.update_banner(ui, &cx);
-                self.save_banner(ui, &cx);
                 if let Some(wz) = &mut self.wizard {
                     match wz.show(ui, &cx) {
                         wizard::Outcome::Open => {}
@@ -738,6 +753,27 @@ impl App {
             }
             U::Failed(_) | U::Idle | U::Checking | U::UpToDate => {}
         }
+    }
+
+    /// Whether anything has to be said above the page, so the banner panel
+    /// is only there when it has something in it.
+    fn banner_needed(&self, cx: &Ctx) -> bool {
+        use editor::SaveState as S;
+        use glyphpad_core::service::UpdateStatus as U;
+        let update = match &cx.shared.update {
+            U::Available(_)
+            | U::Downloading(_)
+            | U::Installing(_)
+            | U::Restarting(_)
+            | U::Manual(..) => true,
+            U::Failed(why) => self.dismissed_failure.as_deref() != Some(why),
+            U::Idle | U::Checking | U::UpToDate => false,
+        };
+        update
+            || matches!(
+                self.editor.state(),
+                S::Invalid(_) | S::Failed(_) | S::Conflict
+            )
     }
 
     /// Says what needs attention about saving, above the page.
