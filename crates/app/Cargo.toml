@@ -15,6 +15,11 @@ workspace = true
 name = "glyphpad"
 path = "src/main.rs"
 
+[build-dependencies]
+# The executable's icon is drawn by `glyphpad_core::icon` and compiled into a
+# Windows resource by the build script.
+glyphpad-core.workspace = true
+
 [dependencies]
 anyhow.workspace = true
 jiff.workspace = true
@@ -35,3 +40,8 @@ tracing-subscriber.workspace = true
 # The Linux tray (GTK, AppIndicator) arrives with the Linux backend (M7).
 [target.'cfg(windows)'.dependencies]
 tray-icon.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+# Runs `rc.exe` (part of the MSVC toolchain) on the icon's resource script.
+embed-resource = "3"
+

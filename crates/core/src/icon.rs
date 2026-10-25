@@ -1,6 +1,10 @@
 //! The application icon, drawn in code so no image files or decoders are
 //! needed: a rounded tile with a gesture trail sweeping across it, the pad
 //! itself and the stroke that gives the program its name.
+//!
+//! It lives in the core because two things draw it from here: the window and
+//! the tray (with `glyphpad-gui`) and the build script of the executable,
+//! which compiles it into a Windows resource so the file has the same icon.
 
 /// RGBA pixels of a `size`×`size` icon; grey when gestures are paused.
 pub fn icon_rgba(size: u32, paused: bool) -> Vec<u8> {

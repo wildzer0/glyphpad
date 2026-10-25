@@ -10,6 +10,7 @@ pub mod config_edit;
 pub mod conflicts;
 pub mod dispatch;
 pub mod engine;
+pub mod icon;
 pub mod infer;
 pub mod keys;
 pub mod model;

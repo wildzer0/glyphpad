@@ -13,7 +13,6 @@ mod editor;
 mod forms;
 mod gestures;
 mod i18n;
-mod icon;
 mod icons;
 mod packs;
 mod review;
@@ -30,7 +29,7 @@ use eframe::egui::ViewportCommand;
 use glyphpad_core::service::{Command, EngineMode, Shared, UiLink};
 
 pub use eframe::egui;
-pub use icon::icon_rgba;
+pub use glyphpad_core::icon::icon_rgba;
 
 /// `text` in the language of the window, for what the application itself
 /// shows (the tray menu).
