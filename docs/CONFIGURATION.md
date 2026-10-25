@@ -276,7 +276,7 @@ marked *app*.
 | `close_window` | `force` (default `false`) | Closes the foreground window; `force = true` ends its process |
 | `minimize` | | Foreground window |
 | `maximize` | | Maximizes, or restores if already maximized |
-| `run` | **`command`**, `args` (list), `hidden`, `cwd` | `hidden = true` runs a console tool without a console window |
+| `run` | **`command`**, `args` (list), `hidden`, `cwd`, `shell`, `env`, `wait`, `timeout_ms` | `hidden` runs a console tool without a console window; `shell = true` goes through the command interpreter; `env` adds variables; `wait = true` waits up to `timeout_ms` (default 30000) |
 | `media` | **`key`** | `play_pause`, `next`, `previous`, `stop`, `volume_up`, `volume_down`, `mute` |
 | `chain` | **`actions`** (a list) | Runs them in order; no `chain` inside a `chain` |
 | `wait` | **`ms`** (≤ 60000) | A pause, for use inside a `chain` |
@@ -300,6 +300,18 @@ does nothing if the window in front is not the one where the gesture ran (`repea
 
 Actions aimed at a window running as administrator do nothing unless GlyphPad runs as
 administrator too.
+
+`run` starts the program detached unless `wait = true`. With `shell = true` the command goes
+through the system's command interpreter (`cmd /C` on Windows), so pipes, redirection, `&&` and
+`%VARIABLES%` work; `args` are appended to that line, quoted when they contain a space:
+
+```toml
+action = { type = "run", command = "git pull && npm test", shell = true, wait = true, timeout_ms = 120000, cwd = "C:\\dev\\app" }
+action = { type = "run", command = "powershell", args = ["-NoProfile", "-File", "C:\\scripts\\night.ps1"], hidden = true, env = { NIGHT = "1" } }
+```
+
+A program that exits with an error is logged and the next action of a `chain` runs anyway: the
+action set has no condition on an exit code.
 
 ## Conditions
 

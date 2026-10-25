@@ -1,5 +1,7 @@
 //! Configurable actions and the platform traits that carry them out (SPEC §3.2, §9).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::keys::KeyCombo;
@@ -32,6 +34,20 @@ pub enum Action {
         hidden: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
+        /// Run the command through the system shell (`cmd /C` on Windows),
+        /// so pipes, redirection, `&&` and variables work.
+        #[serde(default)]
+        shell: bool,
+        /// Extra environment variables for the program.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        env: BTreeMap<String, String>,
+        /// Wait for it to finish, up to `timeout_ms`, instead of leaving it
+        /// running on its own.
+        #[serde(default)]
+        wait: bool,
+        /// How long `wait` waits before giving up.
+        #[serde(default = "run_timeout_default")]
+        timeout_ms: u64,
     },
     Media {
         key: MediaKey,
@@ -128,6 +144,12 @@ pub enum MediaKey {
     Mute,
 }
 
+/// How long `run` waits by default: long enough for a script, short enough
+/// not to hold the queue of actions forever.
+fn run_timeout_default() -> u64 {
+    30_000
+}
+
 impl Action {
     pub fn kind(&self) -> &'static str {
         match self {
@@ -194,8 +216,18 @@ impl Action {
                 (None, true) => Err("`keys` needs a `combo` or a `sequence`".into()),
                 _ => Ok(()),
             },
-            Action::Run { command, .. } if command.trim().is_empty() => {
-                Err("`run` needs a non-empty `command`".into())
+            Action::Run {
+                command,
+                timeout_ms,
+                ..
+            } => {
+                if command.trim().is_empty() {
+                    return Err("`run` needs a non-empty `command`".into());
+                }
+                if !(100..=600_000).contains(timeout_ms) {
+                    return Err("`run.timeout_ms` must be between 100 and 600000".into());
+                }
+                Ok(())
             }
             Action::Chain { actions } => {
                 if actions.is_empty() {
@@ -303,6 +335,53 @@ mod tests {
             action: Action,
         }
         toml::from_str::<W>(s).map(|w| w.action)
+    }
+
+    #[test]
+    fn run_options() {
+        let run = parse(
+            r#"action = { type = "run", command = "git pull && npm test", shell = true,
+                wait = true, timeout_ms = 120000, cwd = "C:/dev",
+                env = { NIGHT = "1" }, args = ["-NoProfile"] }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            run,
+            Action::Run {
+                command: "git pull && npm test".into(),
+                args: vec!["-NoProfile".into()],
+                hidden: false,
+                cwd: Some("C:/dev".into()),
+                shell: true,
+                env: [("NIGHT".to_string(), "1".to_string())].into(),
+                wait: true,
+                timeout_ms: 120_000,
+            }
+        );
+        assert!(run.validate().is_ok());
+        // A `wait` with no timeout is not written out, and the default is 30 s.
+        let plain = parse(r#"action = { type = "run", command = "notepad" }"#).unwrap();
+        assert_eq!(
+            plain,
+            Action::Run {
+                command: "notepad".into(),
+                args: Vec::new(),
+                hidden: false,
+                cwd: None,
+                shell: false,
+                env: Default::default(),
+                wait: false,
+                timeout_ms: 30_000,
+            }
+        );
+        // The timeout is only usable within range, `wait` or not.
+        for bad in [0u64, 99, 600_001] {
+            let a = parse(&format!(
+                r#"action = {{ type = "run", command = "x", timeout_ms = {bad} }}"#
+            ))
+            .unwrap();
+            assert!(a.validate().is_err(), "{bad}");
+        }
     }
 
     #[test]

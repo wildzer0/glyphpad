@@ -4,8 +4,10 @@
 //! Platform FFI module, the only kind allowed to use `unsafe` (SPEC §2).
 #![allow(unsafe_code)]
 
+use std::collections::BTreeMap;
 use std::os::windows::process::CommandExt;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use glyphpad_core::action::{
     Action, ActionError, ActionExecutor, AppInfo, DesktopOp, ForegroundInfo, MediaKey,
@@ -89,20 +91,20 @@ impl ActionExecutor for WindowsExecutor {
                 args,
                 hidden,
                 cwd,
-            } => {
-                let mut cmd = Command::new(command);
-                cmd.args(args);
-                if let Some(dir) = cwd {
-                    cmd.current_dir(dir);
-                }
-                if *hidden {
-                    cmd.creation_flags(CREATE_NO_WINDOW);
-                }
-                // Detached: the child keeps running on its own.
-                cmd.spawn()
-                    .map_err(|e| format!("cannot start `{command}`: {e}"))?;
-                Ok(())
-            }
+                shell,
+                env,
+                wait,
+                timeout_ms,
+            } => run(
+                command,
+                args,
+                *hidden,
+                cwd.as_deref(),
+                *shell,
+                env,
+                *wait,
+                *timeout_ms,
+            ),
             Action::Media { key } => send_combo(&KeyCombo {
                 modifiers: Vec::new(),
                 key: match key {
@@ -521,6 +523,83 @@ fn window_pid(hwnd: HWND) -> u32 {
     // SAFETY: `pid` is a valid out pointer.
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
     pid
+}
+
+/// Starts `command`, through `cmd /C` when `shell` is set, and waits for it
+/// when `wait` is. A program started without `wait` keeps running on its own.
+#[allow(clippy::too_many_arguments)]
+fn run(
+    command: &str,
+    args: &[String],
+    hidden: bool,
+    cwd: Option<&str>,
+    shell: bool,
+    env: &BTreeMap<String, String>,
+    wait: bool,
+    timeout_ms: u64,
+) -> Result<(), ActionError> {
+    let mut cmd = if shell {
+        // One line, as the user would type it in a terminal: `cmd /C` parses
+        // pipes, redirection, `&&` and `%VARIABLES%`. Arguments are appended,
+        // quoted when they contain a space.
+        let mut line = command.to_string();
+        for arg in args {
+            line.push(' ');
+            line.push_str(&quote_for_cmd(arg));
+        }
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg(line);
+        c
+    } else {
+        let mut c = Command::new(command);
+        c.args(args);
+        c
+    };
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+    if hidden {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("cannot start `{command}`: {e}"))?;
+    if !wait {
+        return Ok(());
+    }
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    // In a chain the next step runs anyway: branching would
+                    // need a condition on the exit code, which is not in the
+                    // action set.
+                    tracing::warn!("`{command}` exited with {status}");
+                }
+                return Ok(());
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                return Err(format!("`{command}` did not finish within {timeout_ms} ms").into());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(e) => return Err(format!("cannot wait for `{command}`: {e}").into()),
+        }
+    }
+}
+
+/// Quotes one argument for `cmd /C`: in double quotes when it holds a space
+/// or a quote, since that is what `cmd` splits on.
+fn quote_for_cmd(arg: &str) -> String {
+    if arg.is_empty() || arg.contains([' ', '"']) {
+        format!("\"{}\"", arg.replace('"', "\"\""))
+    } else {
+        arg.to_string()
+    }
 }
 
 fn close_foreground(force: bool) -> Result<(), ActionError> {

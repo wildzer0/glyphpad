@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `run` can go through the command interpreter (`shell = true`, so pipes, `>`, `&&` and
+  variables work), take environment variables (`env`), and wait for the program to finish
+  (`wait = true`, up to `timeout_ms`).
+- The window edits a `run` action's arguments one per line, so an argument with a space is
+  possible, and has fields for the new options.
+
 ## [1.2.1] - 2026-10-25
 
 ### Fixed

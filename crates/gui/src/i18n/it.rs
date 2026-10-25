@@ -399,17 +399,30 @@ pub const TABLE: &[(&str, &str)] = &[
         "Terminate the program instead of asking it to close",
         "Termina il programma invece di chiedergli di chiudersi",
     ),
-    ("program, e.g. wt.exe", "programma, es. wt.exe"),
+    (
+        "program, or a command line",
+        "programma, o una riga di comando",
+    ),
     ("Browse", "Sfoglia"),
     (
-        "arguments, separated by spaces",
-        "argomenti, separati da spazi",
+        "Through the command interpreter: pipes, >, && and variables",
+        "Tramite l'interprete dei comandi: pipe, >, && e variabili",
     ),
+    ("one argument per line", "un argomento per riga"),
     (
         "working folder (optional)",
         "cartella di lavoro (facoltativa)",
     ),
     ("Without a console window", "Senza finestra della console"),
+    ("Wait for it to finish", "Attendi che finisca"),
+    (
+        "Waiting stops after the time above; a chain of actions goes on either way.",
+        "L'attesa si ferma dopo il tempo indicato; una catena di azioni prosegue comunque.",
+    ),
+    (
+        "environment variables, KEY=value per line (optional)",
+        "variabili d'ambiente, KEY=valore per riga (facoltativo)",
+    ),
     ("Play / pause", "Riproduci / pausa"),
     ("Next track", "Traccia successiva"),
     ("Previous track", "Traccia precedente"),

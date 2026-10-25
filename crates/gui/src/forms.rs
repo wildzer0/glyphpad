@@ -534,6 +534,10 @@ fn default_action(kind: &str) -> Action {
             args: Vec::new(),
             hidden: false,
             cwd: None,
+            shell: false,
+            env: std::collections::BTreeMap::new(),
+            wait: false,
+            timeout_ms: 30_000,
         },
         "media" => Action::Media {
             key: MediaKey::PlayPause,
@@ -600,6 +604,46 @@ pub fn key_name(key: egui::Key) -> Option<String> {
 }
 
 /// A shortcut field: typed, or captured by pressing it.
+/// A multi-line field for a list, one item per line. The text lives in egui's
+/// memory so a half-typed line (an empty one, a trailing newline) survives
+/// the next frame; `on_text` turns it back into the list, and an outside
+/// change (undo, an import) replaces the text.
+fn lines_field(
+    ui: &mut egui::Ui,
+    id: Id,
+    current: String,
+    hint: &'static str,
+    rows: usize,
+    apply: impl FnOnce(&str) -> String,
+) {
+    let text_id = id.with("text");
+    let seen_id = id.with("seen");
+    let mut text: String = ui
+        .data_mut(|d| d.get_temp(text_id))
+        .unwrap_or_else(|| current.clone());
+    let seen: Option<String> = ui.data_mut(|d| d.get_temp(seen_id));
+    if seen.as_deref() != Some(current.as_str()) {
+        text = current.clone();
+    }
+    let response = ui.add(
+        egui::TextEdit::multiline(&mut text)
+            .hint_text(crate::i18n::tr(hint))
+            .desired_rows(rows)
+            .desired_width(ui.available_width()),
+    );
+    // The canonical form, written from the text when it changed: comparing it
+    // next frame is how a change made elsewhere is noticed.
+    let written = if response.changed() {
+        apply(&text)
+    } else {
+        current
+    };
+    ui.data_mut(|d| {
+        d.insert_temp(text_id, text);
+        d.insert_temp(seen_id, written);
+    });
+}
+
 fn shortcut_field(ui: &mut egui::Ui, id: Id, combo: &mut Option<KeyCombo>) {
     let p = pal(ui);
     let text_id = id.with("text");
@@ -796,9 +840,13 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
             args,
             hidden,
             cwd,
+            shell,
+            env,
+            wait,
+            timeout_ms,
         } => {
             ui.horizontal(|ui| {
-                w::text_field(ui, command, "program, e.g. wt.exe", 280.0);
+                w::text_field(ui, command, "program, or a command line", 280.0);
                 if w::button(ui, icons::FOLDER_OPEN, "Browse").clicked()
                     && let Some(p) = rfd::FileDialog::new()
                         .add_filter("Programs", &["exe", "bat", "cmd", "ps1"])
@@ -807,10 +855,23 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                     *command = p.display().to_string();
                 }
             });
-            let mut a = args.join(" ");
-            if w::text_field(ui, &mut a, "arguments, separated by spaces", 360.0).changed() {
-                *args = a.split_whitespace().map(str::to_string).collect();
-            }
+            ui.horizontal(|ui| {
+                w::switch(ui, shell);
+                ui.label(crate::i18n::tr(
+                    "Through the command interpreter: pipes, >, && and variables",
+                ));
+            });
+            lines_field(
+                ui,
+                id.with("args"),
+                args.join("\n"),
+                "one argument per line",
+                2,
+                |text| {
+                    *args = text.lines().map(str::to_string).collect();
+                    args.join("\n")
+                },
+            );
             let mut dir = cwd.clone().unwrap_or_default();
             if w::text_field(ui, &mut dir, "working folder (optional)", 360.0).changed() {
                 *cwd = (!dir.trim().is_empty()).then_some(dir);
@@ -819,6 +880,49 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                 w::switch(ui, hidden);
                 ui.label(crate::i18n::tr("Without a console window"));
             });
+            ui.horizontal(|ui| {
+                w::switch(ui, wait);
+                ui.label(crate::i18n::tr("Wait for it to finish"));
+                if *wait {
+                    ui.add(
+                        egui::DragValue::new(timeout_ms)
+                            .range(100..=600_000)
+                            .suffix(" ms"),
+                    );
+                }
+            });
+            if *shell || *wait {
+                w::hint(
+                    ui,
+                    "Waiting stops after the time above; a chain of actions goes on either way.",
+                );
+            }
+            let variables = env
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            lines_field(
+                ui,
+                id.with("env"),
+                variables,
+                "environment variables, KEY=value per line (optional)",
+                2,
+                |text| {
+                    env.clear();
+                    for line in text.lines() {
+                        if let Some((k, v)) = line.split_once('=')
+                            && !k.trim().is_empty()
+                        {
+                            env.insert(k.trim().to_string(), v.trim().to_string());
+                        }
+                    }
+                    env.iter()
+                        .map(|(k, v)| format!("{k}={v}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                },
+            );
         }
         Action::Media { key } => {
             egui::ComboBox::from_id_salt(id.with("media"))
