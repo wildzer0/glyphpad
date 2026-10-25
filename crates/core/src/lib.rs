@@ -13,6 +13,8 @@ pub mod engine;
 pub mod infer;
 pub mod keys;
 pub mod model;
+pub mod pack;
+pub mod preview;
 pub mod repeat;
 pub mod replay;
 pub mod service;
@@ -20,6 +22,7 @@ pub mod source;
 pub mod stats;
 pub mod symbols;
 pub mod trigger;
+pub mod usage;
 
 pub use model::{Contact, DeviceEvent, DeviceId, DeviceInfo, MAX_CONTACTS, TouchFrame};
 pub use source::{SourceError, TouchSource};

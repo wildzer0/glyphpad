@@ -3,7 +3,7 @@
 //! with it right where it is.
 
 use eframe::egui::{self, Id, RichText};
-use glyphpad_core::action::{Action, MediaKey};
+use glyphpad_core::action::{Action, DesktopOp, MediaKey, ScreenshotMode, WindowOp};
 use glyphpad_core::config::{Direction, Edge, GestureDef, GestureKind, OneOrMany, When};
 use glyphpad_core::keys::KeyCombo;
 use glyphpad_core::service::Command;
@@ -470,6 +470,34 @@ const ACTIONS: &[(&str, &str, &str)] = &[
         icons::SCRIBBLE_LOOP,
         "Draw a symbol with one finger next",
     ),
+    (
+        "open",
+        icons::ARROW_SQUARE_OUT,
+        "Open a file, folder or address",
+    ),
+    ("type_text", icons::TEXT_AA, "Type a text"),
+    ("window", icons::SQUARES_FOUR, "Arrange the window in front"),
+    ("virtual_desktop", icons::MONITOR, "Switch virtual desktop"),
+    ("screenshot", icons::CAMERA, "Take a screenshot"),
+    ("switch_profile", icons::USER_SWITCH, "Switch to a profile"),
+    ("next_profile", icons::USERS, "Switch to the next profile"),
+    (
+        "show_cheat_sheet",
+        icons::LIST_CHECKS,
+        "Show the list of gestures",
+    ),
+];
+
+/// Kinds that need GlyphPad itself and so cannot be steps of a chain.
+const NOT_IN_CHAINS: &[&str] = &[
+    "chain",
+    "repeat_last",
+    "draw_symbol",
+    "toggle_enabled",
+    "show_window",
+    "switch_profile",
+    "next_profile",
+    "show_cheat_sheet",
 ];
 
 pub fn action_icon(kind: &str) -> &'static str {
@@ -488,22 +516,7 @@ pub fn action_label(kind: &str) -> &'static str {
 
 /// A short name of an action, for lists.
 pub fn action_short(kind: &str) -> &'static str {
-    match kind {
-        "keys" => "Shortcut",
-        "lock_screen" => "Lock",
-        "close_window" => "Close window",
-        "minimize" => "Minimize",
-        "maximize" => "Maximize",
-        "run" => "Run program",
-        "media" => "Media key",
-        "chain" => "Several actions",
-        "notify" => "Message",
-        "toggle_enabled" => "Pause / resume",
-        "repeat_last" => "Repeat last",
-        "show_window" => "Show window",
-        "draw_symbol" => "Draw symbol",
-        _ => "Pause",
-    }
+    Action::short_label(kind)
 }
 
 fn default_action(kind: &str) -> Action {
@@ -539,6 +552,26 @@ fn default_action(kind: &str) -> Action {
         "toggle_enabled" => Action::ToggleEnabled,
         "repeat_last" => Action::RepeatLast,
         "show_window" => Action::ShowWindow,
+        "open" => Action::Open {
+            target: String::new(),
+        },
+        "type_text" => Action::TypeText {
+            text: String::new(),
+        },
+        "window" => Action::Window {
+            op: WindowOp::SnapLeft,
+        },
+        "virtual_desktop" => Action::VirtualDesktop {
+            op: DesktopOp::Next,
+        },
+        "screenshot" => Action::Screenshot {
+            mode: ScreenshotMode::Region,
+        },
+        "switch_profile" => Action::SwitchProfile {
+            profile: "default".into(),
+        },
+        "next_profile" => Action::NextProfile,
+        "show_cheat_sheet" => Action::ShowCheatSheet,
         _ => Action::DrawSymbol,
     }
 }
@@ -675,12 +708,7 @@ fn action_picker(ui: &mut egui::Ui, id: Id, action: &mut Action, nested: bool) {
         .selected_text(current)
         .show_ui(ui, |ui| {
             for (k, icon, label) in ACTIONS {
-                if nested
-                    && matches!(
-                        *k,
-                        "chain" | "repeat_last" | "draw_symbol" | "toggle_enabled" | "show_window"
-                    )
-                {
+                if nested && NOT_IN_CHAINS.contains(k) {
                     continue;
                 }
                 if ui
@@ -797,6 +825,96 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
             ui.add(egui::DragValue::new(ms).range(10..=60_000).suffix(" ms"));
         }
         Action::Chain { actions } => chain_form(ui, cx, id, actions),
+        Action::Open { target } => {
+            ui.horizontal(|ui| {
+                w::text_field(ui, target, "https://…, a file or a folder", 300.0);
+                if w::button(ui, icons::FOLDER_OPEN, "File…").clicked()
+                    && let Some(p) = rfd::FileDialog::new().pick_file()
+                {
+                    *target = p.display().to_string();
+                }
+                if w::button(ui, icons::FOLDER_OPEN, "Folder…").clicked()
+                    && let Some(p) = rfd::FileDialog::new().pick_folder()
+                {
+                    *target = p.display().to_string();
+                }
+            });
+            w::hint(ui, "Opens it with the program Windows uses for it.");
+        }
+        Action::TypeText { text } => {
+            ui.add(
+                egui::TextEdit::multiline(text)
+                    .hint_text("The text to type")
+                    .desired_rows(3)
+                    .desired_width(ui.available_width()),
+            );
+            w::hint(
+                ui,
+                "Typed into the window that has the focus; a new line presses Enter.",
+            );
+        }
+        Action::Window { op } => {
+            w::dropdown(
+                ui,
+                id.with("window-op"),
+                op,
+                &[
+                    (
+                        WindowOp::SnapLeft,
+                        "Fill the left half of the screen".to_string(),
+                    ),
+                    (
+                        WindowOp::SnapRight,
+                        "Fill the right half of the screen".to_string(),
+                    ),
+                    (
+                        WindowOp::NextMonitor,
+                        "Move to the next monitor".to_string(),
+                    ),
+                    (
+                        WindowOp::ToggleAlwaysOnTop,
+                        "Keep on top, on or off".to_string(),
+                    ),
+                ],
+                300.0,
+            );
+        }
+        Action::VirtualDesktop { op } => {
+            w::segmented(
+                ui,
+                op,
+                &[
+                    (DesktopOp::Previous, "Previous"),
+                    (DesktopOp::Next, "Next"),
+                    (DesktopOp::New, "New desktop"),
+                ],
+            );
+        }
+        Action::Screenshot { mode } => {
+            w::segmented(
+                ui,
+                mode,
+                &[
+                    (ScreenshotMode::Region, "Choose an area"),
+                    (ScreenshotMode::Screen, "Whole screen"),
+                ],
+            );
+            w::hint(
+                ui,
+                "An area opens Windows' snipping overlay; the whole screen is saved in Pictures → Screenshots.",
+            );
+        }
+        Action::SwitchProfile { profile } => {
+            let names: Vec<(String, String)> = cx
+                .shared
+                .config
+                .profile_names()
+                .into_iter()
+                .map(|p| (p.clone(), p))
+                .collect();
+            w::dropdown(ui, id.with("profile-pick"), profile, &names, 220.0);
+            w::text_field(ui, profile, "or a profile name", 220.0);
+        }
         _ => {}
     }
     if let Err(e) = action.validate() {

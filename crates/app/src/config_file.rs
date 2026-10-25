@@ -101,6 +101,14 @@ pub fn history_path(location: &Location) -> PathBuf {
 }
 
 /// `templates.json` sits next to the configuration it belongs to.
+/// Where the usage statistics are kept, next to the configuration.
+pub fn usage_path(location: &Location) -> PathBuf {
+    location
+        .path()
+        .parent()
+        .map_or_else(|| PathBuf::from("stats.json"), |d| d.join("stats.json"))
+}
+
 /// Where the updater keeps what it remembers, next to the configuration.
 pub fn update_state_path(location: &Location) -> PathBuf {
     location.path().parent().map_or_else(

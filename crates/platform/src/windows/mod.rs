@@ -5,6 +5,7 @@
 #![allow(unsafe_code)]
 
 pub mod autostart;
+pub mod cheatsheet;
 pub mod console;
 pub mod cursor;
 mod device;

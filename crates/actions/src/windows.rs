@@ -8,12 +8,15 @@ use std::os::windows::process::CommandExt;
 use std::process::Command;
 
 use glyphpad_core::action::{
-    Action, ActionError, ActionExecutor, AppInfo, ForegroundInfo, MediaKey,
+    Action, ActionError, ActionExecutor, AppInfo, DesktopOp, ForegroundInfo, MediaKey,
+    ScreenshotMode, WindowOp,
 };
 use glyphpad_core::keys::{Key, KeyCombo};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+    EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    MonitorFromWindow,
 };
 use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::System::Threading::{
@@ -21,13 +24,15 @@ use windows::Win32::System::Threading::{
     QueryFullProcessImageNameW, TerminateProcess,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GA_ROOTOWNER, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetForegroundWindow,
-    GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-    IsZoomed, PostMessageW, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, ShowWindowAsync, WINDOW_EX_STYLE,
-    WM_CLOSE, WS_EX_TOOLWINDOW,
+    GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, HWND_NOTOPMOST,
+    HWND_TOPMOST, IsWindowVisible, IsZoomed, PostMessageW, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
+    SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos,
+    ShowWindowAsync, WINDOW_EX_STYLE, WM_CLOSE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
-use windows::core::PWSTR;
+use windows::core::{HSTRING, PWSTR, w};
 
 /// `CREATE_NO_WINDOW`: run a console program without opening a console.
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -118,7 +123,271 @@ impl ActionExecutor for WindowsExecutor {
                 );
                 Ok(())
             }
+            Action::Open { target } => open_target(target),
+            Action::TypeText { text } => type_text(text),
+            Action::Window { op } => window_op(*op),
+            Action::VirtualDesktop { op } => {
+                // Windows' own shortcuts: Win+Ctrl+Left/Right, Win+Ctrl+D.
+                let key = match op {
+                    DesktopOp::Previous => Key::Left,
+                    DesktopOp::Next => Key::Right,
+                    DesktopOp::New => Key::Letter('D'),
+                };
+                send_combo(&KeyCombo {
+                    modifiers: vec![Key::Win, Key::Ctrl],
+                    key,
+                })
+            }
+            Action::Screenshot { mode } => match mode {
+                // Win+Shift+S: the snipping overlay.
+                ScreenshotMode::Region => send_combo(&KeyCombo {
+                    modifiers: vec![Key::Win, Key::Shift],
+                    key: Key::Letter('S'),
+                }),
+                // Win+PrintScreen: the whole screen into Pictures\Screenshots.
+                ScreenshotMode::Screen => send_combo(&KeyCombo {
+                    modifiers: vec![Key::Win],
+                    key: Key::PrintScreen,
+                }),
+            },
             other => Err(format!("`{}` is not a platform action", other.kind()).into()),
+        }
+    }
+}
+
+/// Opens a file, folder or address with the program Windows associates
+/// with it (`ShellExecute` with the "open" verb).
+fn open_target(target: &str) -> Result<(), ActionError> {
+    let target = HSTRING::from(target.trim());
+    // SAFETY: valid, NUL-terminated wide strings that outlive the call.
+    let result = unsafe { ShellExecuteW(None, w!("open"), &target, None, None, SW_SHOWNORMAL) };
+    // ShellExecute reports success with a value above 32.
+    if result.0 as usize > 32 {
+        Ok(())
+    } else {
+        Err(format!(
+            "Windows could not open `{target}` (code {})",
+            result.0 as usize
+        )
+        .into())
+    }
+}
+
+/// Types `text` as Unicode characters, so any layout and any character
+/// works; a newline presses Enter.
+fn type_text(text: &str) -> Result<(), ActionError> {
+    let mut inputs: Vec<INPUT> = Vec::new();
+    for unit in text.replace("\r\n", "\n").encode_utf16() {
+        if unit == u16::from(b'\n') {
+            inputs.push(key_input(Key::Enter, false));
+            inputs.push(key_input(Key::Enter, true));
+            continue;
+        }
+        for up in [false, true] {
+            let mut flags = KEYEVENTF_UNICODE;
+            if up {
+                flags |= KEYEVENTF_KEYUP;
+            }
+            inputs.push(INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(0),
+                        wScan: unit,
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            });
+        }
+    }
+    // In chunks, so a long text does not overflow the input queue.
+    for chunk in inputs.chunks(400) {
+        // SAFETY: `chunk` is a valid slice of keyboard INPUTs with the matching size.
+        let sent = unsafe { SendInput(chunk, std::mem::size_of::<INPUT>() as i32) };
+        if sent as usize != chunk.len() {
+            return Err(format!(
+                "SendInput typed only {sent} of {} events (an elevated window has focus?)",
+                chunk.len()
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: `info` is a valid out pointer with `cbSize` set.
+    unsafe { GetMonitorInfoW(monitor, &mut info) }
+        .as_bool()
+        .then_some(info)
+}
+
+unsafe extern "system" fn collect_monitor(
+    monitor: HMONITOR,
+    _dc: HDC,
+    _rect: *mut RECT,
+    lparam: LPARAM,
+) -> windows::core::BOOL {
+    // SAFETY: `lparam` is the `&mut Vec<HMONITOR>` passed by `monitors()`.
+    unsafe { (*(lparam.0 as *mut Vec<HMONITOR>)).push(monitor) };
+    true.into()
+}
+
+/// Monitors left to right, then top to bottom.
+fn monitors() -> Vec<(HMONITOR, MONITORINFO)> {
+    let mut handles: Vec<HMONITOR> = Vec::new();
+    // SAFETY: the callback only pushes into the Vec passed through `lparam`,
+    // which outlives the call.
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(collect_monitor),
+            LPARAM(&raw mut handles as isize),
+        );
+    }
+    let mut out: Vec<(HMONITOR, MONITORINFO)> = handles
+        .into_iter()
+        .filter_map(|h| monitor_info(h).map(|i| (h, i)))
+        .collect();
+    out.sort_by_key(|(_, i)| (i.rcMonitor.left, i.rcMonitor.top));
+    out
+}
+
+/// How far the window's visible frame lies inside its full rectangle: modern
+/// windows have an invisible resize border, which would leave gaps when
+/// two windows are snapped side by side.
+fn invisible_border(hwnd: HWND, full: &RECT) -> RECT {
+    let mut visible = RECT::default();
+    // SAFETY: `visible` is a valid out buffer of the size passed.
+    let ok = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&raw mut visible).cast(),
+            std::mem::size_of::<RECT>() as u32,
+        )
+    };
+    if ok.is_err() {
+        return RECT::default();
+    }
+    RECT {
+        left: visible.left - full.left,
+        top: visible.top - full.top,
+        right: full.right - visible.right,
+        bottom: full.bottom - visible.bottom,
+    }
+}
+
+fn place(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) -> Result<(), ActionError> {
+    let mut full = RECT::default();
+    // SAFETY: valid out pointer; `hwnd` is a window handle.
+    unsafe { GetWindowRect(hwnd, &mut full) }?;
+    let b = invisible_border(hwnd, &full);
+    // SAFETY: `hwnd` is a window handle; a stale one only makes the call fail.
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            x - b.left,
+            y - b.top,
+            w + b.left + b.right,
+            h + b.top + b.bottom,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    }?;
+    Ok(())
+}
+
+fn window_op(op: WindowOp) -> Result<(), ActionError> {
+    let hwnd = target_window()?;
+    match op {
+        WindowOp::ToggleAlwaysOnTop => {
+            // SAFETY: `hwnd` is a window handle.
+            let top = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST.0 != 0;
+            // SAFETY: as above.
+            unsafe {
+                SetWindowPos(
+                    hwnd,
+                    Some(if top { HWND_NOTOPMOST } else { HWND_TOPMOST }),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+            }?;
+            Ok(())
+        }
+        WindowOp::SnapLeft | WindowOp::SnapRight => {
+            // SAFETY: `hwnd` is a window handle.
+            let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+            let info = monitor_info(monitor).ok_or("cannot read the monitor's size")?;
+            let work = info.rcWork;
+            let half = (work.right - work.left) / 2;
+            let x = if op == WindowOp::SnapLeft {
+                work.left
+            } else {
+                work.left + half
+            };
+            // A maximized window cannot be moved: restore it first.
+            // SAFETY: as above.
+            unsafe {
+                if IsZoomed(hwnd).as_bool() {
+                    let _ = ShowWindowAsync(hwnd, SW_RESTORE);
+                    std::thread::sleep(std::time::Duration::from_millis(120));
+                }
+            }
+            place(hwnd, x, work.top, half, work.bottom - work.top)
+        }
+        WindowOp::NextMonitor => {
+            let all = monitors();
+            if all.len() < 2 {
+                return Err("there is only one monitor".into());
+            }
+            // SAFETY: `hwnd` is a window handle.
+            let current = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+            let at = all.iter().position(|(h, _)| *h == current).unwrap_or(0);
+            let from = all[at].1.rcWork;
+            let to = all[(at + 1) % all.len()].1.rcWork;
+            // SAFETY: as above.
+            let maximized = unsafe { IsZoomed(hwnd).as_bool() };
+            if maximized {
+                // SAFETY: as above.
+                unsafe {
+                    let _ = ShowWindowAsync(hwnd, SW_RESTORE);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(120));
+            }
+            let mut r = RECT::default();
+            // SAFETY: valid out pointer.
+            unsafe { GetWindowRect(hwnd, &mut r) }?;
+            let (fw, fh) = (
+                (from.right - from.left).max(1),
+                (from.bottom - from.top).max(1),
+            );
+            let (tw, th) = (to.right - to.left, to.bottom - to.top);
+            // Same relative place, same size where it fits.
+            let w = (r.right - r.left).min(tw);
+            let h = (r.bottom - r.top).min(th);
+            let x = to.left + ((r.left - from.left) as i64 * i64::from(tw) / i64::from(fw)) as i32;
+            let y = to.top + ((r.top - from.top) as i64 * i64::from(th) / i64::from(fh)) as i32;
+            let x = x.clamp(to.left, to.right - w);
+            let y = y.clamp(to.top, to.bottom - h);
+            place(hwnd, x, y, w, h)?;
+            if maximized {
+                // SAFETY: as above.
+                unsafe {
+                    let _ = ShowWindowAsync(hwnd, SW_MAXIMIZE);
+                }
+            }
+            Ok(())
         }
     }
 }

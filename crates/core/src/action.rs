@@ -57,6 +57,63 @@ pub enum Action {
     ShowWindow,
     /// Lets the next symbol be drawn with one finger (draw mode `toggle`).
     DrawSymbol,
+    /// Opens a file, a folder or a web address with the default program.
+    Open {
+        target: String,
+    },
+    /// Types a text, character by character, into the focused window.
+    TypeText {
+        text: String,
+    },
+    /// Arranges the foreground window.
+    Window {
+        op: WindowOp,
+    },
+    VirtualDesktop {
+        op: DesktopOp,
+    },
+    Screenshot {
+        #[serde(default)]
+        mode: ScreenshotMode,
+    },
+    /// Makes a profile the active one (saved in the configuration).
+    SwitchProfile {
+        profile: String,
+    },
+    /// Moves to the next profile of the list, wrapping around.
+    NextProfile,
+    /// Shows the list of the active gestures on screen for a moment.
+    ShowCheatSheet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowOp {
+    /// The left half of the screen the window is on.
+    SnapLeft,
+    SnapRight,
+    /// Moves the window to the next monitor, wrapping around.
+    NextMonitor,
+    /// Toggles "always on top".
+    ToggleAlwaysOnTop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopOp {
+    Previous,
+    Next,
+    New,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenshotMode {
+    /// The system's snipping overlay: drag to choose an area.
+    #[default]
+    Region,
+    /// The whole screen, saved to the Screenshots folder.
+    Screen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +145,42 @@ impl Action {
             Action::RepeatLast => "repeat_last",
             Action::ShowWindow => "show_window",
             Action::DrawSymbol => "draw_symbol",
+            Action::Open { .. } => "open",
+            Action::TypeText { .. } => "type_text",
+            Action::Window { .. } => "window",
+            Action::VirtualDesktop { .. } => "virtual_desktop",
+            Action::Screenshot { .. } => "screenshot",
+            Action::SwitchProfile { .. } => "switch_profile",
+            Action::NextProfile => "next_profile",
+            Action::ShowCheatSheet => "show_cheat_sheet",
+        }
+    }
+
+    /// A short name for the kind of action, for lists.
+    pub fn short_label(kind: &str) -> &'static str {
+        match kind {
+            "keys" => "Shortcut",
+            "lock_screen" => "Lock",
+            "close_window" => "Close window",
+            "minimize" => "Minimize",
+            "maximize" => "Maximize",
+            "run" => "Run program",
+            "media" => "Media key",
+            "chain" => "Several actions",
+            "notify" => "Message",
+            "toggle_enabled" => "Pause / resume",
+            "repeat_last" => "Repeat last",
+            "show_window" => "Show window",
+            "draw_symbol" => "Draw symbol",
+            "open" => "Open",
+            "type_text" => "Type text",
+            "window" => "Arrange window",
+            "virtual_desktop" => "Virtual desktop",
+            "screenshot" => "Screenshot",
+            "switch_profile" => "Switch profile",
+            "next_profile" => "Next profile",
+            "show_cheat_sheet" => "Cheat sheet",
+            _ => "Pause",
         }
     }
 
@@ -111,7 +204,12 @@ impl Action {
                 for (i, a) in actions.iter().enumerate() {
                     if matches!(
                         a,
-                        Action::Chain { .. } | Action::RepeatLast | Action::DrawSymbol
+                        Action::Chain { .. }
+                            | Action::RepeatLast
+                            | Action::DrawSymbol
+                            | Action::SwitchProfile { .. }
+                            | Action::NextProfile
+                            | Action::ShowCheatSheet
                     ) {
                         return Err(format!("`chain` item {} cannot be `{}`", i + 1, a.kind()));
                     }
@@ -121,6 +219,18 @@ impl Action {
                 Ok(())
             }
             Action::Wait { ms } if *ms > 60_000 => Err("`wait` is limited to 60000 ms".into()),
+            Action::Open { target } if target.trim().is_empty() => {
+                Err("`open` needs a file, folder or address in `target`".into())
+            }
+            Action::TypeText { text } if text.is_empty() => {
+                Err("`type_text` needs a non-empty `text`".into())
+            }
+            Action::TypeText { text } if text.chars().count() > 2000 => {
+                Err("`type_text` is limited to 2000 characters".into())
+            }
+            Action::SwitchProfile { profile } if profile.trim().is_empty() => {
+                Err("`switch_profile` needs a `profile`".into())
+            }
             _ => Ok(()),
         }
     }
@@ -235,5 +345,74 @@ mod tests {
     fn warns_about_win_l() {
         let a = parse(r#"action = { type = "keys", combo = "Win+L" }"#).unwrap();
         assert_eq!(a.warnings().len(), 1);
+    }
+
+    #[test]
+    fn parses_and_validates_the_extra_actions() {
+        for (toml, kind) in [
+            (
+                r#"action = { type = "open", target = "https://example.com" }"#,
+                "open",
+            ),
+            (
+                r#"action = { type = "type_text", text = "hello" }"#,
+                "type_text",
+            ),
+            (
+                r#"action = { type = "window", op = "snap_left" }"#,
+                "window",
+            ),
+            (
+                r#"action = { type = "window", op = "next_monitor" }"#,
+                "window",
+            ),
+            (
+                r#"action = { type = "virtual_desktop", op = "next" }"#,
+                "virtual_desktop",
+            ),
+            (r#"action = { type = "screenshot" }"#, "screenshot"),
+            (
+                r#"action = { type = "screenshot", mode = "screen" }"#,
+                "screenshot",
+            ),
+            (
+                r#"action = { type = "switch_profile", profile = "work" }"#,
+                "switch_profile",
+            ),
+            (r#"action = { type = "next_profile" }"#, "next_profile"),
+            (
+                r#"action = { type = "show_cheat_sheet" }"#,
+                "show_cheat_sheet",
+            ),
+        ] {
+            let a = parse(toml).unwrap_or_else(|e| panic!("{toml}: {e}"));
+            assert_eq!(a.kind(), kind);
+            assert!(a.validate().is_ok(), "{toml}");
+        }
+        assert!(
+            parse(r#"action = { type = "open", target = " " }"#)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        assert!(
+            parse(r#"action = { type = "type_text", text = "" }"#)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        let long = "x".repeat(2001);
+        assert!(
+            parse(&format!(
+                r#"action = {{ type = "type_text", text = "{long}" }}"#
+            ))
+            .unwrap()
+            .validate()
+            .is_err()
+        );
+        // Actions that need the application cannot hide in a chain.
+        let chain =
+            parse(r#"action = { type = "chain", actions = [{ type = "next_profile" }] }"#).unwrap();
+        assert!(chain.validate().is_err());
     }
 }

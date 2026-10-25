@@ -98,6 +98,38 @@ pub struct Settings {
     pub profiles: Vec<String>,
     /// Earlier versions of the configuration kept in `backups/`.
     pub backup_count: usize,
+    /// Switch profile by itself while one of these applications is in front
+    /// (SPEC §13). The first matching rule wins; with none, `active_profile`.
+    pub profile_rules: Vec<ProfileRule>,
+    /// Count how often each gesture is used and how many drawings are not
+    /// recognized, in `stats.json` next to the configuration (SPEC §13).
+    /// Nothing leaves the machine.
+    pub statistics: bool,
+    /// Language of the window.
+    pub language: Language,
+    /// How long the list of gestures stays on screen after the
+    /// `show_cheat_sheet` action.
+    pub cheat_sheet_s: u64,
+}
+
+/// "While `app` is in front, use `profile`".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileRule {
+    /// Executable names, e.g. `["code.exe"]`.
+    pub app: OneOrMany,
+    pub profile: String,
+}
+
+/// Language of the window (SPEC §13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Language {
+    /// The system's, English when there is no translation.
+    #[default]
+    System,
+    English,
+    Italian,
 }
 
 /// Appearance of the window (SPEC §13): follow the system or force one.
@@ -177,6 +209,10 @@ impl Default for Settings {
             pause_when_fullscreen: true,
             profiles: Vec::new(),
             backup_count: 10,
+            profile_rules: Vec::new(),
+            statistics: true,
+            language: Language::System,
+            cheat_sheet_s: 8,
         }
     }
 }
@@ -568,6 +604,41 @@ pub struct Config {
     pub gestures: Vec<Gesture>,
 }
 
+impl Config {
+    /// Profile names known to the configuration: declared, used by a
+    /// gesture or by a rule, and the active one.
+    pub fn profile_names(&self) -> Vec<String> {
+        let s = &self.settings;
+        let mut out = s.profiles.clone();
+        let used = self
+            .gestures
+            .iter()
+            .filter_map(|g| g.def.profile.clone())
+            .chain(s.profile_rules.iter().map(|r| r.profile.clone()))
+            .chain(std::iter::once(s.active_profile.clone()));
+        for p in used {
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    /// The profile a rule asks for while `app` is in front.
+    pub fn profile_for(&self, app: &AppInfo) -> Option<&str> {
+        self.settings
+            .profile_rules
+            .iter()
+            .find(|r| {
+                r.app
+                    .to_vec()
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case(&app.exe))
+            })
+            .map(|r| r.profile.as_str())
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -683,6 +754,7 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
             (1.0..=30.0).contains(&s.edge_zone_percent),
         ),
         ("history_size", (1..=1_000).contains(&s.history_size)),
+        ("cheat_sheet_s", (1..=120).contains(&s.cheat_sheet_s)),
         ("backup_count", s.backup_count <= 100),
         (
             "overlay → duration_ms",
@@ -712,6 +784,16 @@ pub fn parse(text: &str) -> Result<Loaded, Vec<Diagnostic>> {
                 None,
                 format!("settings → {name}"),
                 "value out of range".into(),
+            );
+        }
+    }
+    for (i, rule) in s.profile_rules.iter().enumerate() {
+        if rule.profile.trim().is_empty() || rule.app.to_vec().iter().all(|a| a.trim().is_empty()) {
+            err(
+                &mut errors,
+                None,
+                format!("settings → profile_rules → item {}", i + 1),
+                "needs an `app` and a `profile`".into(),
             );
         }
     }
@@ -1162,5 +1244,37 @@ action = { type = "lock_screen" }
                 .iter()
                 .any(|e| e.contains("when → title"))
         );
+    }
+
+    #[test]
+    fn profile_rules_pick_the_profile_of_the_foreground_app() {
+        let text = r#"
+[settings]
+active_profile = "default"
+profile_rules = [
+  { app = ["code.exe", "devenv.exe"], profile = "dev" },
+  { app = "vlc.exe", profile = "media" },
+]
+
+[[gesture]]
+name = "a"
+type = "tap"
+fingers = 1
+profile = "dev"
+action = { type = "lock_screen" }
+"#;
+        let config = parse(text).unwrap().config;
+        let app = |exe: &str| AppInfo {
+            exe: exe.into(),
+            ..Default::default()
+        };
+        assert_eq!(config.profile_for(&app("Code.exe")), Some("dev"));
+        assert_eq!(config.profile_for(&app("vlc.exe")), Some("media"));
+        assert_eq!(config.profile_for(&app("notepad.exe")), None);
+        let names = config.profile_names();
+        assert!(names.contains(&"dev".to_string()) && names.contains(&"media".to_string()));
+        assert!(names.contains(&"default".to_string()));
+        // A rule with nothing in it is an error.
+        assert!(parse("[settings]\nprofile_rules = [{ app = \"\", profile = \"x\" }]\n").is_err());
     }
 }

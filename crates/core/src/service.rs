@@ -99,6 +99,10 @@ pub enum Command {
     InstallUpdate,
     /// Stop offering this version.
     IgnoreUpdate(String),
+    /// Makes a profile the active one; `None` moves to the next.
+    SwitchProfile(Option<String>),
+    /// Forget the usage statistics.
+    ResetUsage,
 }
 
 /// A newer version found by the updater.
@@ -197,6 +201,10 @@ pub struct Shared {
     /// Warnings about the configuration and the environment.
     pub warnings: Vec<String>,
     pub update: UpdateStatus,
+    /// The profile in use now: the active one, or the one a rule picked for
+    /// the application in front.
+    pub profile: String,
+    pub usage: Arc<crate::usage::Usage>,
     /// When the updater last asked GitHub, as a local date and time.
     pub last_update_check: Option<String>,
 }

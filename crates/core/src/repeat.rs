@@ -16,6 +16,9 @@ pub fn is_repeatable(gesture: &Gesture) -> bool {
             | Action::ShowWindow
             | Action::RepeatLast
             | Action::DrawSymbol
+            | Action::SwitchProfile { .. }
+            | Action::NextProfile
+            | Action::ShowCheatSheet
     ))
 }
 

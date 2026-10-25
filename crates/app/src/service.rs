@@ -45,6 +45,8 @@ pub struct Options {
 struct Feedback {
     #[cfg(windows)]
     overlay: glyphpad_platform::windows::overlay::Overlay,
+    #[cfg(windows)]
+    cheat: glyphpad_platform::windows::cheatsheet::CheatSheet,
 }
 
 impl Feedback {
@@ -54,12 +56,40 @@ impl Feedback {
             overlay: glyphpad_platform::windows::overlay::Overlay::spawn(
                 _config.settings.overlay.clone(),
             ),
+            #[cfg(windows)]
+            cheat: glyphpad_platform::windows::cheatsheet::CheatSheet::spawn(),
         }
     }
 
     fn configure(&self, _config: &Config) {
         #[cfg(windows)]
         self.overlay.configure(_config.settings.overlay.clone());
+    }
+
+    fn cheat_sheet(
+        &self,
+        _title: String,
+        _rows: Vec<(String, String, String, glyphpad_core::preview::Pictogram)>,
+        _seconds: u64,
+    ) {
+        #[cfg(windows)]
+        self.cheat.show(
+            glyphpad_platform::windows::cheatsheet::Sheet {
+                title: _title,
+                rows: _rows
+                    .into_iter()
+                    .map(|(name, trigger, action, picture)| {
+                        glyphpad_platform::windows::cheatsheet::Row {
+                            name,
+                            trigger,
+                            action,
+                            picture,
+                        }
+                    })
+                    .collect(),
+            },
+            _seconds,
+        );
     }
 
     fn touchpad(&self, _d: &DeviceInfo) {
@@ -99,6 +129,7 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
         enabled: true,
         mode: options.mode,
         warnings: loaded.warnings.iter().map(ToString::to_string).collect(),
+        profile: loaded.config.settings.active_profile.clone(),
         ..Default::default()
     }));
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
@@ -112,9 +143,18 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
     let feedback = Feedback::new(&loaded.config);
     let executor_feedback = feedback.clone();
     let actions = spawn_action_worker(glyphpad_actions::executor(), executor_feedback);
+    let loaded_config = Arc::new(loaded.config);
+    let usage = std::fs::read_to_string(config_file::usage_path(&options.location))
+        .map(|t| glyphpad_core::usage::Usage::from_json(&t))
+        .unwrap_or_default();
     let mut service = Service {
-        engine: Engine::from_config(&loaded.config),
-        config: Arc::new(loaded.config),
+        engine: Engine::from_config(&loaded_config),
+        config: loaded_config.clone(),
+        loaded: loaded_config,
+        profile_override: None,
+        usage,
+        usage_dirty: false,
+        usage_saved: Instant::now(),
         templates,
         location: options.location,
         print: options.print,
@@ -140,6 +180,7 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
     };
     service.read_config_text();
     service.rebuild_engine();
+    service.publish_usage();
     std::thread::Builder::new()
         .name("engine".into())
         .spawn(move || service.run(events, cmd_rx))?;
@@ -148,7 +189,16 @@ pub fn spawn(events: Receiver<DeviceEvent>, options: Options) -> Result<ServiceH
 
 struct Service {
     engine: Engine,
+    /// The configuration in force: the loaded one, with the profile a rule
+    /// picked for the application in front, if any.
     config: Arc<Config>,
+    /// The configuration as the file holds it, which the window edits.
+    loaded: Arc<Config>,
+    /// Profile chosen by a `profile_rules` entry for the foreground app.
+    profile_override: Option<String>,
+    usage: glyphpad_core::usage::Usage,
+    usage_dirty: bool,
+    usage_saved: Instant,
     templates: TemplateFile,
     location: Location,
     print: bool,
@@ -447,6 +497,10 @@ impl Service {
                     .message(label, r.observation.to_string(), true);
                 if !test {
                     executed = self.execute(g, app.clone());
+                    if executed {
+                        let name = g.def.name.clone();
+                        self.count(|u| u.record_run(&name));
+                    }
                 }
             }
             None => match &r.observation {
@@ -458,11 +512,17 @@ impl Service {
                     });
                     tracing::info!("drawing not recognized ({best})");
                     self.feedback.message("Not recognized", best, false);
+                    if !test {
+                        self.count(|u| u.unrecognized += 1);
+                    }
                 }
                 Observation::Symbol { name, score, .. } => {
                     tracing::info!("symbol {name} ({score:.2}): no gesture for it here");
                     self.feedback
                         .message(format!("Symbol {name}"), "no gesture configured", false);
+                    if !test {
+                        self.count(|u| u.unmapped += 1);
+                    }
                 }
                 other => tracing::debug!("{other} (no gesture configured)"),
             },
@@ -578,6 +638,18 @@ impl Service {
                 self.ui.request_show();
                 true
             }
+            Action::SwitchProfile { profile } => {
+                self.set_active_profile(profile.clone());
+                true
+            }
+            Action::NextProfile => {
+                self.next_profile();
+                true
+            }
+            Action::ShowCheatSheet => {
+                self.show_cheat_sheet();
+                true
+            }
             other => {
                 let _ = self.actions.send(other.clone());
                 self.repeater.record(g, app, Instant::now());
@@ -612,8 +684,15 @@ impl Service {
             return;
         }
         self.last_auto_pause_check = Instant::now();
+        self.flush_usage();
+        let needs_app =
+            self.auto_pause_configured() || !self.loaded.settings.profile_rules.is_empty();
+        let app = needs_app
+            .then(|| self.foreground.foreground_app())
+            .flatten();
+        self.follow_profile_rules(app.as_ref());
         let reason = if self.auto_pause_configured() {
-            self.auto_pause_reason(self.foreground.foreground_app().as_ref())
+            self.auto_pause_reason(app.as_ref())
         } else {
             None
         };
@@ -672,6 +751,134 @@ impl Service {
         }
     }
 
+    /// The loaded configuration with the profile a rule picked, if any.
+    fn effective_config(&self) -> Arc<Config> {
+        match &self.profile_override {
+            Some(p) if *p != self.loaded.settings.active_profile => {
+                let mut c = (*self.loaded).clone();
+                c.settings.active_profile = p.clone();
+                Arc::new(c)
+            }
+            _ => self.loaded.clone(),
+        }
+    }
+
+    /// Makes `name` the active profile and saves the choice in the file.
+    fn set_active_profile(&mut self, name: String) {
+        let value = name.clone();
+        match self.edit_config(|text| {
+            config_edit::set_value(text, &["settings", "active_profile"], value)
+        }) {
+            Ok(()) => {
+                self.reload();
+                self.feedback.message("Profile", name, true);
+            }
+            Err(e) => self.set_status(format!("profile not changed: {e}")),
+        }
+    }
+
+    fn next_profile(&mut self) {
+        let names = self.loaded.profile_names();
+        let current = &self.loaded.settings.active_profile;
+        let at = names.iter().position(|p| p == current).unwrap_or(0);
+        if let Some(next) = names.get((at + 1) % names.len().max(1)).cloned()
+            && names.len() > 1
+        {
+            self.set_active_profile(next);
+        }
+    }
+
+    /// Follows `profile_rules`: while a listed application is in front its
+    /// profile is used, without touching the file.
+    fn follow_profile_rules(&mut self, app: Option<&AppInfo>) {
+        let wanted = app
+            .and_then(|a| self.loaded.profile_for(a))
+            .map(str::to_string);
+        if wanted == self.profile_override {
+            return;
+        }
+        // Not in the middle of a gesture: rebuilding forgets what is in progress.
+        let busy = self
+            .shared
+            .lock()
+            .is_ok_and(|s| s.contacts.iter().any(|c| c.tip));
+        if busy {
+            return;
+        }
+        self.profile_override = wanted;
+        self.config = self.effective_config();
+        let name = self.config.settings.active_profile.clone();
+        tracing::info!("profile: {name}");
+        self.rebuild_engine();
+        self.feedback.message("Profile", name, true);
+    }
+
+    /// The gestures that work now, with a picture each, on screen for a while.
+    fn show_cheat_sheet(&mut self) {
+        let config = &self.config;
+        let active = &config.settings.active_profile;
+        let effective = self.templates.effective();
+        let app = self.foreground.foreground_app();
+        let rows: Vec<(String, String, String, glyphpad_core::preview::Pictogram)> = config
+            .gestures
+            .iter()
+            .filter(|g| g.applies(active, app.as_ref()))
+            .map(|g| {
+                let (trigger, picture) = match &g.trigger {
+                    Some(t) => (t.describe(), glyphpad_core::preview::of(t, &effective)),
+                    None => (
+                        g.steps
+                            .iter()
+                            .map(|t| t.describe())
+                            .collect::<Vec<_>>()
+                            .join(" → "),
+                        glyphpad_core::preview::Pictogram::default(),
+                    ),
+                };
+                (
+                    g.def.name.clone(),
+                    trigger,
+                    Action::short_label(g.def.action.kind()).to_string(),
+                    picture,
+                )
+            })
+            .collect();
+        let title = format!("Gestures · profile {active}");
+        let seconds = config.settings.cheat_sheet_s;
+        self.feedback.cheat_sheet(title, rows, seconds);
+    }
+
+    fn publish_usage(&self) {
+        let usage = Arc::new(self.usage.clone());
+        self.update_shared(|s| s.usage = usage);
+        self.ui.wake();
+    }
+
+    /// Statistics are written at most every 20 s, and only if they changed.
+    fn flush_usage(&mut self) {
+        if !self.usage_dirty || self.usage_saved.elapsed() < Duration::from_secs(20) {
+            return;
+        }
+        self.usage_dirty = false;
+        self.usage_saved = Instant::now();
+        let path = config_file::usage_path(&self.location);
+        if let Err(e) = config_file::write_atomically(&path, &self.usage.to_json()) {
+            tracing::warn!("cannot save the statistics: {e}");
+        }
+    }
+
+    fn count(&mut self, f: impl FnOnce(&mut glyphpad_core::usage::Usage)) {
+        if !self.config.settings.statistics {
+            return;
+        }
+        if self.usage.since.is_none() {
+            self.usage.since = Some(jiff::Zoned::now().strftime("%Y-%m-%d").to_string());
+        }
+        f(&mut self.usage);
+        self.usage_dirty = true;
+        self.publish_usage();
+    }
+
     fn rebuild_engine(&mut self) {
         self.dispatcher.reset();
         let effective = self.templates.effective();
@@ -693,12 +900,14 @@ impl Service {
         };
         self.freezer = Some(Freezer::new(config));
         self.feedback.configure(config);
-        let (templates, config) = (Arc::new(self.templates.clone()), self.config.clone());
+        let (templates, config) = (Arc::new(self.templates.clone()), self.loaded.clone());
+        let profile = self.config.settings.active_profile.clone();
         let mode = self.mode;
         self.update_shared(|s| {
             s.effective = Arc::new(effective);
             s.templates = templates;
             s.config = config;
+            s.profile = profile;
             s.mode = mode;
         });
         self.ui.wake();
@@ -718,7 +927,8 @@ impl Service {
             Ok(loaded) => {
                 config_file::log_warnings(&loaded);
                 let warnings = loaded.warnings.iter().map(ToString::to_string).collect();
-                self.config = Arc::new(loaded.config);
+                self.loaded = Arc::new(loaded.config);
+                self.config = self.effective_config();
                 self.update_shared(|s| s.warnings = warnings);
                 self.read_config_text();
                 self.sync_autostart();
@@ -948,6 +1158,15 @@ impl Service {
             }
             Command::InstallUpdate => self.forward(crate::update::Request::Install),
             Command::IgnoreUpdate(version) => self.forward(crate::update::Request::Ignore(version)),
+            Command::SwitchProfile(Some(name)) => self.set_active_profile(name),
+            Command::SwitchProfile(None) => self.next_profile(),
+            Command::ResetUsage => {
+                self.usage = glyphpad_core::usage::Usage::default();
+                self.usage_dirty = true;
+                self.usage_saved = Instant::now() - Duration::from_secs(60);
+                self.publish_usage();
+                self.flush_usage();
+            }
             Command::FilesChanged => self.files_changed_at = Some(Instant::now()),
             Command::ListWindows => {
                 let apps = self.foreground.windows();
@@ -1005,7 +1224,13 @@ fn run_action(executor: &dyn ActionExecutor, feedback: &Feedback, action: &Actio
                 true,
             );
         }
-        Action::ToggleEnabled | Action::DrawSymbol | Action::RepeatLast | Action::ShowWindow => {
+        Action::ToggleEnabled
+        | Action::DrawSymbol
+        | Action::RepeatLast
+        | Action::ShowWindow
+        | Action::SwitchProfile { .. }
+        | Action::NextProfile
+        | Action::ShowCheatSheet => {
             tracing::warn!("`{}` inside a chain is ignored", action.kind())
         }
         other => {
