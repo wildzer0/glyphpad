@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 96" width="420" height="96"
+     role="img" aria-label="GlyphPad">
+  <title>GlyphPad</title>
+  <g>
+    <rect x="16" y="16" width="64" height="64" rx="14.08" fill="#3478f6"/>
+    <path d="M31.36 60.8C35.2 31.36 55.68 67.2 65.92 37.76" fill="none"
+          stroke="#ffffff" stroke-width="6.4" stroke-linecap="round"/>
+    <circle cx="31.36" cy="60.8" r="5.44" fill="#ffffff"/>
+  </g>
+  <text x="100" y="62" font-family="Segoe UI, system-ui, -apple-system, sans-serif"
+        font-size="40" font-weight="700" letter-spacing="-0.5" fill="#3478f6">GlyphPad</text>
+</svg>

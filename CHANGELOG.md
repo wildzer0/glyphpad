@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- A new icon and logo: a rounded tile with a gesture trail sweeping across it, drawn in code for
+  the tray and the window, and as `docs/images/logo.svg` (icon and name) for the README.
 - The "these changes are not saved yet" banner is gone. The status line says when a change is not
   saved and clicking it opens the detail with the ways out (try again, load the file, keep the
   draft), so nothing appears above the page while one types — which is also what made a field lose

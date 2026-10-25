@@ -1,5 +1,9 @@
 # GlyphPad
 
+<p align="center">
+  <img src="docs/images/logo.svg" alt="GlyphPad" width="420">
+</p>
+
 **Custom gestures for your touchpad.** Draw an **L** to lock the PC, an **X** to close the
 window in front, tap with four fingers to open a terminal, swipe with five to run a script.
 GlyphPad reads every finger on a Windows Precision Touchpad, recognizes the gestures *you*
