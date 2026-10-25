@@ -277,6 +277,7 @@ marked *app*.
 | `minimize` | | Foreground window |
 | `maximize` | | Maximizes, or restores if already maximized |
 | `run` | **`command`**, `args` (list), `hidden`, `cwd`, `shell`, `env`, `wait`, `timeout_ms` | `hidden` runs a console tool without a console window; `shell = true` goes through the command interpreter; `env` adds variables; `wait = true` waits up to `timeout_ms` (default 30000) |
+| `focus_or_launch` | **`app`**, **`command`**, `args` | Brings the first window of `app` (e.g. `code.exe`) to the front, or starts `command` when it is not running |
 | `media` | **`key`** | `play_pause`, `next`, `previous`, `stop`, `volume_up`, `volume_down`, `mute` |
 | `chain` | **`actions`** (a list) | Runs them in order; no `chain` inside a `chain` |
 | `wait` | **`ms`** (≤ 60000) | A pause, for use inside a `chain` |

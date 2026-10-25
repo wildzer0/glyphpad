@@ -29,17 +29,19 @@ use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, Glo
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
-    QueryFullProcessImageNameW, TerminateProcess,
+    AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, QueryFullProcessImageNameW,
+    TerminateProcess,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GA_ROOTOWNER, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetForegroundWindow,
-    GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, HWND_NOTOPMOST,
-    HWND_TOPMOST, IsWindowVisible, IsZoomed, PostMessageW, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
-    SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos,
-    ShowWindowAsync, WINDOW_EX_STYLE, WM_CLOSE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    BringWindowToTop, EnumWindows, GA_ROOTOWNER, GWL_EXSTYLE, GetAncestor, GetClassNameW,
+    GetForegroundWindow, GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+    HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, IsWindowVisible, IsZoomed, PostMessageW, SW_MAXIMIZE,
+    SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow, ShowWindowAsync, WINDOW_EX_STYLE,
+    WM_CLOSE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 use windows::core::{HSTRING, PWSTR, w};
 
@@ -112,6 +114,7 @@ impl ActionExecutor for WindowsExecutor {
                 *wait,
                 *timeout_ms,
             ),
+            Action::FocusOrLaunch { app, command, args } => focus_or_launch(app, command, args),
             Action::Copy { text } => set_clipboard_text(text),
             Action::PasteText { text } => {
                 set_clipboard_text(text)?;
@@ -541,6 +544,90 @@ fn window_pid(hwnd: HWND) -> u32 {
     // SAFETY: `pid` is a valid out pointer.
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
     pid
+}
+
+/// Brings the first window of `app` to the front, or starts `command` when
+/// the program is not running: what "open my editor" means to a person.
+fn focus_or_launch(app: &str, command: &str, args: &[String]) -> Result<(), ActionError> {
+    if let Some(hwnd) = window_of_exe(app) {
+        bring_to_front(hwnd);
+        return Ok(());
+    }
+    let mut cmd = Command::new(command);
+    cmd.args(args);
+    cmd.spawn()
+        .map_err(|e| format!("cannot start `{command}`: {e}"))?;
+    Ok(())
+}
+
+/// The first visible, titled window of the process called `app`. Our own
+/// windows and the desktop's are skipped: bringing the taskbar forward is
+/// never what "focus this program" means.
+fn window_of_exe(app: &str) -> Option<HWND> {
+    struct Find<'a> {
+        app: &'a str,
+        found: Option<HWND>,
+    }
+
+    /// SAFETY: `lparam` is the `Find` passed to `EnumWindows` below, which
+    /// outlives every call.
+    unsafe extern "system" fn each(hwnd: HWND, lparam: LPARAM) -> windows::core::BOOL {
+        let find = unsafe { &mut *(lparam.0 as *mut Find) };
+        if find.found.is_some() || !unsafe { IsWindowVisible(hwnd).as_bool() } {
+            return true.into();
+        }
+        let mut title = [0u16; 256];
+        // SAFETY: `title` is writable for its length; a stale handle only
+        // makes the call return 0.
+        let len = unsafe { GetWindowTextW(hwnd, &mut title) };
+        if len <= 0 || SHELL_CLASSES.contains(&window_class(hwnd).as_str()) {
+            return true.into();
+        }
+        let pid = window_pid(hwnd);
+        if pid == 0 || pid == std::process::id() {
+            return true.into();
+        }
+        if process_exe(pid).is_some_and(|exe| exe.eq_ignore_ascii_case(find.app)) {
+            find.found = Some(hwnd);
+            return false.into();
+        }
+        true.into()
+    }
+
+    let mut find = Find { app, found: None };
+    // SAFETY: the callback touches only `find`, which outlives the call.
+    unsafe {
+        let _ = EnumWindows(Some(each), LPARAM(&raw mut find as isize));
+    }
+    find.found
+}
+
+/// Restores, shows and activates `hwnd`. Windows refuses the foreground to a
+/// process that is not in it (a gesture is not user input to it), so the
+/// input queues are attached for the length of the call.
+fn bring_to_front(hwnd: HWND) {
+    // SAFETY: window calls on a handle owned by another thread; the input
+    // attachment is undone before returning.
+    unsafe {
+        let _ = ShowWindow(
+            hwnd,
+            if IsIconic(hwnd).as_bool() {
+                SW_RESTORE
+            } else {
+                SW_SHOW
+            },
+        );
+        let foreground = GetForegroundWindow();
+        let theirs = GetWindowThreadProcessId(foreground, None);
+        let ours = GetCurrentThreadId();
+        let attached =
+            theirs != 0 && theirs != ours && AttachThreadInput(ours, theirs, true).as_bool();
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd);
+        if attached {
+            let _ = AttachThreadInput(ours, theirs, false);
+        }
+    }
 }
 
 /// Starts `command`, through `cmd /C` when `shell` is set, and waits for it

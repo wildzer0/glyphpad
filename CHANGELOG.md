@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `focus_or_launch`: brings the first window of a program to the front, or starts it when it is
+  not running — what "open my editor" means, without a script.
 - `copy` puts a text on the clipboard; `paste_text` puts it there and sends `Ctrl+V`, which is
   faster and more faithful than typing it character by character.
 - Placeholders in the texts of `run`, `open`, `notify` and `type_text`: `{{app}}`, `{{title}}`,

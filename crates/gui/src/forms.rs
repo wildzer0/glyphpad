@@ -459,6 +459,11 @@ const ACTIONS: &[(&str, &str, &str)] = &[
     ("minimize", icons::MINUS, "Minimize the window"),
     ("maximize", icons::SQUARE, "Maximize / restore the window"),
     ("run", icons::TERMINAL_WINDOW, "Run a program"),
+    (
+        "focus_or_launch",
+        icons::APP_WINDOW,
+        "Open a program, or focus it if it is open",
+    ),
     ("media", icons::PLAY_PAUSE, "Media key"),
     ("chain", icons::STACK, "Several actions in a row"),
     ("notify", icons::BELL, "Show a message"),
@@ -540,6 +545,11 @@ fn default_action(kind: &str) -> Action {
             env: std::collections::BTreeMap::new(),
             wait: false,
             timeout_ms: 30_000,
+        },
+        "focus_or_launch" => Action::FocusOrLaunch {
+            app: String::new(),
+            command: String::new(),
+            args: Vec::new(),
         },
         "media" => Action::Media {
             key: MediaKey::PlayPause,
@@ -934,6 +944,27 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
                         .collect::<Vec<_>>()
                         .join("\n")
                 },
+            );
+        }
+        Action::FocusOrLaunch { app, command, args } => {
+            ui.horizontal(|ui| {
+                w::text_field(ui, app, "program to look for, e.g. code.exe", 240.0);
+                w::text_field(ui, command, "command that starts it", 200.0);
+            });
+            lines_field(
+                ui,
+                id.with("focus-args"),
+                args.join("\n"),
+                "arguments for starting it, one per line",
+                2,
+                |text| {
+                    *args = text.lines().map(str::to_string).collect();
+                    args.join("\n")
+                },
+            );
+            w::hint(
+                ui,
+                "If a window of that program is open it is brought to the front, otherwise the command runs.",
             );
         }
         Action::Media { key } => {

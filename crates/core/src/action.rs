@@ -49,6 +49,15 @@ pub enum Action {
         #[serde(default = "run_timeout_default")]
         timeout_ms: u64,
     },
+    /// Brings the first window of `app` to the front, or starts `command`
+    /// when the program is not running.
+    FocusOrLaunch {
+        /// Executable to look for, e.g. `code.exe`.
+        app: String,
+        command: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+    },
     Media {
         key: MediaKey,
     },
@@ -168,6 +177,7 @@ impl Action {
             Action::Minimize => "minimize",
             Action::Maximize => "maximize",
             Action::Run { .. } => "run",
+            Action::FocusOrLaunch { .. } => "focus_or_launch",
             Action::Media { .. } => "media",
             Action::Chain { .. } => "chain",
             Action::Wait { .. } => "wait",
@@ -198,6 +208,7 @@ impl Action {
             "minimize" => "Minimize",
             "maximize" => "Maximize",
             "run" => "Run program",
+            "focus_or_launch" => "Open or focus a program",
             "media" => "Media key",
             "chain" => "Several actions",
             "notify" => "Message",
@@ -260,6 +271,15 @@ impl Action {
                     }
                     a.validate()
                         .map_err(|e| format!("`chain` item {}: {e}", i + 1))?;
+                }
+                Ok(())
+            }
+            Action::FocusOrLaunch { app, command, .. } => {
+                if app.trim().is_empty() {
+                    return Err("`focus_or_launch` needs an `app` to look for".into());
+                }
+                if command.trim().is_empty() {
+                    return Err("`focus_or_launch` needs a `command` to start".into());
                 }
                 Ok(())
             }
@@ -400,6 +420,11 @@ impl ActionContext {
                 wait: *wait,
                 timeout_ms: *timeout_ms,
             },
+            Action::FocusOrLaunch { app, command, args } => Action::FocusOrLaunch {
+                app: self.expand(app),
+                command: self.expand(command),
+                args: args.iter().map(|a| self.expand(a)).collect(),
+            },
             Action::Open { target } => Action::Open {
                 target: self.expand(target),
             },
@@ -486,6 +511,36 @@ mod tests {
             action: Action,
         }
         toml::from_str::<W>(s).map(|w| w.action)
+    }
+
+    #[test]
+    fn focus_or_launch_needs_a_program_and_a_command() {
+        let ok = parse(
+            r#"action = { type = "focus_or_launch", app = "code.exe", command = "code", args = ["-n"] }"#,
+        )
+        .unwrap();
+        assert_eq!(ok.kind(), "focus_or_launch");
+        assert!(ok.validate().is_ok());
+        assert!(
+            parse(r#"action = { type = "focus_or_launch", app = " ", command = "code" }"#)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        assert!(
+            parse(r#"action = { type = "focus_or_launch", app = "code.exe", command = "" }"#)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        // A `chain` may start it: it needs no window of GlyphPad's own.
+        let chain = parse(
+            r#"action = { type = "chain", actions = [
+                { type = "focus_or_launch", app = "code.exe", command = "code" },
+                { type = "wait", ms = 50 } ] }"#,
+        )
+        .unwrap();
+        assert!(chain.validate().is_ok());
     }
 
     #[test]
