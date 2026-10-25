@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The "these changes are not saved yet" banner is gone. The status line says when a change is not
+  saved and clicking it opens the detail with the ways out (try again, load the file, keep the
+  draft), so nothing appears above the page while one types — which is also what made a field lose
+  the focus whenever a half-typed value made the draft invalid.
+
+### Fixed
+- The `focus_or_launch` fields are one per row and as wide as the column: side by side they were
+  clipped by the gesture editor, and a clipped field cannot be clicked into.
+- A gesture saved through the wizard is read back into the window even when its symbol examples
+  could not be written: the reload was skipped on that error, leaving the gesture in the file but
+  not in the list.
+
 ## [1.6.0] - 2026-10-25
 
 ### Added

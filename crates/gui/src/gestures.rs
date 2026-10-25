@@ -1060,10 +1060,14 @@ mod tests {
     const FILE: &str = "[settings]\nclose_to_tray = true\n\n[[gesture]]\nname = \"a\"\ntype = \"tap\"\nfingers = 1\naction = { type = \"lock_screen\" }\n\n[[gesture]]\nname = \"b\"\ntype = \"tap\"\nfingers = 2\naction = { type = \"lock_screen\" }\n";
 
     fn shared(text: &str) -> Shared {
+        shared_at(text, 1)
+    }
+
+    fn shared_at(text: &str, revision: u64) -> Shared {
         Shared {
             config: Arc::new(config::parse(text).unwrap().config),
             config_text: Arc::new(text.to_string()),
-            revision: 1,
+            revision,
             ..Default::default()
         }
     }

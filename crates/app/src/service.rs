@@ -1242,6 +1242,7 @@ impl Service {
                 if let Err(e) = self.write_config(&new, false) {
                     return self.set_status(format!("gesture not saved: {e}"));
                 }
+                let mut templates_error = None;
                 if let Some((symbol, samples)) = symbol_samples {
                     self.templates
                         .symbols
@@ -1249,11 +1250,19 @@ impl Service {
                         .or_default()
                         .extend(samples);
                     if let Err(e) = self.write_templates() {
-                        return self.set_status(format!("templates not saved: {e:#}"));
+                        templates_error = Some(format!("{e:#}"));
                     }
                 }
+                // The configuration is read back whatever happened to the
+                // examples: the gesture is in the file, and the window has to
+                // show it even when its templates could not be written.
                 self.reload();
-                self.set_status(format!("gesture \"{name}\" saved"));
+                match templates_error {
+                    Some(e) => self.set_status(format!(
+                        "gesture \"{name}\" saved, but its examples were not: {e}"
+                    )),
+                    None => self.set_status(format!("gesture \"{name}\" saved")),
+                }
             }
             Command::AddTemplate { symbol, sample } => {
                 self.templates

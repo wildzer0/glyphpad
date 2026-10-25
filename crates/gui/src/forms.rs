@@ -1385,9 +1385,14 @@ pub fn action_form(ui: &mut egui::Ui, cx: &Ctx, id: Id, action: &mut Action, nes
             );
         }
         Action::FocusOrLaunch { app, command, args } => {
-            ui.horizontal(|ui| {
-                w::text_field(ui, app, "program to look for, e.g. code.exe", 240.0);
-                w::text_field(ui, command, "command that starts it", 200.0);
+            // One row each, as wide as the column: side by side they were
+            // clipped in the editor's column, and a clipped field cannot be
+            // clicked into.
+            w::row(ui, "Program to look for", "", |ui| {
+                w::text_field(ui, app, "e.g. code.exe", ui.available_width());
+            });
+            w::row(ui, "Command that starts it", "", |ui| {
+                w::text_field(ui, command, "e.g. code", ui.available_width());
             });
             lines_field(
                 ui,

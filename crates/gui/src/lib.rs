@@ -146,6 +146,7 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
                 open_folder,
                 open_url,
                 dismissed_failure: None,
+                save_dialog: false,
                 bring_to_front,
                 on_started: Some(on_started),
                 hwnd: None,
@@ -181,6 +182,8 @@ struct App {
     open_url: Box<dyn Fn(&str)>,
     /// The update failure the user closed, so it is not shown again.
     dismissed_failure: Option<String>,
+    /// The save problem's detail is open (clicked in the status line).
+    save_dialog: bool,
     bring_to_front: Box<dyn Fn(isize)>,
     /// Runs on the first pass of the event loop, then dropped.
     on_started: Option<Box<dyn Fn() + Send + Sync>>,
@@ -405,7 +408,7 @@ impl eframe::App for App {
         // The banners live in a panel of their own: appearing or
         // disappearing must not shift the widgets of the page below, which
         // would take the focus away from the field being typed in.
-        if self.banner_needed(&cx) {
+        if self.update_banner_needed(&cx) {
             egui::Panel::top("banners")
                 .frame(
                     egui::Frame::new()
@@ -416,7 +419,6 @@ impl eframe::App for App {
                 .show(ui, |ui| {
                     ui.add_space(theme::space::S);
                     self.update_banner(ui, &cx);
-                    self.save_banner(ui, &cx);
                 });
         }
         egui::CentralPanel::default()
@@ -626,20 +628,38 @@ impl App {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 use editor::SaveState as S;
-                let (icon, text, color) = match self.editor.state() {
+                let state = self.editor.state().clone();
+                let (icon, text, color) = match &state {
                     S::Saved => (icons::CHECK_CIRCLE, "All changes saved", p.ok),
                     S::Waiting | S::Saving => (icons::CIRCLE_NOTCH, "Saving…", p.text_dim),
                     S::Invalid(_) => (icons::WARNING, "Not saved: needs attention", p.warn),
                     S::Conflict => (icons::WARNING, "Not saved: file changed", p.warn),
                     S::Failed(_) => (icons::WARNING_CIRCLE, "Could not save", p.bad),
                 };
-                ui.label(widgets::label_job_sized(
-                    icon,
-                    i18n::tr(text),
-                    theme::size::SMALL,
-                    theme::size::SMALL,
-                    color,
-                ));
+                // The status line is where saving problems show: clicking it
+                // opens the detail and the ways out, which keeps the page
+                // itself clear of banners.
+                let has_detail = !matches!(state, S::Saved | S::Waiting | S::Saving);
+                let label = ui.add(
+                    egui::Label::new(widgets::label_job_sized(
+                        icon,
+                        i18n::tr(text),
+                        theme::size::SMALL,
+                        theme::size::SMALL,
+                        color,
+                    ))
+                    .sense(if has_detail {
+                        egui::Sense::click()
+                    } else {
+                        egui::Sense::hover()
+                    }),
+                );
+                if has_detail {
+                    let label = label.on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if label.clicked() {
+                        self.save_dialog = true;
+                    }
+                }
                 ui.add_space(theme::space::S);
                 if widgets::icon_button(ui, icons::ARROW_CLOCKWISE, "Redo (Ctrl+Y)").clicked()
                     && self.editor.can_redo()
@@ -757,12 +777,11 @@ impl App {
         }
     }
 
-    /// Whether anything has to be said above the page, so the banner panel
-    /// is only there when it has something in it.
-    fn banner_needed(&self, cx: &Ctx) -> bool {
-        use editor::SaveState as S;
+    /// Whether the update banner has something to say, so the panel above
+    /// the page is only there when it does.
+    fn update_banner_needed(&self, cx: &Ctx) -> bool {
         use glyphpad_core::service::UpdateStatus as U;
-        let update = match &cx.shared.update {
+        match &cx.shared.update {
             U::Available(_)
             | U::Downloading(_)
             | U::Installing(_)
@@ -770,73 +789,112 @@ impl App {
             | U::Manual(..) => true,
             U::Failed(why) => self.dismissed_failure.as_deref() != Some(why),
             U::Idle | U::Checking | U::UpToDate => false,
-        };
-        update
-            || matches!(
-                self.editor.state(),
-                S::Invalid(_) | S::Failed(_) | S::Conflict
-            )
+        }
     }
 
-    /// Says what needs attention about saving, above the page.
-    fn save_banner(&mut self, ui: &mut egui::Ui, cx: &Ctx) {
+    /// What needs attention about saving, and what can be done about it.
+    /// The status line carries the notice; this is its detail, opened by
+    /// clicking it, so nothing is pushed into the page while one types.
+    fn save_problem_dialog(&mut self, ctx: &egui::Context, cx: &Ctx) {
+        if !self.save_dialog {
+            return;
+        }
         use editor::SaveState as S;
-        match self.editor.state().clone() {
-            S::Invalid(why) => widgets::banner_raw(
-                ui,
-                widgets::Tone::Warn,
-                i18n::tr("These changes are not saved yet"),
-                &why,
-                |_| {},
-            ),
-            S::Failed(why) => widgets::banner_raw(
-                ui,
-                widgets::Tone::Bad,
-                i18n::tr("The configuration could not be saved"),
-                &why,
-                |ui| {
-                    if widgets::button(ui, icons::ARROWS_CLOCKWISE, "Try again").clicked() {
-                        self.editor.retry();
-                    }
-                },
-            ),
-            S::Conflict => widgets::banner(
-                ui,
-                widgets::Tone::Warn,
-                "The configuration changed on disk",
-                "It was edited outside GlyphPad while you were making changes here.",
-                |ui| {
-                    for (choice, icon, label) in [
-                        (
-                            editor::ConflictChoice::Reload,
-                            icons::DOWNLOAD_SIMPLE,
-                            "Load the file",
-                        ),
-                        (
-                            editor::ConflictChoice::Overwrite,
-                            icons::FLOPPY_DISK,
-                            "Keep my changes",
-                        ),
-                        (
-                            editor::ConflictChoice::ShowDiff,
-                            icons::EYE,
-                            "Show differences",
-                        ),
-                    ] {
-                        if widgets::button(ui, icon, label).clicked()
-                            && let Some(cmd) = self.editor.resolve_conflict(choice, cx.shared)
-                        {
-                            cx.send(cmd);
-                        }
-                    }
-                },
-            ),
-            S::Saved | S::Waiting | S::Saving => {}
+        let state = self.editor.state().clone();
+        let mut close = false;
+        match state {
+            S::Invalid(why) => {
+                widgets::dialog(
+                    ctx,
+                    "save-invalid",
+                    "These changes are not saved yet",
+                    440.0,
+                    |ui| {
+                        ui.label(widgets::dim_raw(ui, &why));
+                        ui.add_space(theme::space::M);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::button(ui, "", "Close").clicked() {
+                                close = true;
+                            }
+                        });
+                    },
+                );
+            }
+            S::Failed(why) => {
+                widgets::dialog(
+                    ctx,
+                    "save-failed",
+                    "The configuration could not be saved",
+                    440.0,
+                    |ui| {
+                        ui.label(widgets::dim_raw(ui, &why));
+                        ui.add_space(theme::space::M);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::primary_button(ui, icons::ARROWS_CLOCKWISE, "Try again")
+                                .clicked()
+                            {
+                                self.editor.retry();
+                                close = true;
+                            }
+                            if widgets::button(ui, "", "Close").clicked() {
+                                close = true;
+                            }
+                        });
+                    },
+                );
+            }
+            S::Conflict => {
+                widgets::dialog(
+                    ctx,
+                    "save-conflict",
+                    "The configuration changed on disk",
+                    460.0,
+                    |ui| {
+                        ui.label(widgets::dim(
+                            ui,
+                            "It was edited outside GlyphPad while you were making changes here.",
+                        ));
+                        ui.add_space(theme::space::M);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            for (choice, icon, label) in [
+                                (
+                                    editor::ConflictChoice::Reload,
+                                    icons::DOWNLOAD_SIMPLE,
+                                    "Load the file",
+                                ),
+                                (
+                                    editor::ConflictChoice::Overwrite,
+                                    icons::FLOPPY_DISK,
+                                    "Keep my changes",
+                                ),
+                                (
+                                    editor::ConflictChoice::ShowDiff,
+                                    icons::EYE,
+                                    "Show differences",
+                                ),
+                            ] {
+                                if widgets::button(ui, icon, label).clicked()
+                                    && let Some(cmd) =
+                                        self.editor.resolve_conflict(choice, cx.shared)
+                                {
+                                    cx.send(cmd);
+                                    close = true;
+                                }
+                            }
+                        });
+                    },
+                );
+            }
+            S::Saved | S::Waiting | S::Saving => close = true,
+        }
+        if close {
+            self.save_dialog = false;
         }
     }
 
     fn dialogs(&mut self, ctx: &egui::Context, cx: &Ctx) {
         let p = theme::pal_of(ctx);
+        self.save_problem_dialog(ctx, cx);
         if self.editor.show_diff {
             let diff = self.editor.diff(cx.shared);
             let mut close = false;
