@@ -29,6 +29,9 @@ struct Step {
     target: Target,
     title: &'static str,
     text: &'static str,
+    /// The step hands over to the recording wizard: the tour comes back
+    /// after it, so the tour can teach by doing.
+    practice: bool,
 }
 
 const STEPS: &[Step] = &[
@@ -38,6 +41,7 @@ const STEPS: &[Step] = &[
         title: "Your gestures",
         text: "This is the list, and its order is the precedence: when two gestures could fire \
                from the same movement, the one higher up wins. Drag a row to change it.",
+        practice: false,
     },
     Step {
         tab: Tab::Gestures,
@@ -45,6 +49,16 @@ const STEPS: &[Step] = &[
         title: "Record a gesture",
         text: "Draw a symbol or perform the gesture, and GlyphPad learns it from your examples. \
                You choose the name and the action at the end.",
+        practice: false,
+    },
+    Step {
+        tab: Tab::Gestures,
+        target: Target::RecordButton,
+        title: "Record one now",
+        text: "Let us record one together: a T, drawn the way your settings ask. The wizard \
+               wants a few examples, then a name and an action, and at the end it lets you try \
+               the gesture for real. The gestures are paused meanwhile.",
+        practice: true,
     },
     Step {
         tab: Tab::Gestures,
@@ -53,6 +67,7 @@ const STEPS: &[Step] = &[
         text: "Choosing a gesture opens its editor: what triggers it — fingers, direction, \
                symbol — what it runs, and the conditions on the app or the profile. Every \
                change is saved as you make it.",
+        practice: false,
     },
     Step {
         tab: Tab::Review,
@@ -60,6 +75,7 @@ const STEPS: &[Step] = &[
         title: "Review",
         text: "Here are all the recorded examples, with their playback, the history of what ran \
                and the conflicts: it is where a gesture that does not fire is understood.",
+        practice: false,
     },
     Step {
         tab: Tab::Settings,
@@ -67,6 +83,7 @@ const STEPS: &[Step] = &[
         title: "Settings",
         text: "The drawing mode comes first: how a symbol is started — three fingers, an edge, a \
                hold — then the thresholds, the profiles and the updates.",
+        practice: false,
     },
     Step {
         tab: Tab::Gestures,
@@ -74,6 +91,7 @@ const STEPS: &[Step] = &[
         title: "Always at hand",
         text: "The icon in the tray pauses the gestures, reloads the configuration and shows this \
                window again. Closing the window with its X leaves GlyphPad running there.",
+        practice: false,
     },
 ];
 
@@ -102,6 +120,15 @@ impl Tour {
     /// they draw.
     pub fn register(ui: &egui::Ui, target: Target, rect: Rect) {
         ui.data_mut(|d| d.insert_temp(Self::rect_id(target), rect));
+    }
+
+    /// Moves to the next step, if there is one.
+    pub fn advance(&mut self) {
+        if self.step + 1 < STEPS.len() {
+            self.step += 1;
+        } else {
+            self.finished = true;
+        }
     }
 
     fn rect_id(target: Target) -> egui::Id {
@@ -194,12 +221,25 @@ impl Tour {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    let label = if last { "Done" } else { "Next" };
-                                    if w::primary_button(ui, crate::icons::CHECK, label).clicked() {
-                                        if last {
-                                            self.finished = true;
-                                        } else {
-                                            self.step += 1;
+                                    if step.practice {
+                                        // The wizard takes the page; the tour goes on
+                                        // after it, having shown the thing itself.
+                                        if w::primary_button(ui, crate::icons::RECORD, "Record it")
+                                            .clicked()
+                                        {
+                                            self.wants_wizard = true;
+                                            self.advance();
+                                        }
+                                    } else {
+                                        let label = if last { "Done" } else { "Next" };
+                                        if w::primary_button(ui, crate::icons::CHECK, label)
+                                            .clicked()
+                                        {
+                                            if last {
+                                                self.finished = true;
+                                            } else {
+                                                self.advance();
+                                            }
                                         }
                                     }
                                     if self.step > 0
@@ -213,10 +253,6 @@ impl Tour {
                     });
             });
 
-        // A step about the recording wizard asks for it, once.
-        if !self.wants_wizard && step.target == Target::RecordButton {
-            self.wants_wizard = true;
-        }
         !self.finished
     }
 }
@@ -258,6 +294,17 @@ mod tests {
         std::fs::write(onboarding_path(&dir), "{}").unwrap();
         assert!(!onboarding_done(&dir));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_tour_teaches_by_doing_and_stops_at_the_end() {
+        assert!(STEPS.iter().any(|s| s.practice), "a step records one");
+        let mut tour = Tour::new();
+        for _ in 0..STEPS.len() + 3 {
+            tour.advance();
+        }
+        assert_eq!(tour.step, STEPS.len() - 1, "it does not run past the end");
+        assert!(tour.finished, "the last step ends the tour");
     }
 
     #[test]

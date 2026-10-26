@@ -377,6 +377,12 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Resting fingers", "Dita ferme"),
     ("Tour", "Tour"),
     ("Your gestures", "Le tue gesture"),
+    ("Record one now", "Registrane una adesso"),
+    (
+        "Let us record one together: a T, drawn the way your settings ask. The wizard wants a few examples, then a name and an action, and at the end it lets you try the gesture for real. The gestures are paused meanwhile.",
+        "Registriamone una insieme: una T, disegnata come chiedono le tue impostazioni. La procedura guidata vuole qualche esempio, poi un nome e un'azione, e alla fine ti fa provare la gesture davvero. Nel frattempo le gesture sono in pausa.",
+    ),
+    ("Record it", "Registrala"),
     (
         "This is the list, and its order is the precedence: when two gestures could fire from the same movement, the one higher up wins. Drag a row to change it.",
         "Questa è la lista, e il suo ordine è la precedenza: quando due gesture possono scattare con lo stesso movimento vince quella più in alto. Trascina una riga per cambiarlo.",

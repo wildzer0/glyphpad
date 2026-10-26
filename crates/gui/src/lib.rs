@@ -494,8 +494,20 @@ impl eframe::App for App {
                 }
             });
         self.dialogs(ui.ctx(), &cx);
-        // Last, over everything else: the tour's overlay.
-        if let Some(t) = &mut self.tour {
+        // The tour's practice step asks for the recorder: it takes the page,
+        // and the tour goes on when it closes.
+        if self
+            .tour
+            .as_mut()
+            .is_some_and(|t| std::mem::take(&mut t.wants_wizard))
+        {
+            self.start_wizard(wizard::Start::New);
+        }
+        // Last, over everything else: the tour's overlay, unless the wizard
+        // it asked for is on screen.
+        if self.wizard.is_none()
+            && let Some(t) = &mut self.tour
+        {
             let ctx = ui.ctx().clone();
             if !t.show(&ctx, &cx) {
                 self.tour = None;

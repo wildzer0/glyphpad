@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The tour is offered on the first run only: `onboarding.json` beside the configuration records
   that it was seen, whether it was finished or skipped, so an update never brings it back.
 - Gestures are off while the tour runs and come back on as they were when it ends, so the
-  touchpad is for the tour alone. New `SetEnabled` command for that: it sets the state instead of
+  touchpad is for the tour alone.
+- The tour teaches by doing: a step hands over to the recording wizard — a few examples, a name,
+  an action, and then the gesture tried for real — and the tour picks up again when it closes. New `SetEnabled` command for that: it sets the state instead of
   toggling it.
 
 ### Fixed
