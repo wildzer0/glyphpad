@@ -129,7 +129,15 @@ fn backup_label(name: &str) -> String {
     )
 }
 
-pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) {
+/// What the page asks the window to do, if anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    /// Opens the guided tour again.
+    ShowTour,
+}
+
+pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Option<Action> {
+    let mut action = None;
     crate::tour::Tour::register(ui, crate::tour::Target::SettingsDrawing, ui.max_rect());
     w::page_header(
         ui,
@@ -143,7 +151,9 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) {
     let (s, u) = (&mut draft.settings, &mut draft.update);
     w::scroll_page(ui, "settings", |ui| {
         w::centered_column(ui, theme::PAGE_MAX_WIDTH, |ui| {
-            appearance_and_window(ui, s, &cx.shared.devices);
+            if appearance_and_window(ui, s, &cx.shared.devices) {
+                action = Some(Action::ShowTour);
+            }
             drawing(ui, s, &d);
             profile_section(ui, cx, s, &profiles);
             repeat_and_pause(ui, cx, s);
@@ -178,13 +188,16 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) {
             st.restore = None;
         }
     }
+    action
 }
 
+/// Returns whether the user asked for the guided tour from here.
 fn appearance_and_window(
     ui: &mut egui::Ui,
     s: &mut Settings,
     devices: &[glyphpad_core::DeviceInfo],
-) {
+) -> bool {
+    let mut tour = false;
     w::section(ui, "Appearance", "", |ui| {
         w::row(ui, "Theme", "“System” follows Windows.", |ui| {
             w::segmented_with_icons(
@@ -217,6 +230,16 @@ fn appearance_and_window(
             &mut s.close_to_tray,
         );
         w::switch_row(ui, "Start in the tray", "", &mut s.start_minimized);
+        w::row(
+            ui,
+            "Guided tour",
+            "Walks through the window, step by step.",
+            |ui| {
+                if w::button(ui, icons::INFO, "Show the tour").clicked() {
+                    tour = true;
+                }
+            },
+        );
         w::switch_row(ui, "Start with Windows", "", &mut s.autostart);
         w::row(ui, "History length", "Recognitions kept in Review.", |ui| {
             ui.add(egui::DragValue::new(&mut s.history_size).range(1..=1000));
@@ -267,6 +290,7 @@ fn appearance_and_window(
             s.touchpad = chosen;
         },
     );
+    tour
 }
 
 fn drawing(ui: &mut egui::Ui, s: &mut Settings, d: &Settings) {

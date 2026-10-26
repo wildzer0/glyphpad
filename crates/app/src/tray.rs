@@ -44,10 +44,11 @@ pub fn create(ctx: Context) -> Option<Box<dyn Tray>> {
     let reload = MenuItem::new(glyphpad_gui::tr("Reload configuration"), true, None);
     let folder = MenuItem::new(glyphpad_gui::tr("Open configuration folder"), true, None);
     let updates = MenuItem::new(glyphpad_gui::tr("Check for updates"), true, None);
+    let tour = MenuItem::new(glyphpad_gui::tr("Show the tour"), true, None);
     let quit = MenuItem::new(glyphpad_gui::tr("Quit"), true, None);
     let menu = Menu::new();
     let profiles = Submenu::new(glyphpad_gui::tr("Profile"), true);
-    let items: [&dyn tray_icon::menu::IsMenuItem; 9] = [
+    let items: [&dyn tray_icon::menu::IsMenuItem; 10] = [
         &open,
         &enabled,
         &profiles,
@@ -55,6 +56,7 @@ pub fn create(ctx: Context) -> Option<Box<dyn Tray>> {
         &reload,
         &folder,
         &updates,
+        &tour,
         &PredefinedMenuItem::separator(),
         &quit,
     ];
@@ -69,6 +71,7 @@ pub fn create(ctx: Context) -> Option<Box<dyn Tray>> {
             (reload.id().clone(), TrayAction::Reload),
             (folder.id().clone(), TrayAction::OpenConfigFolder),
             (updates.id().clone(), TrayAction::CheckUpdates),
+            (tour.id().clone(), TrayAction::Tour),
             (quit.id().clone(), TrayAction::Quit),
         ]
         .into(),

@@ -46,6 +46,8 @@ pub enum TrayAction {
     Reload,
     OpenConfigFolder,
     CheckUpdates,
+    /// Shows the guided tour again.
+    Tour,
     Quit,
     SwitchProfile(String),
 }
@@ -277,6 +279,10 @@ impl eframe::App for App {
         for action in actions {
             match action {
                 TrayAction::Open => self.show_window(ctx),
+                TrayAction::Tour => {
+                    self.show_window(ctx);
+                    self.tour = Some(tour::Tour::new());
+                }
                 TrayAction::ToggleEnabled => {
                     let _ = self.commands.send(Command::ToggleEnabled);
                 }
@@ -489,7 +495,17 @@ impl eframe::App for App {
                             self.start_wizard(wizard::Start::AddTemplates(symbol));
                         }
                     }
-                    Tab::Settings => settings::show(ui, &cx, &mut self.editor, &mut self.settings),
+                    Tab::Settings => {
+                        if let Some(action) =
+                            settings::show(ui, &cx, &mut self.editor, &mut self.settings)
+                        {
+                            match action {
+                                settings::Action::ShowTour => {
+                                    self.tour = Some(tour::Tour::new());
+                                }
+                            }
+                        }
+                    }
                     Tab::Debug => debug::show(ui, &cx),
                 }
             });
