@@ -455,6 +455,11 @@ impl Wizard {
                     })
                     .clone();
                 let mean = a.consistency.iter().sum::<f32>() / a.consistency.len().max(1) as f32;
+                // Measured once, before anything is drawn: the wizard sizes
+                // itself to its content, so asking for the width inside a card
+                // made the card grow on the next frame, and the next, once a
+                // card was wider than the page (the side-by-side thumbnail).
+                let card_width = ui.available_width();
                 let total = canvas::duration_us(self.samples.iter().flat_map(|s| &s.strokes));
                 self.playback.advance(ui.ctx(), total);
                 let mut drop = None;
@@ -465,7 +470,7 @@ impl Wizard {
                     .enumerate()
                 {
                     w::card_frame(ui).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
+                        ui.set_max_width(card_width);
                         ui.horizontal_top(|ui| {
                             canvas::thumbnail(ui, 150.0, sample, Some(self.playback.t_us));
                             ui.vertical(|ui| {

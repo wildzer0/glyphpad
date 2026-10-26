@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The examples in the recording wizard stop growing wider and wider: each card measured the page
+  inside itself, and the wizard sizes to its content, so once a card was wider than the page (the
+  side-by-side thumbnail of a confusing symbol) it grew again on the next frame.
+- A drawing that looks like two symbols is no longer fired as the better-scoring one: the best has
+  to beat every other symbol by a margin, otherwise it is reported as not recognized with both
+  names in the log. It is what made a drawn `b` run the gesture of a recorded `n`.
 - The tour's bubble is legible again: the dim was painted on the same layer as the bubble, and
   within one layer the two are composed in no particular order — so the dim could land on top of
   the text. The dim and the outline now go one layer below.

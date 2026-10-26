@@ -111,6 +111,21 @@ pub enum Observation {
 /// How many candidates observations keep.
 const TOP_CANDIDATES: usize = 3;
 
+/// How much better than another symbol the best has to be for the drawing to
+/// count. Two shapes that look alike — a drawn `b` and a recorded `n` — score
+/// within this of each other, and firing one of them is a coin toss: the
+/// honest answer is "not recognized", with both names in the log.
+const AMBIGUITY_MARGIN: f32 = 0.02;
+
+/// Whether the best candidate is clearly better than every *other* symbol.
+fn clear_winner(candidates: &[Candidate]) -> bool {
+    let Some((best, rest)) = candidates.split_first() else {
+        return false;
+    };
+    rest.iter()
+        .all(|c| c.symbol == best.symbol || best.score - c.score >= AMBIGUITY_MARGIN)
+}
+
 fn format_candidates(c: &[Candidate]) -> String {
     let list: Vec<String> = c
         .iter()
@@ -883,6 +898,7 @@ impl Engine {
             && spec
                 .symbol_threshold(&best.symbol)
                 .is_some_and(|min| best.score >= min)
+            && clear_winner(&candidates)
         {
             let symbol = Observation::Symbol {
                 name: best.symbol.clone(),

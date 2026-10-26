@@ -613,6 +613,22 @@ fn a_symbol_drawn_over_resting_fingers_is_a_chord() {
 }
 
 #[test]
+fn a_close_call_between_two_symbols_is_not_a_match() {
+    let c = |symbol: &str, score: f32| crate::symbols::Candidate {
+        symbol: symbol.into(),
+        score,
+    };
+    // Clear best: the drawing fires.
+    assert!(clear_winner(&[c("n", 0.90), c("b", 0.80)]));
+    // Two shapes that look alike: it does not.
+    assert!(!clear_winner(&[c("n", 0.86), c("b", 0.85)]));
+    // Several examples of the same symbol are not a rival.
+    assert!(clear_winner(&[c("n", 0.86), c("n", 0.85)]));
+    // Nothing at all is not a match either.
+    assert!(!clear_winner(&[]));
+}
+
+#[test]
 fn three_finger_symbol() {
     let config = symbol_config("");
     let mut pad = Pad::new();
