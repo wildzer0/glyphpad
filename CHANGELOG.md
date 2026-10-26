@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-10-26
+
 ### Fixed
 - A gesture saved by the recording wizard shows in the list at once: the page takes in what the
   file gained before drawing, instead of waiting for a change the editor had already missed. It
@@ -348,7 +350,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Show window" only flashed the taskbar button when the window was behind others.
 - The wizard's quality check was recomputed every frame, slowing the window down.
 
-[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.6.3...HEAD
+[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.6.4...HEAD
+[1.6.4]: https://github.com/wildzer0/glyphpad/compare/v1.6.3...v1.6.4
 [1.6.3]: https://github.com/wildzer0/glyphpad/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/wildzer0/glyphpad/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/wildzer0/glyphpad/compare/v1.6.0...v1.6.1
