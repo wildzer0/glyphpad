@@ -1221,6 +1221,15 @@ impl Service {
                 self.mode = mode;
                 self.rebuild_engine();
             }
+            Command::SetEnabled(on) => {
+                if self.enabled != on {
+                    self.enabled = on;
+                    self.engine.reset();
+                    let enabled = self.enabled;
+                    self.update_shared(|s| s.enabled = enabled);
+                    self.ui.wake();
+                }
+            }
             Command::ToggleEnabled => {
                 self.enabled = !self.enabled;
                 self.engine.reset();

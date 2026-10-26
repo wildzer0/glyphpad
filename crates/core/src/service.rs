@@ -40,6 +40,9 @@ impl EngineMode {
 pub enum Command {
     SetMode(EngineMode),
     ToggleEnabled,
+    /// Turn the gestures on or off, without guessing what they were: the
+    /// guided tour pauses them and puts them back as it found them.
+    SetEnabled(bool),
     /// Re-read the configuration and templates from disk.
     Reload,
     /// Write a new gesture and, for a symbol, its samples, in one go.

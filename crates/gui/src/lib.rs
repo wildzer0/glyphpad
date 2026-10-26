@@ -154,7 +154,9 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
                 visible: !options.start_hidden,
                 started_hidden: options.start_hidden,
                 frames: 0,
-                tour: None,
+                tour: first_run_tour(&snapshot),
+                tour_paused: false,
+                tour_was_enabled: false,
                 quitting: false,
                 tray_enabled: None,
                 version: options.version,
@@ -197,6 +199,9 @@ struct App {
     started_hidden: bool,
     /// The guided tour, while one is open.
     tour: Option<tour::Tour>,
+    /// The tour turned the gestures off: whether they were on before.
+    tour_paused: bool,
+    tour_was_enabled: bool,
     /// Passes of the event loop since the window was created.
     frames: u64,
     tab: Tab,
@@ -357,6 +362,15 @@ impl eframe::App for App {
             self.tab = tab;
         }
         let shared = self.snapshot();
+        // The touchpad is for the tour while it runs: gestures are off, and
+        // back on — as they were — when it ends (SPEC §13).
+        if self.tour.is_some() && !self.tour_paused {
+            self.tour_paused = true;
+            self.tour_was_enabled = shared.enabled;
+            if shared.enabled {
+                let _ = self.commands.send(Command::SetEnabled(false));
+            }
+        }
         let commands = self.commands.clone();
         let version = self.version.clone();
         let cx = Ctx {
@@ -487,7 +501,26 @@ impl eframe::App for App {
                 self.tour = None;
             }
         }
+        if self.tour.is_none() && self.tour_paused {
+            self.tour_paused = false;
+            if std::mem::take(&mut self.tour_was_enabled) {
+                let _ = self.commands.send(Command::SetEnabled(true));
+            }
+            // Seen, finished or skipped: it is not offered again.
+            tour::mark_done(&self.config_dir());
+        }
     }
+}
+
+/// Opens the guided tour the first time the window runs, and never again:
+/// `onboarding.json` beside the configuration records that it was seen.
+fn first_run_tour(shared: &Shared) -> Option<tour::Tour> {
+    let dir = shared
+        .config_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    (!tour::onboarding_done(&dir)).then(tour::Tour::new)
 }
 
 impl App {

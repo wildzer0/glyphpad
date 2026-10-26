@@ -221,9 +221,44 @@ impl Tour {
     }
 }
 
+/// The file that records the tour has been seen, beside the configuration.
+/// It is written when the tour ends or is skipped, so it never comes back —
+/// not even after an update, which replaces the program but not this file.
+const ONBOARDING_FILE: &str = "onboarding.json";
+
+pub fn onboarding_path(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join(ONBOARDING_FILE)
+}
+
+pub fn onboarding_done(dir: &std::path::Path) -> bool {
+    std::fs::read_to_string(onboarding_path(dir))
+        .map(|text| text.contains("\"done\""))
+        .unwrap_or(false)
+}
+
+/// Records that the tour has been seen. Failing to write it is not worth
+/// telling the user about: it only means the tour may be offered again.
+pub fn mark_done(dir: &std::path::Path) {
+    let _ = std::fs::write(onboarding_path(dir), "{\"done\":true,\"version\":1}\n");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tour_is_offered_until_it_is_recorded_as_seen() {
+        let dir = std::env::temp_dir().join(format!("glyphpad-tour-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let _ = std::fs::remove_file(onboarding_path(&dir));
+        assert!(!onboarding_done(&dir), "never seen: offered");
+        mark_done(&dir);
+        assert!(onboarding_done(&dir), "seen: not offered again");
+        // A file that says something else is not a "seen" record.
+        std::fs::write(onboarding_path(&dir), "{}").unwrap();
+        assert!(!onboarding_done(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn every_step_has_a_tab_and_the_tour_ends_after_the_last() {

@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A guided tour of the window: an overlay that dims the page, outlines one element at a time and
   says what it is for — the list and its precedence, the recorder, the editor, Review, Settings and
   the tray — step by step, skippable, and openable again from the sidebar.
+- The tour is offered on the first run only: `onboarding.json` beside the configuration records
+  that it was seen, whether it was finished or skipped, so an update never brings it back.
+- Gestures are off while the tour runs and come back on as they were when it ends, so the
+  touchpad is for the tour alone. New `SetEnabled` command for that: it sets the state instead of
+  toggling it.
 
 ### Fixed
 - `start_minimized` is respected after an update: the old process no longer asks the new one to
