@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-10-26
+
 ### Added
 - `[settings] symbol_margin` (default 0.02, in Settings → Drawing): how much better the best
   symbol must score than every other one for a drawing to count. At 0 the best score always wins.
@@ -400,7 +402,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Show window" only flashed the taskbar button when the window was behind others.
 - The wizard's quality check was recomputed every frame, slowing the window down.
 
-[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/wildzer0/glyphpad/compare/v1.7.2...HEAD
+[1.7.2]: https://github.com/wildzer0/glyphpad/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/wildzer0/glyphpad/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/wildzer0/glyphpad/compare/v1.6.4...v1.7.0
 [1.6.4]: https://github.com/wildzer0/glyphpad/compare/v1.6.3...v1.6.4
