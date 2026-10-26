@@ -84,6 +84,7 @@ are what they are, see the comments in `crates/core/src/config.rs`.
 | `stroke_gap_ms` | `400` (1–5000) | Strokes closer in time than this form one symbol; the pause that ends it |
 | `min_stroke_mm` | `10.0` | Shortest stroke; anything shorter is a tap |
 | `default_confidence` | `0.80` (0–1) | Minimum score of a symbol when the gesture sets no `confidence` |
+| `symbol_margin` | `0.02` (0–0.2) | How much better the best symbol must score than every other one for a drawing to count; `0` fires the best score whatever the others are |
 | `rotation_tolerance_deg` | `0.0` (0–180) | How far a symbol may be turned and still match; 0 = orientation matters |
 
 A positive `rotation_tolerance_deg` costs time: the recognizer tries the trace at a few coarse

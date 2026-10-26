@@ -36,6 +36,8 @@ pub struct State {
     conflicts_at: Option<std::time::Instant>,
     /// Which profile the overview of the zones shows; `None` is all of them.
     zone_profile: Option<String>,
+    /// The list of conflicts is open (from the one-line notice).
+    conflicts_open: bool,
     /// The expensive half of the conflict check — do two symbols look alike —
     /// with the key it was computed for: it depends only on the symbols in
     /// use, their confidence and the templates.
@@ -224,6 +226,7 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
             }
         });
 
+    conflicts_dialog(ui.ctx(), st);
     delete_dialog(ui.ctx(), ed, st);
     profiles_dialog(ui.ctx(), ed, st);
     st.packs.dialogs(ui.ctx(), ed, cx);
@@ -293,18 +296,20 @@ fn list_panel(ui: &mut egui::Ui, ed: &mut Editor, st: &mut State, profiles: &[St
     if let Some((_, conflicts)) = &st.conflicts
         && !conflicts.is_empty()
     {
+        // One line and a way to the detail: a banner as tall as the list
+        // pushed the gestures off the column and shouted louder than the
+        // list does.
         let n = conflicts.len();
-        let text: Vec<String> = conflicts
-            .iter()
-            .map(|c| format!("{}: {}", c.gestures.join(" / "), c.reason))
-            .collect();
-        w::banner_raw(
-            ui,
-            Tone::Warn,
-            &crate::i18n::plural(n, "{} possible conflict", "{} possible conflicts"),
-            &text.join("\n"),
-            |_| {},
-        );
+        ui.horizontal(|ui| {
+            w::warn_text_raw(
+                ui,
+                &crate::i18n::plural(n, "{} possible conflict", "{} possible conflicts"),
+            );
+            if w::small_button(ui, "Details").clicked() {
+                st.conflicts_open = true;
+            }
+        });
+        ui.add_space(space::XS);
     }
 
     let footer_h = 62.0;
@@ -908,6 +913,39 @@ fn detail(
     }
     if let Some(u) = delete {
         st.confirm_delete = Some(u);
+    }
+}
+
+/// The conflicts found in the draft, on demand.
+fn conflicts_dialog(ctx: &egui::Context, st: &mut State) {
+    if !st.conflicts_open {
+        return;
+    }
+    let conflicts = st
+        .conflicts
+        .as_ref()
+        .map(|(_, c)| c.clone())
+        .unwrap_or_default();
+    let mut close = false;
+    w::dialog(ctx, "conflicts", "Possible conflicts", 520.0, |ui| {
+        egui::ScrollArea::vertical()
+            .max_height(320.0)
+            .show(ui, |ui| {
+                for c in &conflicts {
+                    ui.label(w::strong_raw(c.gestures.join(" / ")));
+                    ui.label(w::caption_raw(ui, &c.reason));
+                    ui.add_space(space::S);
+                }
+            });
+        ui.add_space(space::S);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if w::button(ui, "", "Close").clicked() {
+                close = true;
+            }
+        });
+    });
+    if close {
+        st.conflicts_open = false;
     }
 }
 

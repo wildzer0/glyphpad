@@ -66,6 +66,10 @@ pub struct Settings {
     pub min_stroke_mm: f32,
     /// Minimum score for a symbol when the gesture sets no `confidence`.
     pub default_confidence: f32,
+    /// How much better the best symbol must score than every other symbol for
+    /// a drawing to count. `0` fires the best score whatever the others are;
+    /// the default keeps two shapes that look alike from firing one of them.
+    pub symbol_margin: f32,
     /// 0 keeps symbols orientation-sensitive: a rotated L is not an L.
     pub rotation_tolerance_deg: f32,
 
@@ -200,6 +204,7 @@ impl Default for Settings {
             stroke_gap_ms: 400,
             min_stroke_mm: 10.0,
             default_confidence: 0.80,
+            symbol_margin: 0.02,
             rotation_tolerance_deg: 0.0,
             repeat_timeout_s: None,
             repeat_same_app_only: true,

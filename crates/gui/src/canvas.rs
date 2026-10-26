@@ -35,7 +35,11 @@ impl Pad {
         height_mm: f32,
     ) -> (egui::Response, egui::Painter, Pad) {
         let (w_mm, h_mm) = (width_mm.max(1.0), height_mm.max(1.0));
-        let size = Vec2::new(width, width * h_mm / w_mm);
+        // The extents can be a stroke's, not the pad's: a tall thin symbol
+        // would make the silhouette enormous. Every touchpad is between these
+        // proportions, so clamping costs nothing real.
+        let aspect = (h_mm / w_mm).clamp(0.5, 1.2);
+        let size = Vec2::new(width, width * aspect);
         let (response, painter) = ui.allocate_painter(size, Sense::click());
         let rect = response.rect;
         let p = pal(ui);

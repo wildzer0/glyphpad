@@ -415,6 +415,16 @@ fn drawing(ui: &mut egui::Ui, s: &mut Settings, d: &Settings) {
             );
             w::row(
                 ui,
+                "Clear winner margin",
+                "How much better the best symbol must score than the others; at 0 the best score always wins.",
+                |ui| {
+                    with_default(ui, &mut s.symbol_margin, d.symbol_margin, |ui, v| {
+                        w::slider(ui, egui::Slider::new(v, 0.0..=0.2).fixed_decimals(2));
+                    })
+                },
+            );
+            w::row(
+                ui,
                 "Rotation tolerance",
                 "0° means a rotated L is not an L.",
                 |ui| {

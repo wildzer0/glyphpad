@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `[settings] symbol_margin` (default 0.02, in Settings → Drawing): how much better the best
+  symbol must score than every other one for a drawing to count. At 0 the best score always wins.
+
+### Fixed
+- A silhouette keeps the proportions of a touchpad (the ratio is clamped to 0.5–1.2), so a sample
+  whose extents are those of a stroke no longer draws an enormous pad in the wizard.
+- The conflict notice in the gestures list is one line with a "Details" button, instead of a
+  banner as tall as the list.
+
 ## [1.7.1] - 2026-10-26
 
 ### Fixed

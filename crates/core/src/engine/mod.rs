@@ -111,19 +111,16 @@ pub enum Observation {
 /// How many candidates observations keep.
 const TOP_CANDIDATES: usize = 3;
 
-/// How much better than another symbol the best has to be for the drawing to
-/// count. Two shapes that look alike — a drawn `b` and a recorded `n` — score
-/// within this of each other, and firing one of them is a coin toss: the
-/// honest answer is "not recognized", with both names in the log.
-const AMBIGUITY_MARGIN: f32 = 0.02;
-
-/// Whether the best candidate is clearly better than every *other* symbol.
-fn clear_winner(candidates: &[Candidate]) -> bool {
+/// Whether the best candidate is clearly better than every *other* symbol: a
+/// drawing that looks like two of them — a `b` and a recorded `n` — must not
+/// fire the one that happens to score higher. `margin` is
+/// `[settings] symbol_margin`.
+fn clear_winner(candidates: &[Candidate], margin: f32) -> bool {
     let Some((best, rest)) = candidates.split_first() else {
         return false;
     };
     rest.iter()
-        .all(|c| c.symbol == best.symbol || best.score - c.score >= AMBIGUITY_MARGIN)
+        .all(|c| c.symbol == best.symbol || best.score - c.score >= margin)
 }
 
 fn format_candidates(c: &[Candidate]) -> String {
@@ -276,6 +273,8 @@ pub struct Spec {
     /// every symbol at `default_confidence` (diagnostics).
     symbol_thresholds: Option<BTreeMap<String, f32>>,
     default_confidence: f32,
+    /// How much better the best symbol must score than the others.
+    symbol_margin: f32,
 }
 
 impl Default for Spec {
@@ -298,6 +297,7 @@ impl Default for Spec {
             loose_rotate_deg: None,
             symbol_thresholds: Some(BTreeMap::new()),
             default_confidence: Settings::default().default_confidence,
+            symbol_margin: Settings::default().symbol_margin,
         }
     }
 }
@@ -430,6 +430,7 @@ impl Spec {
                 }
             }
         }
+        spec.symbol_margin = s.symbol_margin;
         spec.symbol_thresholds = Some(thresholds);
         if let Some(draw) = &mut spec.draw {
             draw.max_resting = spec.symbol_modifiers;
@@ -460,6 +461,7 @@ impl Spec {
             loose_rotate_deg: None,
             symbol_thresholds: None,
             default_confidence: Settings::default().default_confidence,
+            symbol_margin: Settings::default().symbol_margin,
         }
     }
 
@@ -898,7 +900,7 @@ impl Engine {
             && spec
                 .symbol_threshold(&best.symbol)
                 .is_some_and(|min| best.score >= min)
-            && clear_winner(&candidates)
+            && clear_winner(&candidates, spec.symbol_margin)
         {
             let symbol = Observation::Symbol {
                 name: best.symbol.clone(),

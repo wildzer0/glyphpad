@@ -384,6 +384,13 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("Record it", "Registrala"),
     ("Guided tour", "Tour guidato"),
+    ("Details", "Dettagli"),
+    ("Possible conflicts", "Possibili conflitti"),
+    ("Clear winner margin", "Margine del vincitore"),
+    (
+        "How much better the best symbol must score than the others; at 0 the best score always wins.",
+        "Di quanto il simbolo migliore deve battere gli altri; a 0 vince sempre il punteggio più alto.",
+    ),
     ("Show the tour", "Mostra il tour"),
     (
         "Walks through the window, step by step.",

@@ -619,13 +619,15 @@ fn a_close_call_between_two_symbols_is_not_a_match() {
         score,
     };
     // Clear best: the drawing fires.
-    assert!(clear_winner(&[c("n", 0.90), c("b", 0.80)]));
+    assert!(clear_winner(&[c("n", 0.90), c("b", 0.80)], 0.02));
     // Two shapes that look alike: it does not.
-    assert!(!clear_winner(&[c("n", 0.86), c("b", 0.85)]));
+    assert!(!clear_winner(&[c("n", 0.86), c("b", 0.85)], 0.02));
     // Several examples of the same symbol are not a rival.
-    assert!(clear_winner(&[c("n", 0.86), c("n", 0.85)]));
+    assert!(clear_winner(&[c("n", 0.86), c("n", 0.85)], 0.02));
     // Nothing at all is not a match either.
-    assert!(!clear_winner(&[]));
+    assert!(!clear_winner(&[], 0.02));
+    // The margin is a setting: at 0 the best score always fires.
+    assert!(clear_winner(&[c("n", 0.86), c("b", 0.85)], 0.0));
 }
 
 #[test]
