@@ -13,9 +13,6 @@
 pub const N: usize = 64;
 /// Clouds are mapped onto integer-like coordinates `0..MAX_COORD`.
 const MAX_COORD: f32 = 1024.0;
-/// Side of the lookup table of nearest points.
-const LUT_SIZE: usize = 64;
-const LUT_SCALE: f32 = MAX_COORD / LUT_SIZE as f32;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
@@ -71,12 +68,10 @@ fn resample(points: &[Point], n: usize) -> Vec<Point> {
     out
 }
 
-/// A normalized point cloud with its lookup table.
+/// A normalized point cloud.
 #[derive(Debug, Clone)]
 pub struct Cloud {
     points: Vec<Point>,
-    /// For each LUT cell, the index of the nearest point.
-    lut: Vec<u8>,
 }
 
 impl Cloud {
@@ -130,26 +125,7 @@ impl Cloud {
             p.y = ((p.y - cy + 1.0) / 2.0 * (MAX_COORD - 1.0)).clamp(0.0, MAX_COORD - 1.0);
         }
 
-        let mut lut = vec![0u8; LUT_SIZE * LUT_SIZE];
-        for cx in 0..LUT_SIZE {
-            for cy in 0..LUT_SIZE {
-                let mut best = (f32::MAX, 0usize);
-                for (i, p) in points.iter().enumerate() {
-                    let (px, py) = lut_cell(p);
-                    let d = (px as f32 - cx as f32).powi(2) + (py as f32 - cy as f32).powi(2);
-                    if d < best.0 {
-                        best = (d, i);
-                    }
-                }
-                lut[cx * LUT_SIZE + cy] = best.1 as u8;
-            }
-        }
-        Some(Self { points, lut })
-    }
-
-    fn nearest(&self, p: &Point) -> usize {
-        let (x, y) = lut_cell(p);
-        usize::from(self.lut[x * LUT_SIZE + y])
+        Some(Self { points })
     }
 }
 
@@ -159,11 +135,6 @@ fn centroid(points: &[Point]) -> (f32, f32) {
         .iter()
         .fold((0.0, 0.0), |(x, y), p| (x + p.x, y + p.y));
     (sx / n, sy / n)
-}
-
-fn lut_cell(p: &Point) -> (usize, usize) {
-    let clamp = |v: f32| ((v / LUT_SCALE).round() as usize).min(LUT_SIZE - 1);
-    (clamp(p.x), clamp(p.y))
 }
 
 /// Greedy matching of `a` onto `b` starting at point `start`: each point of
@@ -193,36 +164,21 @@ fn cloud_distance(a: &Cloud, b: &Cloud, start: usize, best_so_far: f32) -> f32 {
     }
 }
 
-/// Lower bounds of `cloud_distance(a, b, start)` for every start that is a
-/// multiple of `step`, from the distance of each point of `a` to its nearest
-/// point of `b` (ignoring that points can be matched only once).
-fn lower_bounds(a: &Cloud, b: &Cloud, step: usize) -> Vec<f32> {
-    let mut lb = vec![0.0; N / step + 1];
-    let mut sat = [0.0f32; N];
-    for i in 0..N {
-        let d = sq_dist(&a.points[i], &b.points[b.nearest(&a.points[i])]);
-        sat[i] = if i == 0 { d } else { sat[i - 1] + d };
-        lb[0] += (N - i) as f32 * d;
-    }
-    for i in (step..N).step_by(step) {
-        lb[i / step] = lb[0] + i as f32 * sat[N - 1] - N as f32 * sat[i - 1];
-    }
-    lb
-}
-
 /// Distance between two clouds, or a value ≥ `best_so_far` when they cannot
 /// beat it.
 pub fn distance(a: &Cloud, b: &Cloud, mut best_so_far: f32) -> f32 {
+    // Every start is tried, and each call stops as soon as it has spent more
+    // than `best_so_far`: the early abandoning is what makes this cheap.
+    //
+    // A lower bound per start used to skip some of them. It was computed from
+    // an *ordered* matching while `cloud_distance` takes the nearest free
+    // point, so it could come out above the distance it bounded and drop the
+    // best start — the property test against `distance_exhaustive` (which the
+    // bounds never touched) is what caught it.
     let step = (N as f32).sqrt() as usize;
-    let lb_ab = lower_bounds(a, b, step);
-    let lb_ba = lower_bounds(b, a, step);
     for i in (0..N).step_by(step) {
-        if lb_ab[i / step] < best_so_far {
-            best_so_far = best_so_far.min(cloud_distance(a, b, i, best_so_far));
-        }
-        if lb_ba[i / step] < best_so_far {
-            best_so_far = best_so_far.min(cloud_distance(b, a, i, best_so_far));
-        }
+        best_so_far = best_so_far.min(cloud_distance(a, b, i, best_so_far));
+        best_so_far = best_so_far.min(cloud_distance(b, a, i, best_so_far));
     }
     best_so_far
 }

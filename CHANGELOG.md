@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the tray menu.
 
 ### Fixed
+- The $Q distance no longer skips a start it should have tried: the lower bound was computed for
+  an ordered matching while the distance always takes the nearest free point, so the bound could
+  come out above the distance it bounded and drop the best start — a recognition could then miss
+  the symbol it should have matched. The early abandoning stays (it is what makes it cheap), and
+  the property test against the exhaustive reference passes again.
 - `start_minimized` is respected after an update: the old process no longer asks the new one to
   show its window while handing over, and a show request that arrives in the first frames is
   ignored when the window started in the tray. Before, the window appeared at every start after an
