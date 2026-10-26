@@ -143,8 +143,11 @@ impl Tour {
             .data(|d| d.get_temp::<Rect>(Self::rect_id(step.target)))
             .map(|r| r.intersect(screen))
             .filter(|r| r.width() > 4.0 && r.height() > 4.0);
+        // The dim goes one order below the bubble: on the same layer the two
+        // are composed in no particular order, and the dim was landing on top
+        // of the text.
         let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
+            egui::Order::Middle,
             egui::Id::unique("tour-dim"),
         ));
         let dim = Color32::from_black_alpha(165);

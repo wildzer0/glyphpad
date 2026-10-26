@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The tour's bubble is legible again: the dim was painted on the same layer as the bubble, and
+  within one layer the two are composed in no particular order — so the dim could land on top of
+  the text. The dim and the outline now go one layer below.
+
 ## [1.7.0] - 2026-10-26
 
 ### Added
