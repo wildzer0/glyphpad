@@ -151,6 +151,8 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
                 hwnd: None,
                 tab: options.tab,
                 visible: !options.start_hidden,
+                started_hidden: options.start_hidden,
+                frames: 0,
                 quitting: false,
                 tray_enabled: None,
                 version: options.version,
@@ -188,6 +190,11 @@ struct App {
     on_started: Option<Box<dyn Fn() + Send + Sync>>,
     /// Native handle of the window, once known.
     hwnd: Option<isize>,
+    /// The window was started in the tray: a show request that arrives in
+    /// the first frames is our own handover, not the user asking.
+    started_hidden: bool,
+    /// Passes of the event loop since the window was created.
+    frames: u64,
     tab: Tab,
     visible: bool,
     /// Quitting for real, not hiding to the tray.
@@ -248,6 +255,7 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.frames += 1;
         if self.hwnd.is_none() {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
             if let Ok(h) = frame.window_handle()
@@ -286,7 +294,13 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
         if self.ui.take_show_request() {
-            self.show_window(ctx);
+            // Starting in the tray, a request in the very first frames is the
+            // old process handing over after an update — not the user asking
+            // for the window — so it is ignored: `start_minimized` means the
+            // window stays in the tray until something is really opened.
+            if !self.started_hidden || self.frames > 3 {
+                self.show_window(ctx);
+            }
         }
 
         // SPEC §10.1: with close_to_tray the window's X hides it instead.

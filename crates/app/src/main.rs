@@ -191,11 +191,21 @@ fn gui(explicit: Option<&Path>, toplevel_window: bool, debug: bool, extra: GuiEx
     // A second instance asks the first one to show its window and exits
     // (SPEC §10.1). `debug` is a diagnostic and may run alongside.
     let link: Arc<OnceLock<Arc<UiLink>>> = Arc::default();
+    // Right after an update the old process hands the place over: it must
+    // not ask the new one for the window, which would defeat
+    // `start_minimized` and show a window the user did not ask for.
+    #[cfg(windows)]
+    let activation_shows = !extra.post_update;
     #[cfg(windows)]
     if !debug {
         let slot = link.clone();
         match glyphpad_platform::windows::single_instance::acquire(move || {
+            if !activation_shows {
+                tracing::info!("handing over after an update: not showing the window");
+                return;
+            }
             if let Some(ui) = slot.get() {
+                tracing::info!("another instance asked to show the window");
                 ui.request_show();
             }
         }) {

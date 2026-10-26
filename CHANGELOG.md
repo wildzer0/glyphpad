@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `start_minimized` is respected after an update: the old process no longer asks the new one to
+  show its window while handing over, and a show request that arrives in the first frames is
+  ignored when the window started in the tray. Before, the window appeared at every start after an
+  update.
+
 ## [1.6.4] - 2026-10-26
 
 ### Fixed
