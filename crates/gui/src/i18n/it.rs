@@ -375,6 +375,34 @@ pub const TABLE: &[(&str, &str)] = &[
     ("All four corners", "Tutti e quattro gli angoli"),
     ("Merge the chosen ones", "Unisci quelli scelti"),
     ("Resting fingers", "Dita ferme"),
+    ("Tour", "Tour"),
+    ("Your gestures", "Le tue gesture"),
+    (
+        "This is the list, and its order is the precedence: when two gestures could fire from the same movement, the one higher up wins. Drag a row to change it.",
+        "Questa è la lista, e il suo ordine è la precedenza: quando due gesture possono scattare con lo stesso movimento vince quella più in alto. Trascina una riga per cambiarlo.",
+    ),
+    (
+        "Draw a symbol or perform the gesture, and GlyphPad learns it from your examples. You choose the name and the action at the end.",
+        "Disegna un simbolo o fai la gesture: GlyphPad la impara dai tuoi esempi. Il nome e l'azione li scegli alla fine.",
+    ),
+    ("The editor", "L'editor"),
+    (
+        "Choosing a gesture opens its editor: what triggers it — fingers, direction, symbol — what it runs, and the conditions on the app or the profile. Every change is saved as you make it.",
+        "Scegliendo una gesture si apre il suo editor: cosa la fa scattare — dita, direzione, simbolo — cosa esegue, e le condizioni sull'app o sul profilo. Ogni modifica viene salvata mentre la fai.",
+    ),
+    (
+        "Here are all the recorded examples, with their playback, the history of what ran and the conflicts: it is where a gesture that does not fire is understood.",
+        "Qui ci sono tutti gli esempi registrati, con la riproduzione, la cronologia di ciò che è partito e i conflitti: è il posto dove si capisce una gesture che non scatta.",
+    ),
+    (
+        "The drawing mode comes first: how a symbol is started — three fingers, an edge, a hold — then the thresholds, the profiles and the updates.",
+        "Il modo di disegno viene prima: come si avvia un simbolo — tre dita, un bordo, una pausa — poi le soglie, i profili e gli aggiornamenti.",
+    ),
+    ("Always at hand", "Sempre a portata di mano"),
+    (
+        "The icon in the tray pauses the gestures, reloads the configuration and shows this window again. Closing the window with its X leaves GlyphPad running there.",
+        "L'icona nella tray mette in pausa le gesture, ricarica la configurazione e riapre questa finestra. Chiudendo la finestra con la X, GlyphPad resta attivo lì.",
+    ),
     (
         "Other fingers rest while the drawing ones move: the same symbol can then mean something else.",
         "Altre dita restano ferme mentre quelle che disegnano si muovono: così lo stesso simbolo può significare altro.",

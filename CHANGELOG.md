@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A guided tour of the window: an overlay that dims the page, outlines one element at a time and
+  says what it is for — the list and its precedence, the recorder, the editor, Review, Settings and
+  the tray — step by step, skippable, and openable again from the sidebar.
+
 ### Fixed
 - `start_minimized` is respected after an update: the old process no longer asks the new one to
   show its window while handing over, and a show request that arrives in the first frames is

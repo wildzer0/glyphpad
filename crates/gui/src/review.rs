@@ -38,6 +38,7 @@ pub struct State {
 
 /// Returns a symbol to record more templates for, when asked.
 pub fn show(ui: &mut egui::Ui, cx: &Ctx, st: &mut State) -> Option<String> {
+    crate::tour::Tour::register(ui, crate::tour::Target::ReviewSymbols, ui.max_rect());
     w::page_header(
         ui,
         "Review",

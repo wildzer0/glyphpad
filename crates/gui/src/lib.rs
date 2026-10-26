@@ -18,6 +18,7 @@ mod packs;
 mod review;
 mod settings;
 mod theme;
+mod tour;
 mod widgets;
 mod wizard;
 
@@ -153,6 +154,7 @@ pub fn run(options: Options, host: Host) -> Result<(), String> {
                 visible: !options.start_hidden,
                 started_hidden: options.start_hidden,
                 frames: 0,
+                tour: None,
                 quitting: false,
                 tray_enabled: None,
                 version: options.version,
@@ -193,6 +195,8 @@ struct App {
     /// The window was started in the tray: a show request that arrives in
     /// the first frames is our own handover, not the user asking.
     started_hidden: bool,
+    /// The guided tour, while one is open.
+    tour: Option<tour::Tour>,
     /// Passes of the event loop since the window was created.
     frames: u64,
     tab: Tab,
@@ -347,6 +351,11 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // The tour decides which page is on screen: a step is about an
+        // element that has to be drawn before it can be outlined.
+        if let Some(tab) = self.tour.as_ref().map(tour::Tour::step_tab) {
+            self.tab = tab;
+        }
         let shared = self.snapshot();
         let commands = self.commands.clone();
         let version = self.version.clone();
@@ -471,6 +480,13 @@ impl eframe::App for App {
                 }
             });
         self.dialogs(ui.ctx(), &cx);
+        // Last, over everything else: the tour's overlay.
+        if let Some(t) = &mut self.tour {
+            let ctx = ui.ctx().clone();
+            if !t.show(&ctx, &cx) {
+                self.tour = None;
+            }
+        }
     }
 }
 
@@ -526,6 +542,14 @@ impl App {
             }
             ui.add_space(2.0);
         }
+        // The guided tour, from anywhere in the window (SPEC §13).
+        if widgets::nav_item(ui, icons::INFO, "Tour", self.tour.is_some()).clicked()
+            && self.tour.is_none()
+        {
+            self.leave_wizard(cx);
+            self.tour = Some(tour::Tour::new());
+        }
+        ui.add_space(2.0);
         // The card pinned to the bottom of the sidebar: a nested panel
         // sizes itself to its content, unlike a bottom-up layout.
         egui::Panel::bottom("nav-status")

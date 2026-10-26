@@ -130,6 +130,7 @@ fn backup_label(name: &str) -> String {
 }
 
 pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) {
+    crate::tour::Tour::register(ui, crate::tour::Target::SettingsDrawing, ui.max_rect());
     w::page_header(
         ui,
         "Settings",

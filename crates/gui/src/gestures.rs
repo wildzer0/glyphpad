@@ -105,6 +105,7 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
         "Gestures",
         "When two could fire at once, the one higher in the list wins.",
         |ui| {
+            crate::tour::Tour::register(ui, crate::tour::Target::RecordButton, ui.max_rect());
             if w::primary_button(ui, icons::RECORD, "Record a gesture").clicked() {
                 start = Some(Start::New);
             }
@@ -265,6 +266,7 @@ fn filtering(st: &State) -> bool {
 }
 
 fn list_panel(ui: &mut egui::Ui, ed: &mut Editor, st: &mut State, profiles: &[String]) {
+    crate::tour::Tour::register(ui, crate::tour::Target::GestureList, ui.max_rect());
     w::search_field(ui, &mut st.search, "Search gestures");
     ui.add_space(space::XS);
     ui.horizontal(|ui| {
