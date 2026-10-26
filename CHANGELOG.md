@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A gesture saved by the recording wizard shows in the list at once: the page takes in what the
+  file gained before drawing, instead of waiting for a change the editor had already missed. It
+  used to appear only after closing and reopening the window.
+- While recording, the drawing follows the configured activation: with
+  `draw_activation = { mode = "fingers", count = 3 }` a single finger no longer becomes a sample
+  (and no longer fires a gesture). Only the `toggle` mode is armed for recording, since it has no
+  other way in.
+
 ## [1.6.3] - 2026-10-25
 
 ### Fixed

@@ -159,6 +159,11 @@ pub fn show(ui: &mut egui::Ui, cx: &Ctx, ed: &mut Editor, st: &mut State) -> Opt
         }
     }
 
+    // The file is the source of the gestures: one saved behind the page's
+    // back is taken in here, before anything is drawn, so it shows without
+    // reopening the window.
+    ed.catch_up(cx.shared);
+
     // A gesture added from somewhere else — the recording wizard, another
     // program editing the file — is selected and brought into view: at the
     // bottom of a long list it would otherwise look as if it had not been

@@ -265,6 +265,19 @@ impl Editor {
         self.base_revision = shared.revision;
     }
 
+    /// Takes in what the file gained and makes it the base the draft is
+    /// rendered against. The page calls this when the editor missed a change
+    /// (the recording wizard saves as it closes): a gesture saved behind its
+    /// back shows at once, and the next save edits it instead of writing a
+    /// second copy.
+    pub fn catch_up(&mut self, shared: &Shared) -> usize {
+        let added = self.adopt_new_gestures(shared);
+        if added > 0 {
+            self.rebase(shared);
+        }
+        added
+    }
+
     /// Takes in the gestures `shared` has and neither the file's text as the
     /// draft knows it nor the draft itself does. Returns how many.
     pub fn adopt_new_gestures(&mut self, shared: &Shared) -> usize {

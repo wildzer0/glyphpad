@@ -1078,8 +1078,16 @@ impl Service {
             let mut e = Engine::from_config(config);
             e.set_templates(&effective, config.settings.rotation_tolerance_deg);
             e.set_recording(self.mode == EngineMode::RecordSymbol);
-            if self.mode == EngineMode::RecordSymbol {
-                // In `toggle` draw mode every example is armed while recording.
+            if self.mode == EngineMode::RecordSymbol
+                && matches!(
+                    config.settings.draw_activation,
+                    glyphpad_core::config::DrawActivation::Toggle { .. }
+                )
+            {
+                // Only `toggle` arms the drawing: there is no other way to
+                // reach it while recording. The other modes draw the way the
+                // settings say — three fingers, an edge, a hold — so a single
+                // finger does not become an example (and does not fire).
                 e.keep_drawing_armed(true);
             }
             e
